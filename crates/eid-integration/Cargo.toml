@@ -1,0 +1,10 @@
+[package]
+name = "eid-integration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eid-core = { path = "../eid-core" }
+eid-grbl = { path = "../eid-grbl" }
+eid-linuxcnc = { path = "../eid-linuxcnc" }
+eid-harness = { path = "../eid-harness" }

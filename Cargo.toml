@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/eid-core",
+    "crates/eid-grbl",
+    "crates/eid-linuxcnc",
+    "crates/eid-harness",
+    "crates/eid-integration",
+    "crates/eid-cli",
+]

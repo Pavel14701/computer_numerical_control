@@ -1,0 +1,21 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+
+  # Критерий #12 (IMPLEMENTATION-PLAN §5): CHANGELOG проверяется скриптом,
+  # не глазами. Скрипт появляется в итерации 1 (агент B); до того — placeholder.
+  changelog-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          if [ -x tools/changelog_check.sh ]; then ./tools/changelog_check.sh; else echo "changelog_check.sh: pending (agent B, iter 1)"; fi

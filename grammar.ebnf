@@ -1,0 +1,151 @@
+(* ==================================================================
+   EID/L1 — канонический текстовый формат. АВТОРИТЕТНОЕ ОПРЕДЕЛЕНИЕ.
+   Версия: v0.1 (привязан к SPEC-EID-L1 v0.8, EQUIVALENCE v0.1,
+   CORPUS-CONTRACT v0.3). Ревизии — через CHANGELOG.md.
+   THIS FILE — единственный авторитет формата; SPEC §12 — ссылка.
+   SPEC §12 — иллюстрация; этот файл — норма.
+
+   Соответствие ключевых слов узлам SPEC §5:
+     RAPID→rapid, LINEAR→linear, ARC→arc, DWELL→dwell,
+     TOOL_CHANGE→tool_change, STOP→program_stop, PEND→program_end,
+     WCS_DEFINE→wcs_define, WCS_SET_HERE→wcs_set_here, RAW→raw.
+
+   Ограничения, не выражаемые EBNF (проверяются валидатором формата):
+   D1  числа — фиксированные 4 dp, без экспоненты, трейлинг-нули
+       сохранены (SPEC §10.2);
+   D2  порядок осей в векторах и G92-блоке — X, Y, Z
+       (EQUIVALENCE §1.4);
+   D3  state — полный снапшот, фиксированный порядок полей feed,
+       spindle, coolant, tool, frame, wcs; каждое ровно один раз
+       (EQUIVALENCE §2). Исключения — PEND и RAW (D6): state не
+       хранится (SPEC §5.2, §5.4);
+   D4  TOOL_CHANGE: значение op-поля tool= равно state-полю tool=;
+   D5  FRAME_PRESET / WCS_SET_HERE — только до первого motion-опа
+       (SPEC §3, §5.3);
+   D6  ровно один PEND, последний (единственный — в минимальной
+       программе); RAW и PEND не несут state (SPEC §5.2, §5.4);
+   D7  домены значений: sweep ∈ (0°, 360°], |normal| = 1, dwell ≥ 0,
+       p ∈ 1..9, радиусные проверки — SPEC §6 (валидатор, не EBNF);
+   D8  sub= допустим только на RAPID/LINEAR/ARC/DWELL и только в
+       программах, где эти опы — производные развёртки (SPEC §11);
+   D9  RAW payload: hex-кодировка исходных байтов raw-блока — lossless
+       (переводы строк — включая CRLF — и кодировка файла сохраняются
+       как есть; эмиссия EID НЕ нормализует line endings). Чётная длина.
+       R1-text сравнивает payload (same-dialect байт-в-байт). Поле
+       line_count НЕ вводится — выводимо из src (два источника истины
+       запрещены);
+   D10 golden AST: src — плейсхолдер 0.1-0.0 (диалект-независимость;
+       EQUIVALENCE §3 исключает src из эквивалентности). start=unknown
+       — см. SPEC §2 (Q11).
+   ================================================================== *)
+
+program          = magic , NL ,
+                   units_line , NL ,
+                   path_mode_line , NL ,
+                   [ frame_preset_line , NL ] ,
+                   { op_line } ,
+                   "END" , NL ;
+
+magic            = "EID/L1" , SP , version ;
+version          = "v" , digit , { digit } , "." , digit , { digit } ;
+
+units_line       = "UNITS" , SP , ( "mm" | "in" ) ;
+
+path_mode_line   = "PATH_MODE" , SP , ( "exact_path" | "exact_stop" | "blend" ) ;
+
+frame_preset_line = "FRAME_PRESET" , SP , ( "none" | g92_block ) ;
+g92_block        = "G92" , SP , axis_word , SP , axis_word , SP , axis_word ,
+                   SP , "WCS" , SP , wcs_name ;            (* порядок X, Y, Z — D2 *)
+axis_word        = axis_letter , number ;
+axis_letter      = "X" | "Y" | "Z" ;
+
+(* один оп = одна физическая строка (SPEC §12) *)
+op_line          = "OP" , SP , op_num , SP , op_body , NL ;
+op_num           = digit , digit , digit ;                (* zero-padded: 001… *)
+
+op_body          = rapid_op | linear_op | arc_op | dwell_op | tool_change_op
+                 | stop_op | pend_op | wcs_define_op | wcs_set_here_op
+                 | raw_op ;
+
+(* --- движение: геометрия, src, [sub], state --- *)
+
+rapid_op         = "RAPID" , SP , start_f , SP , end_f , SP , src_f ,
+                   [ SP , sub_f ] , SP , state ;
+linear_op        = "LINEAR" , SP , start_f , SP , end_f , SP , src_f ,
+                   [ SP , sub_f ] , SP , state ;
+arc_op           = "ARC" , SP , start_f , SP , end_f , SP , center_f , SP ,
+                   normal_f , SP , dir_f , SP , sweep_f , SP , pitch_f , SP ,
+                   src_f , [ SP , sub_f ] , SP , state ;
+
+start_f          = "start=" , ( vec | "unknown" ) ;   (* unknown — SPEC §2, Q11 *)
+end_f            = "end=" , vec ;
+center_f         = "center=" , vec ;
+normal_f         = "normal=" , vec ;
+vec              = number , "," , number , "," , number ;  (* X, Y, Z — D2 *)
+dir_f            = "dir=" , ( "cw" | "ccw" ) ;
+sweep_f          = "sweep=" , number ;
+pitch_f          = "pitch=" , number ;
+src_f            = "src=" , span ;
+span             = position , "-" , position ;
+position         = digits , "." , digits ;                 (* line.col *)
+sub_f            = "sub=" , digits ;                       (* D8, SPEC §11 *)
+
+(* --- процесс --- *)
+
+dwell_op         = "DWELL" , SP , seconds_f , SP , src_f ,
+                   [ SP , sub_f ] , SP , state ;
+seconds_f        = "seconds=" , number ;
+tool_change_op   = "TOOL_CHANGE" , SP , tool_word , SP , src_f , SP , state ;
+tool_word        = "tool=" , integer ;
+stop_op          = "STOP" , SP , optional_f , SP , src_f , SP , state ;
+optional_f       = "optional=" , ( "yes" | "no" ) ;
+pend_op          = "PEND" ;                                (* state нет — D6 *)
+
+(* --- фреймы --- *)
+
+wcs_define_op    = "WCS_DEFINE" , SP , p_f , SP , origin_f , SP , src_f , SP , state ;
+wcs_set_here_op  = "WCS_SET_HERE" , SP , p_f , SP , delta_f , SP , src_f , SP , state ;
+p_f              = "p=" , digit ;                          (* 1..9: G54..G59.3 *)
+origin_f         = "origin=" , vec ;
+delta_f          = "delta=" , vec ;
+
+(* --- сырое: state нет — D6 --- *)
+
+raw_op           = "RAW" , SP , reason_f , SP , code_f , SP , src_f , SP ,
+                   payload_f ;
+payload_f        = "payload=" , { hex_digit } ;              (* чётная длина — D9 *)
+reason_f         = "reason=" , quoted ;
+code_f           = "code=" , diag_code ;
+diag_code        = "E_INVALID_INPUT" | "E_UNSUPPORTED_SYNTAX"
+                 | "E_UNSUPPORTED_SEMANTICS" | "E_REQUIRES_MACHINE_TABLE"
+                 | "E_RUNTIME_STATE" | "E_LIMIT_EXCEEDED"
+                 | "E_RAW_UNTRANSLATABLE" ;
+
+(* --- состояние: полный снапшот, фиксированный порядок — D3 --- *)
+
+state            = feed_f , SP , spindle_f , SP , coolant_f , SP , tool_f ,
+                   SP , frame_f , SP , wcs_f ;
+feed_f           = "feed=" , ( "none" | number ) ;
+spindle_f        = "spindle=" , ( "off" | spin_dir , "," , number ) ;
+spin_dir         = "cw" | "ccw" ;
+coolant_f        = "coolant=" , ( "none" | "flood" | "mist" | "flood+mist" ) ;
+tool_f           = "tool=" , ( "none" | integer ) ;
+frame_f          = "frame=" , ( "wcs" | "machine" ) ;
+wcs_f            = "wcs=" , wcs_name ;
+
+wcs_name         = "G54" | "G55" | "G56" | "G57" | "G58" | "G59"
+                 | "G59.1" | "G59.2" | "G59.3" ;
+
+(* --- лексика --- *)
+
+(* number: [ "-" ], digits, ".", ровно 4 цифры; без экспоненты; трейлинг-нули
+   сохранены (D1). Знак разрешён (отрицательные координаты, pitch). Домены —
+   D7, не здесь. *)
+number           = [ "-" ] , digits , "." , digit , digit , digit , digit ;
+integer          = digits ;
+digits           = digit , { digit } ;
+digit            = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+hex_digit        = digit | "A" | "B" | "C" | "D" | "E" | "F" ;
+quoted           = '"' , { char_without_quote_or_nl } , '"' ;
+NL               = перевод строки ;
+SP               = одиночный пробел ;

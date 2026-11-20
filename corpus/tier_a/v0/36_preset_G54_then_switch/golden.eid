@@ -1,0 +1,12 @@
+EID/L1 v0.1
+UNITS mm
+PATH_MODE exact_path
+FRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54
+OP 001 RAPID start=0.0000,0.0000,5.0000 end=0.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G54
+OP 002 LINEAR start=0.0000,0.0000,0.0000 end=10.0000,0.0000,0.0000 src=0.1-0.0 feed=150.0000 spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G54
+OP 003 RAPID start=unknown end=10.0000,0.0000,5.0000 src=0.1-0.0 feed=150.0000 spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G55
+OP 004 LINEAR start=10.0000,0.0000,5.0000 end=20.0000,0.0000,5.0000 src=0.1-0.0 feed=150.0000 spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G55
+OP 005 RAPID start=unknown end=20.0000,0.0000,0.0000 src=0.1-0.0 feed=150.0000 spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G54
+OP 006 LINEAR start=20.0000,0.0000,0.0000 end=30.0000,0.0000,0.0000 src=0.1-0.0 feed=150.0000 spindle=cw,9000.0000 coolant=flood tool=none frame=wcs wcs=G54
+OP 007 PEND
+END

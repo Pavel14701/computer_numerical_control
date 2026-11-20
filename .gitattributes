@@ -1,0 +1,6 @@
+# Byte-exactness критичен: golden.eid, диалектные файлы и emitter-тесты
+# сравниваются байт-в-байт (R1-text, детерминизм эмиссии). CRLF-конверсия
+# при checkout на Windows ломает их — принудительный LF (grammar D9/CORPUS §4).
+* text=auto eol=lf
+*.png binary
+*.jpg binary

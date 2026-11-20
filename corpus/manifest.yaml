@@ -1,0 +1,99 @@
+# CORPUS manifest — пилотная партия (CORPUS-CONTRACT §8)
+# sha256 проставляются скриптом при выпуске корпуса; null = черновик.
+# R4-ожидания — явные per-vector (CORPUS §6), не выводятся из общих правил.
+corpus_version: v0.0-pilot
+bindings:
+  spec: SPEC-EID-L1 v0.8
+  equivalence: EQUIVALENCE v0.1
+  grammar: grammar.ebnf v0.1
+vectors:
+  - id: "01"
+    name: linear_box
+    tier: A
+    kind: positive
+    golden: tier_a/v0/01_linear_box/golden.eid
+    files:
+      - { path: tier_a/v0/01_linear_box/linear_box.grbl.ngc,      dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/01_linear_box/linear_box.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+
+  - id: "02"
+    name: rapid_reposition
+    tier: A
+    kind: positive
+    golden: tier_a/v0/02_rapid_reposition/golden.eid
+    files:
+      - { path: tier_a/v0/02_rapid_reposition/rapid_reposition.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/02_rapid_reposition/rapid_reposition.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+
+  - id: "03"
+    name: feed_survives_rapid
+    tier: A
+    kind: positive
+    golden: tier_a/v0/03_feed_survives_rapid/golden.eid
+    files:
+      - { path: tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+
+  - id: "11"
+    name: arc_R_semicircle
+    tier: A
+    kind: positive
+    golden: tier_a/v0/11_arc_R_semicircle/golden.eid
+    golden_tag: golden_semicircle_R
+    files:
+      - { path: tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+
+  - id: "27"
+    name: tool_change
+    tier: A
+    kind: positive
+    golden: tier_a/v0/27_tool_change/golden.eid
+    files:
+      - { path: tier_a/v0/27_tool_change/tool_change.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect:
+      grbl-1.1: E_UNSUPPORTED_SYNTAX   # M6 вне словаря GRBL (COVERAGE §5)
+    notice: false
+
+  - id: "36"
+    name: preset_G54_then_switch
+    tier: A
+    kind: positive
+    golden: tier_a/v0/36_preset_G54_then_switch/golden.eid
+    golden_note: "end-to-end инвариант EQUIVALENCE §1.3: Δ константен по трём сегментам (G54→G55→G54)"
+    files:
+      - { path: tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+
+  - id: "46"
+    name: arc_R_helix
+    tier: A
+    kind: positive
+    golden: tier_a/v0/46_arc_R_helix/golden.eid
+    files:
+      - { path: tier_a/v0/46_arc_R_helix/arc_R_helix.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "GRBL-файл-источник отложен до COVERAGE §6.9 (R+off-plane по GRBL source не подтверждён); golden достаточно для stage-4 эмиссии (IJK+Z)"
+    notice: false
+
+  - id: "N1"
+    name: g53_no_origins
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n1_g53_no_origins/g53_no_origins.grbl.ngc,     dialect: grbl-1.1, expect: E_RUNTIME_STATE, sha256: null }
+      - { path: tier_a/v0/n1_g53_no_origins/g53_no_origins.linuxcnc.ngc, dialect: linuxcnc, expect: E_RUNTIME_STATE, sha256: null }
+    r4_expect: {}
+    note: "G53 при выборе G54 без in-text wcs_define — SPEC §5.3(b)"
+    notice: false

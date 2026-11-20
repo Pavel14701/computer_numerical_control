@@ -1,0 +1,14 @@
+EID/L1 v0.1
+UNITS mm
+PATH_MODE exact_path
+FRAME_PRESET none
+OP 001 RAPID start=unknown end=0.0000,0.0000,2.0000 src=0.1-0.0 feed=none spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 002 RAPID start=0.0000,0.0000,2.0000 end=0.0000,0.0000,-1.0000 src=0.1-0.0 feed=none spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 003 LINEAR start=0.0000,0.0000,-1.0000 end=5.0000,0.0000,-1.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 004 RAPID start=5.0000,0.0000,-1.0000 end=5.0000,0.0000,2.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 005 RAPID start=5.0000,0.0000,2.0000 end=20.0000,0.0000,2.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 006 RAPID start=20.0000,0.0000,2.0000 end=20.0000,0.0000,-1.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 007 LINEAR start=20.0000,0.0000,-1.0000 end=25.0000,0.0000,-1.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 008 RAPID start=25.0000,0.0000,-1.0000 end=25.0000,0.0000,2.0000 src=0.1-0.0 feed=80.0000 spindle=cw,12000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 009 PEND
+END

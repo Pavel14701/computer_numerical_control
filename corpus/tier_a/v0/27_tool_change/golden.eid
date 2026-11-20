@@ -1,0 +1,9 @@
+EID/L1 v0.1
+UNITS mm
+PATH_MODE exact_path
+FRAME_PRESET none
+OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54
+OP 002 RAPID start=unknown end=0.0000,0.0000,5.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54
+OP 003 LINEAR start=0.0000,0.0000,5.0000 end=10.0000,0.0000,5.0000 src=0.1-0.0 feed=150.0000 spindle=cw,8000.0000 coolant=mist tool=3 frame=wcs wcs=G54
+OP 004 PEND
+END
