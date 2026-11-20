@@ -117,8 +117,8 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
-      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc,     dialect: grbl-1.1, expect: ok, expected_diags: [E_UNSUPPORTED_SYNTAX], sha256: null }
+      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SEMANTICS], sha256: null }
     r4_expect:
       grbl-1.1: E_RAW_UNTRANSLATABLE
       linuxcnc: E_RAW_UNTRANSLATABLE
@@ -189,9 +189,9 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n8_tapping_G84/tapping_G84.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n8_tapping_G84/tapping_G84.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SEMANTICS], sha256: null }
     r4_expect: {}
-    note: "G84 tapping — синхронизация шпиндель-подача, не представимо ходами (COVERAGE §2.5, SPEC §7); циклы вне словаря GRBL — источника нет"
+    note: "G84 tapping — line-level: RAW-узел + диагностика (CORPUS §1.2 v0.5, решение оркестратора); циклы вне словаря GRBL — источника нет"
     notice: false
 
   - id: "N9"
@@ -200,7 +200,7 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SEMANTICS], sha256: null }
     r4_expect: {}
     note: "T5 без M6 — предвыбор инструмента вне L1 (COVERAGE §3, SPEC §4); GRBL-вариант — другой класс (E_INVALID_INPUT), не в этом векторе"
     notice: false
@@ -211,7 +211,7 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n10_g43_h_table/g43_h_table.linuxcnc.ngc, dialect: linuxcnc, expect: E_REQUIRES_MACHINE_TABLE, sha256: null }
+      - { path: tier_a/v0/n10_g43_h_table/g43_h_table.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_REQUIRES_MACHINE_TABLE], sha256: null }
     r4_expect: {}
     note: "G43 H2 — TLO из таблицы станка (COVERAGE §2.4, SPEC §8); G43 вне словаря GRBL — источника нет"
     notice: false
@@ -222,7 +222,7 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SYNTAX, sha256: null }
+      - { path: tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SYNTAX], sha256: null }
     r4_expect: {}
     note: "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет"
     notice: false
@@ -305,7 +305,7 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n18_css_g96/css_g96.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n18_css_g96/css_g96.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SEMANTICS], sha256: null }
     r4_expect: {}
     note: "G96 S200 — токарный CSS вне скоупа §1.2 (COVERAGE §2.6); G96 вне словаря GRBL — источника нет"
     notice: false

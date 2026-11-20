@@ -29,6 +29,9 @@ pub struct FileEntry {
     pub path: PathBuf,
     pub dialect: String, // "grbl-1.1" | "linuxcnc" | ...
     pub expect: Outcome,
+    /// Коды диагностики, обязательные при Ok-исходе (line-level RAW: parse Ok,
+    /// RAW-узел + диагностика — решение оркестратора, CORPUS §1.2 v0.5).
+    pub expected_diags: Vec<ErrorCode>,
     pub sha256: Option<String>,
 }
 
