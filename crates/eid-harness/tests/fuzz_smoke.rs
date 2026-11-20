@@ -324,7 +324,7 @@ fn byte_loop(findings: &mut Vec<Finding>, seed: u64, lcnc: &LinuxCncAdapter, grb
 // ===========================================================================
 // Метаморфические отношения (трансформация → тот же AST)
 // ===========================================================================
-fn metamorphic(findings: &mut Vec<Finding>) {
+fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig) {
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_a/v0");
     let lcnc = LinuxCncAdapter::new();
     let grbl = GrblAdapter::new();
@@ -340,15 +340,19 @@ fn metamorphic(findings: &mut Vec<Finding>) {
         let Ok(orig) = std::fs::read_to_string(&p) else { continue };
         let adapter: &dyn Adapter = if dialect == "grbl-1.1" { &grbl } else { &lcnc };
         let Ok(ast_a) = adapter.parse(&orig, &name) else { continue };
+        // Компаратор — СЕМАНТИЧЕСКИЙ (EQUIVALENCE §3: src/provenance вне
+        // эквивалентности; derive(PartialEq) ломался на line/col-сдвигах).
         let check = |tag: &'static str, txt: &str, findings: &mut Vec<Finding>| {
             if let Ok(ast_b) = adapter.parse(txt, &name) {
-                if ast_b != ast_a {
+                if !eid_harness::diff::semantic_diff(&ast_a, &ast_b, &cfg).is_empty() {
                     findings.push(Finding {
                         family: "metamorphic",
                         operator: tag,
                         seed: 0,
                         dialect,
-                        detail: format!("{name}: AST изменился (инвариант нарушен)"),
+                        detail: format!(
+                            "{name}: AST изменился семантически (инвариант нарушен)"
+                        ),
                     });
                 }
             }
@@ -409,7 +413,7 @@ fn run_full_suite(m_iterations: usize, byte_seed: u64) -> Vec<Finding> {
     let mut findings = Vec::new();
     m_loop(&mut findings, 100, m_iterations, &lcnc);
     byte_loop(&mut findings, byte_seed, &lcnc, &grbl);
-    metamorphic(&mut findings);
+    metamorphic(&mut findings, &eid_harness::diff::DiffConfig::default());
     findings
 }
 
