@@ -2,7 +2,7 @@
 //! и позитивные unit-тесты парсера/эмиттера/валидации.
 //!
 //! Критерии: parse(golden) → Ok; emit(parsed) == golden байт-в-байт (golden
-//! написаны по grammar.ebnf v0.2); parse(emit(parsed)) ≡ первый AST (сравнение
+//! написаны по grammar.ebnf v0.3); parse(emit(parsed)) ≡ первый AST (сравнение
 //! на f64-зеркале, EQUIVALENCE §3/§4); emit(parsed) дважды — байт-в-байт;
 //! LF/CRLF не важен для parse.
 
@@ -197,7 +197,7 @@ fn programq(a: &Program, b: &Program) -> bool {
 
 // --- Шаблоны текстов -------------------------------------------------------
 
-const HDR: &str = "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\n";
+const HDR: &str = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\n";
 
 fn prog(ops: &str) -> String {
     format!("{HDR}{ops}END\n")
@@ -235,23 +235,46 @@ fn expect_err(text: &str, want: Option<ErrorCode>, ctx: &str) -> Vec<eid_core::d
 #[test]
 fn golden_roundtrip_all() {
     let files = golden_files();
+    let mut failures: Vec<String> = Vec::new();
     for f in &files {
         let text = fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display()));
         let name = f.display().to_string();
 
         // parse(golden) → Ok; в пилоте notices нет (zero-length — вектор #43)
-        let outcome = parser::parse_with_notices(&text, &name)
-            .unwrap_or_else(|ds| panic!("{name}: parse failed: {ds:#?}"));
-        assert!(
-            outcome.notices.is_empty(),
-            "{name}: unexpected notices: {:#?}",
-            outcome.notices
-        );
+        let outcome = match parser::parse_with_notices(&text, &name) {
+            Ok(o) => o,
+            Err(ds) => {
+                failures.push(format!(
+                    "{name}: parse failed: {}",
+                    ds.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                ));
+                continue;
+            }
+        };
+        if !outcome.notices.is_empty() {
+            failures.push(format!(
+                "{name}: unexpected notices: {}",
+                outcome.notices.iter().map(|n| n.message.clone()).collect::<Vec<_>>().join("; ")
+            ));
+            continue;
+        }
         let p1 = outcome.program;
 
         // emit(parsed) == golden байт-в-байт
-        let t1 = emitter::emit(&p1).unwrap_or_else(|ds| panic!("{name}: emit failed: {ds:#?}"));
-        assert_eq!(t1, text, "{name}: emit(parsed) != golden text (byte-exact)");
+        let t1 = match emitter::emit(&p1) {
+            Ok(t) => t,
+            Err(ds) => {
+                failures.push(format!(
+                    "{name}: emit failed: {}",
+                    ds.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                ));
+                continue;
+            }
+        };
+        if t1 != text {
+            failures.push(format!("{name}: emit(parsed) != golden text (byte-exact)"));
+            continue;
+        }
 
         // emit(parsed) дважды — байт-в-байт
         let t1b = emitter::emit(&p1).unwrap();
@@ -267,6 +290,7 @@ fn golden_roundtrip_all() {
         let t2 = emitter::emit(&p2).unwrap();
         assert_eq!(t1, t2, "{name}: second emit differs");
     }
+    assert!(failures.is_empty(), "golden round-trip failures ({}):\n{}", failures.len(), failures.join("\n"));
 }
 
 #[test]
@@ -290,12 +314,13 @@ fn adapter_is_r1_machine() {
 #[test]
 fn neg_bad_magic() {
     for bad in [
-        "EID/L1 v0.1\n", // прежняя версия формата: изменение формата = новая magic (SPEC §10.4)
-        "EID/L1 v0.3\n",
+        "EID/L1 v0.1\n", // прежние версии формата не валидны:
+        "EID/L1 v0.2\n", // изменение формата = новая magic (SPEC §10.4)
+        "EID/L1 v0.4\n",
         "EID/L1\n",
-        "EID/L1  v0.2\n",
-        "eid/L1 v0.2\n",
-        "EID/L2 v0.2\n",
+        "EID/L1  v0.3\n",
+        "eid/L1 v0.3\n",
+        "EID/L2 v0.3\n",
         "",
     ] {
         let text = format!("{bad}UNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
@@ -583,11 +608,11 @@ fn d9_raw_payload() {
 fn path_mode_blend_t() {
     // grammar v0.2 (A1): blend [ SP "t=" number ]; bare blend легален (G64 без P).
     // bare blend → t: None
-    let bare = "EID/L1 v0.2\nUNITS mm\nPATH_MODE blend\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+    let bare = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
     let p = parser::parse(bare, "t").expect("bare blend");
     assert!(matches!(p.path_mode, PathMode::Blend { t: None }));
     // blend t= → t: Some (число по D1)
-    let with_t = "EID/L1 v0.2\nUNITS mm\nPATH_MODE blend t=0.0100\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+    let with_t = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=0.0100\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
     let p = parser::parse(with_t, "t").expect("blend t=");
     match &p.path_mode {
         PathMode::Blend { t: Some(n) } => assert_eq!(n.value, 0.01),
@@ -599,11 +624,11 @@ fn path_mode_blend_t() {
     let p2 = parser::parse(&t1, "t").unwrap();
     assert!(programq(&p, &p2));
     // отрицательный t грамматичен (число по D1 допускает знак)
-    let neg = "EID/L1 v0.2\nUNITS mm\nPATH_MODE blend t=-0.5000\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+    let neg = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=-0.5000\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
     assert!(parser::parse(neg, "t").is_ok());
     // все три значения PATH_MODE парсятся
     for pm in ["exact_path", "exact_stop", "blend"] {
-        let text = format!("EID/L1 v0.2\nUNITS mm\nPATH_MODE {pm}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
+        let text = format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE {pm}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
         assert!(parser::parse(&text, "t").is_ok(), "PATH_MODE {pm}");
     }
     // негативы лексики t= (D1 и структура)
@@ -615,11 +640,11 @@ fn path_mode_blend_t() {
         "blend  t=0.5000",       // двойной SP
         "blend T=0.5000",        // регистр
     ] {
-        let text = format!("EID/L1 v0.2\nUNITS mm\nPATH_MODE {bad}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
+        let text = format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE {bad}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
         expect_err(&text, Some(ErrorCode::InvalidInput), "bad blend t= lexeme");
     }
     // FRAME_PRESET-строка опциональна по grammar
-    let text2 = "EID/L1 v0.2\nUNITS mm\nPATH_MODE blend\nOP 001 PEND\nEND\n";
+    let text2 = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend\nOP 001 PEND\nEND\n";
     let p = parser::parse(text2, "t").expect("no frame_preset line");
     assert!(p.frame_preset.is_none());
 }
@@ -700,7 +725,7 @@ fn preset_anchor_rules() {
         st("G54", "wcs", "none")
     ));
     let text = format!(
-        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\n{ops}",
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\n{ops}",
         ops = ok.strip_prefix(HDR).unwrap()
     );
     assert!(parser::parse(&text, "t").is_ok());
@@ -710,7 +735,7 @@ fn preset_anchor_rules() {
 
     // пресетка G54, первый ход в G55 без define → (b): unknown обязан
     let both_undef = format!(
-        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 RAPID start=unknown end=1.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 002 PEND\nEND\n",
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 RAPID start=unknown end=1.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 002 PEND\nEND\n",
         st("G55", "wcs", "none")
     );
     assert!(parser::parse(&both_undef, "t").is_ok(), "(b) after preset: unknown ok");
@@ -720,7 +745,7 @@ fn preset_anchor_rules() {
     // пресетка G54, первый ход в G55, обе системы определены → вычислимо:
     // start = preset + O54 − O55 = (0,0,5) + (10,0,0) − (3,0,0) = (7,0,5)
     let defined = format!(
-        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_DEFINE p=1 origin=10.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 WCS_DEFINE p=2 origin=3.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 RAPID start=7.0000,0.0000,5.0000 end=8.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 004 PEND\nEND\n",
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_DEFINE p=1 origin=10.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 WCS_DEFINE p=2 origin=3.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 RAPID start=7.0000,0.0000,5.0000 end=8.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 004 PEND\nEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none"), st("G55", "wcs", "none")
     );
     assert!(parser::parse(&defined, "t").is_ok(), "preset cross-wcs with both origins defined");
@@ -741,7 +766,7 @@ fn set_here_anchor_rules() {
 
     // G92 + L20 вместе: Δ != 0 → чтение после L20 не вычислимо → unknown
     let both = format!(
-        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_SET_HERE p=1 delta=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 RAPID start=unknown end=2.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\nEND\n",
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_SET_HERE p=1 delta=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 RAPID start=unknown end=2.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\nEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none")
     );
     assert!(parser::parse(&both, "t").is_ok(), "preset+set_here: unknown ok");
@@ -794,9 +819,11 @@ fn emit_rejects_invalid_canonical_forms() {
     let ds = emitter::emit(&raw).unwrap_err();
     assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput));
 
-    // eid_version != "EID/L1 v0.2" (в т.ч. прежняя v0.1 — формат версионирован)
+    // eid_version != "EID/L1 v0.3" (в т.ч. прежние v0.1/v0.2 — формат версионирован)
     let mut p = parser::parse(&prog("OP 001 PEND\n"), "t").unwrap();
     p.eid_version = "EID/L1 v0.1".into();
+    assert!(emitter::emit(&p).is_err());
+    p.eid_version = "EID/L1 v0.2".into();
     assert!(emitter::emit(&p).is_err());
     p.eid_version = "EID/L1 v0.9".into();
     assert!(emitter::emit(&p).is_err());
@@ -860,7 +887,7 @@ fn emit_op_number_limit() {
         }
         ops.push(Op::ProgramEnd { src: src.clone() });
         Program {
-            eid_version: "EID/L1 v0.2".into(),
+            eid_version: "EID/L1 v0.3".into(),
             units: Units::Mm,
             path_mode: PathMode::ExactPath,
             frame_preset: None,

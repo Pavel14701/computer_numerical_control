@@ -1,4 +1,4 @@
-//! Детерминированный эмиттер канонического текста EID/L1 (grammar.ebnf v0.2):
+//! Детерминированный эмиттер канонического текста EID/L1 (grammar.ebnf v0.3):
 //!   * один оп = одна физическая строка; строки — LF;
 //!   * все поля state в фиксированном порядке feed, spindle, coolant, tool,
 //!     frame, wcs (D3); оси X, Y, Z (D2);
@@ -110,11 +110,11 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     // который сам парсер отверг бы).
     parser::validate(program)?;
 
-    if program.eid_version != "EID/L1 v0.2" {
+    if program.eid_version != "EID/L1 v0.3" {
         errors.push(err(
             ErrorCode::InvalidInput,
             format!(
-                "eid_version `{}` не поддерживается эмиттером L1 v0.2 (ожидается `EID/L1 v0.2`)",
+                "eid_version `{}` не поддерживается эмиттером L1 v0.3 (ожидается `EID/L1 v0.3`)",
                 program.eid_version
             ),
         ));
@@ -132,7 +132,7 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     match &program.path_mode {
         PathMode::ExactPath => out.push_str("PATH_MODE exact_path\n"),
         PathMode::ExactStop => out.push_str("PATH_MODE exact_stop\n"),
-        // grammar v0.2: blend [ SP "t=" number ] — bare G64 легален (A1)
+        // grammar v0.3: blend [ SP "t=" number ] — bare G64 легален (A1)
         PathMode::Blend { t: None } => out.push_str("PATH_MODE blend\n"),
         PathMode::Blend { t: Some(n) } => {
             out.push_str(&format!("PATH_MODE blend t={}\n", emit_num(n, &mut errors, "path_mode.t")))
@@ -158,7 +158,7 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
             // op_num = ровно 3 цифры (grammar); охрана эмиссии — E_LIMIT_EXCEEDED.
             errors.push(Diagnostic {
                 code: ErrorCode::LimitExceeded,
-                message: format!("op number {n} exceeds 3-digit numbering (grammar v0.2: 001..999)"),
+                message: format!("op number {n} exceeds 3-digit numbering (grammar v0.3: 001..999)"),
                 src: None,
                 options: Vec::new(),
                 limit: Some(crate::diag::LimitInfo {
@@ -275,7 +275,7 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             } else {
                 errors.push(err(
                     ErrorCode::InvalidInput,
-                    "RAW reason содержит кавычку/перевод строки — grammar v0.2 не определяет экранирование",
+                    "RAW reason содержит кавычку/перевод строки — grammar v0.3 не определяет экранирование",
                 ));
             }
         }
