@@ -1400,3 +1400,69 @@ fn spec_cov_lcnc_stage_attribution() {
         assert_eq!(d.code, ErrorCode::InvalidInput, "{d:?}");
     }
 }
+
+// ===========================================================================
+// Метаморфические инварианты (несемантичность): comment / whitespace /
+// n-word — parse(X) ≡ parse(без X). Сравнение — semantic_diff (EQUIVALENCE
+// §3: src/sub — provenance, вне эквивалентности; корень «10 нарушений»
+// фаззера B — PartialEq на всём Program, включающий SrcSpan — артефакт
+// фаззера, верну оркестратору; парсер инварианты СОБЛЮДАЕТ).
+// ===========================================================================
+
+fn assert_meta_invariant(base_src: &str, variant_src: &str, tag: &str) {
+    let a = LinuxCncAdapter::new().parse(base_src, tag).expect("base parses");
+    let b = LinuxCncAdapter::new().parse(variant_src, tag).expect("variant parses");
+    let d = eid_harness::diff::semantic_diff(&a, &b, &DiffConfig::default());
+    assert!(d.is_empty(), "{tag}: semantic divergences: {d:?}");
+}
+
+#[test]
+fn metamorphic_comment_invariance() {
+    // (а) содержимое комментария не протекает; (б) конец строки; (в) `;` ≡ `()`.
+    let base = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "M3 S10000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000 (подвод)\n",
+        "G1 X10.0000 F150.0 ; проход 1\n",
+        "M2\n",
+    );
+    let no_comments = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "M3 S10000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G1 X10.0000 F150.0\n",
+        "M2\n",
+    );
+    assert_meta_invariant(base, no_comments, "comment: stripped ≡ без комментариев");
+    // (а) «жадное» содержимое, похожее на слова: не протекает в токены.
+    let greedy = concat!(
+        "(G1 X99 Y99 Z99 начало)\n",
+        "G21 G90 G94 G17 G91.1\n",
+        "M3 S10000\n",
+        "(конец; G1 X98)\n",
+        "G0 X0.0000 Y0.0000 Z5.0000 (подвод)\n",
+        "G1 X10.0000 F150.0 ; проход 1 X77 Y77\n",
+        "M2\n",
+    );
+    assert_meta_invariant(greedy, no_comments, "comment: жадное содержимое не протекает");
+}
+
+#[test]
+fn metamorphic_whitespace_invariance() {
+    // Кратность пробелов/табов между словами не меняет токенизацию.
+    let base = "G21 G90 G94 G17 G91.1\nG0 X1.0000 Y2.0000 Z3.0000\nG1 X-4.0000 F100.0\nM2\n";
+    let doubled = "G21  G90  G94  G17  G91.1\nG0   X1.0000   Y2.0000   Z3.0000\nG1\tX-4.0000  F100.0\nM2\n";
+    assert_meta_invariant(base, doubled, "whitespace: кратность/табы");
+    let tight = "G21G90G94G17G91.1\nG0X1.0000Y2.0000Z3.0000\nG1X-4.0000F100.0\nM2\n";
+    assert_meta_invariant(base, tight, "whitespace: без пробелов вовсе (RS274-стиль)");
+}
+
+#[test]
+fn metamorphic_n_word_invariance() {
+    // N-слова — IGNORED_SAFE: вставка/удаление N-слов не меняет AST.
+    let base = "G21 G90 G94 G17 G91.1\nM3 S8000\nN10 G0 X1.0000 Y1.0000 Z1.0000\nN20 G1 X5.0000 F100.0\nM2\n";
+    let no_n = "G21 G90 G94 G17 G91.1\nM3 S8000\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X5.0000 F100.0\nM2\n";
+    assert_meta_invariant(base, no_n, "n-word: без N ≡ с N");
+    let other_n = "N1 G21 G90 G94 G17 G91.1\nM3 S8000\nN2 G0 X1.0000 Y1.0000 Z1.0000\nG1 N99 X5.0000 F100.0\nM2\n";
+    assert_meta_invariant(other_n, no_n, "n-word: другие номера ≡ без N");
+}

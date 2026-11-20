@@ -33,46 +33,38 @@ fn tierb_parse_or_diagnose_sweep() {
     let mut files: Vec<(PathBuf, bool, &'static str, &'static str)> = Vec::new();
     for e in std::fs::read_dir(&inbox).unwrap() {
         let p = e.unwrap().path();
-        let f = p.file_name().unwrap().to_string_lossy().to_string();
-        let (dialect, grbl) = dialect_of(&f);
+        let fname = p.file_name().unwrap().to_string_lossy().to_string();
+        let (dialect, grbl) = dialect_of(&fname);
         files.push((p, grbl, dialect, "published"));
     }
     for e in std::fs::read_dir(&local).unwrap() {
         let p = e.unwrap().path();
-        let f = p.file_name().unwrap().to_string_lossy().to_string();
         files.push((p, false, "linuxcnc", "local-dev"));
     }
     files.sort();
     let log_path = root().join("_sweep_results.txt");
+    let log_path_str = log_path.display().to_string();
     let mut log = std::io::BufWriter::new(std::fs::File::create(&log_path).unwrap());
     writeln!(log, "# Tier B parse-or-diagnose sweep ({} файлов)", files.len()).unwrap();
     writeln!(log, "# формат: RESULT | tier | dialect | файл | код/ops").unwrap();
 
     let mut ok = 0usize;
     let mut err_by_class: Vec<(String, usize)> = Vec::new();
-    let mut ok_diags: Vec<(String, usize)> = Vec::new();
     for (p, grbl, dialect, tier) in &files {
         let fname = p.file_name().unwrap().to_string_lossy().to_string();
         let src = std::fs::read_to_string(p).unwrap_or_else(|e| {
             writeln!(log, "READ-FAIL | {tier} | {dialect} | {fname} | {e}").unwrap();
-            return String::new();
+            String::new()
         });
         if src.is_empty() {
             continue;
         }
         let started = std::time::Instant::now();
-        let res = if *grbl {
-            GrblAdapter::new().parse(&src, &fname)
-        } else {
-            LinuxCncAdapter::new().parse(&src, &fname)
-        };
+        let adapter: &dyn Adapter = if *grbl { &GrblAdapter::new() } else { &LinuxCncAdapter::new() };
+        let res = adapter.parse(&src, &fname);
         let dt = started.elapsed().as_millis();
         match res {
             Ok(program) => {
-                let a = if *grbl { "grbl" } else { "linuxcnc" };
-                let _ = a;
-                let ndiags = if *grbl { 0 } else { 0 }; // diags через адаптер ниже
-                let _ = ndiags;
                 writeln!(log, "OK | {tier} | {dialect} | {fname} | {} ops | {}ms", program.ops.len(), dt).unwrap();
                 ok += 1;
             }
@@ -92,14 +84,14 @@ fn tierb_parse_or_diagnose_sweep() {
                 }
             }
         }
-        let _ = &ok_diags;
         log.flush().unwrap();
     }
     writeln!(log, "# SUM: ok={ok} err={}", err_by_class.iter().map(|(_, n)| n).sum::<usize>()).unwrap();
     for (c, n) in &err_by_class {
         writeln!(log, "# ERR-CLASS {c}: {n}").unwrap();
     }
-    println!("SWEEP DONE: ok={ok} err_total={}", err_by_class.iter().map(|(_, n)| n).sum::<usize>());
+    drop(log);
+    println!("SWEEP DONE: ok={ok} err_total={}; log: {log_path_str}", err_by_class.iter().map(|(_, n)| n).sum::<usize>());
     for (c, n) in &err_by_class {
         println!("ERR-CLASS {c}: {n}");
     }
