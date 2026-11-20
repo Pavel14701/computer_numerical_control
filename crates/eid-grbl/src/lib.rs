@@ -5,6 +5,10 @@
 //! G61.1/path_mode → warning (Q3), не отказ; G43 H → E_REQUIRES_MACHINE_TABLE.
 #![allow(dead_code)]
 
+pub mod block;
+pub mod gcode;
+pub mod lexer;
+
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
