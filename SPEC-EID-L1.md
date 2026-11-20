@@ -452,7 +452,7 @@ OP 002 WCS_SET_HERE p=2 delta=1.0000,0.0000,0.0000 src=13.1-13.42 feed=none spin
 OP 003 LINEAR start=1.0000,0.0000,5.0000 end=1.0000,0.0000,0.0000 src=14.1-14.44 feed=120.0000 spindle=cw,12000.0000 coolant=flood tool=3 frame=wcs wcs=G55
 OP 004 ARC start=1.0000,0.0000,0.0000 end=6.0000,5.0000,0.0000 center=6.0000,0.0000,0.0000 normal=0.0000,0.0000,1.0000 dir=cw sweep=90.0000 pitch=0.0000 src=15.1-15.44 feed=80.0000 spindle=cw,12000.0000 coolant=flood tool=3 frame=wcs wcs=G55
 OP 005 DWELL seconds=0.5000 src=16.1-16.12 feed=80.0000 spindle=cw,12000.0000 coolant=flood tool=3 frame=wcs wcs=G55
-OP 006 RAW reason="vendor macro" code=E_UNSUPPORTED_SYNTAX src=47.1-49.0
+OP 006 RAW reason="vendor macro" code=E_UNSUPPORTED_SYNTAX src=47.1-49.0 payload=76656e646f72206d6163726f
 OP 007 PEND
 END
 ```

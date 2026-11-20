@@ -1,5 +1,5 @@
 //! EID/L1 AST — замороженный интерфейс v0.1.
-//! Источники: SPEC-EID-L1 v0.9 (§3 модель, §5 опы, §10 числа), grammar.ebnf v0.1 (D1–D10).
+//! Источники: SPEC-EID-L1 v0.10 (§3 модель, §5 опы, §10 числа), grammar.ebnf v0.2 (D1–D10).
 
 /// Число: verbatim-десятичная строка + f64-зеркало (SPEC §10.1).
 /// Сравнение — на f64 (EQUIVALENCE §4); текст — для детерминированной эмиссии (4 dp).
@@ -188,7 +188,7 @@ pub enum Op {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub eid_version: String, // = версия grammar.ebnf, напр. "EID/L1 v0.1"
+    pub eid_version: String, // = версия grammar.ebnf, напр. "EID/L1 v0.2"
     pub units: Units,
     pub path_mode: PathMode,
     pub frame_preset: Option<FramePreset>,

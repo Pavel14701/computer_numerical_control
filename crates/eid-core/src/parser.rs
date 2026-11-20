@@ -1,5 +1,5 @@
-//! EID/L1 — парсер канонического текстового формата (grammar.ebnf v0.1, правила
-//! D1–D10) и валидатор программы (SPEC-EID-L1 v0.9: §3 инварианты, §5 опы,
+//! EID/L1 — парсер канонического текстового формата (grammar.ebnf v0.2, правила
+//! D1–D10) и валидатор программы (SPEC-EID-L1 v0.10: §3 инварианты, §5 опы,
 //! §6 каноническая форма дуги, §2 принцип 2 / Q11 — точки разрыва и связывание).
 //!
 //! Поток разбора: текст → [`parse_text`] (лексика/структура; нарушение —
@@ -215,7 +215,7 @@ fn quoted(s: &str) -> Result<String, String> {
     }
     let inner = &s[1..s.len() - 1];
     if inner.contains('"') || inner.contains('\n') || inner.contains('\r') {
-        return Err("quoted string must not contain quote/newline (grammar v0.1 has no escapes)".into());
+        return Err("quoted string must not contain quote/newline (grammar v0.2 has no escapes)".into());
     }
     Ok(inner.to_string())
 }
@@ -302,7 +302,7 @@ impl<'a> Cur<'a> {
             .f
             .get(self.i)
             .copied()
-            .ok_or_else(|| format!("missing field `{prefix}` (fixed field order, grammar v0.1)"))?;
+            .ok_or_else(|| format!("missing field `{prefix}` (fixed field order, grammar v0.2)"))?;
         if !s.starts_with(prefix) {
             return Err(format!(
                 "expected field `{prefix}` (fixed order), got `{s}`"
@@ -436,10 +436,11 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
         }
     }
 
-    // magic — принимается ровно "EID/L1 v0.1" (magic = версия формата).
-    if lines[0] != "EID/L1 v0.1" {
+    // magic — принимается ровно "EID/L1 v0.2" (magic = версия формата,
+    // SPEC §10.4: изменение формата = новая eid_version; v0.1 больше не валиден).
+    if lines[0] != "EID/L1 v0.2" {
         return Err(fail(
-            format!("invalid magic `{}`; expected `EID/L1 v0.1`", lines[0]),
+            format!("invalid magic `{}`; expected `EID/L1 v0.2`", lines[0]),
             1,
             lines[0],
         ));
@@ -458,15 +459,31 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
         }
     };
 
-    // PATH_MODE (grammar v0.1: exact_path | exact_stop | blend — без t=)
+    // PATH_MODE (grammar v0.2: exact_path | exact_stop | blend [ SP "t=" number ];
+    // без t= легален — bare G64; t — G64 P-, число по D1)
     let path_mode = match lines[2].strip_prefix("PATH_MODE ") {
         Some("exact_path") => PathMode::ExactPath,
         Some("exact_stop") => PathMode::ExactStop,
         Some("blend") => PathMode::Blend { t: None },
-        _ => {
+        Some(rest) => match rest.strip_prefix("blend t=") {
+            Some(t) => PathMode::Blend {
+                t: Some(num(t).map_err(|e| fail(format!("PATH_MODE blend: {e}"), 3, lines[2]))?),
+            },
+            None => {
+                return Err(fail(
+                    format!(
+                        "invalid PATH_MODE `{}` (grammar v0.2: exact_path|exact_stop|blend [ t=<number> ])",
+                        lines[2]
+                    ),
+                    3,
+                    lines[2],
+                ))
+            }
+        },
+        None => {
             return Err(fail(
                 format!(
-                    "invalid PATH_MODE `{}` (grammar v0.1: exact_path|exact_stop|blend)",
+                    "invalid PATH_MODE `{}` (grammar v0.2: exact_path|exact_stop|blend [ t=<number> ])",
                     lines[2]
                 ),
                 3,
@@ -555,7 +572,7 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
     }
 
     Ok(Program {
-        eid_version: "EID/L1 v0.1".to_string(),
+        eid_version: "EID/L1 v0.2".to_string(),
         units,
         path_mode,
         frame_preset,
@@ -565,7 +582,7 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 
 /// Токенизация OP-строки: поля через одиночный SP; символ '"' переключает
 /// режим «в кавычках» (reason может содержать пробелы; экранирования в
-/// grammar v0.1 нет — `char_without_quote_or_nl`).
+/// grammar v0.2 нет — `char_without_quote_or_nl`).
 fn split_fields(line: &str) -> Result<Vec<&str>, String> {
     let b = line.as_bytes();
     let mut out: Vec<&str> = Vec::new();
