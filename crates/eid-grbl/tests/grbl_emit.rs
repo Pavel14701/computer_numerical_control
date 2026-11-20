@@ -295,7 +295,7 @@ fn coolant_29_mist_flood_none() {
     assert!(text.contains("M9\nG1 X30.0000 Y0.0000 Z5.0000"), "{text}");
     // v1-пара — байт-в-байт emit(golden) (регенерация подтверждена).
     let v1_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../corpus/tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.grbl-1.1.ngc");
+        .join("../../corpus/tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc");
     let v1 = std::fs::read_to_string(&v1_path).expect("v1 pair exists");
     assert_eq!(v1, text, "v1-пара #29 не равна emit(golden)");
 }
