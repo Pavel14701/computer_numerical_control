@@ -280,3 +280,22 @@ fn legality_table_shape_invariants() {
     conds.dedup();
     assert_eq!(conds.len(), table.illegal.len(), "дубли условий в illegal");
 }
+
+#[test]
+fn coolant_29_mist_flood_none() {
+    // CORPUS #29 (Adapter-wrong, дельта coolant): переход flood+mist → none
+    // обязан дать M9 перед 4-м ходом (StateField{coolant}@3 — красный B);
+    // все переходы к none → M9, включения → M7/M8, частичные выключения →
+    // M9 + повтор оставшегося.
+    roundtrip("29_coolant_mist_flood/coolant_mist_flood.grbl.ngc");
+    let golden = EidTextAdapter::new()
+        .parse(&corpus("29_coolant_mist_flood/golden.eid"), "29.golden.eid")
+        .expect("golden parses");
+    let text = GrblAdapter::new().emit(&golden).expect("emit ok");
+    assert!(text.contains("M9\nG1 X30.0000 Y0.0000 Z5.0000"), "{text}");
+    // v1-пара — байт-в-байт emit(golden) (регенерация подтверждена).
+    let v1_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.grbl-1.1.ngc");
+    let v1 = std::fs::read_to_string(&v1_path).expect("v1 pair exists");
+    assert_eq!(v1, text, "v1-пара #29 не равна emit(golden)");
+}

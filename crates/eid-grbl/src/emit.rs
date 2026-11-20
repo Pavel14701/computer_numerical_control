@@ -89,26 +89,32 @@ impl Ectx {
             self.spindle = st.spindle.clone();
         }
         if st.coolant != self.coolant {
+            // Дельта coolant (CORPUS #29): ЛЮБОЕ изменение поля даёт M-коды.
+            // Переход к none (из flood / mist / flood+mist) → M9; включения —
+            // M7/M8; частичное выключение при живом втором — единственный
+            // путь M9 (гасит обе) + повторное включение оставшейся.
             let prev = self.coolant;
             let new = st.coolant;
-            if new.mist == prev.mist && new.flood != prev.flood {
-                if new.flood {
-                    self.out.push_str("M8\n");
-                } else {
-                    self.out.push_str("M9\n");
+            if !new.flood && !new.mist {
+                self.out.push_str("M9\n");
+            } else {
+                let mut turned = String::new();
+                if new.mist && !prev.mist {
+                    turned.push_str("M7\n");
                 }
-            } else if new.mist != prev.mist || new.flood != prev.flood {
-                // Частичное выключение одной из двух выключается только M9
-                // (гасит обе) с повторным включением оставшейся.
-                if prev.flood && !new.flood && new.mist {
-                    self.out.push_str("M9\nM8\n"); // флад гаснет→нет… (mist-единств.)
-                } else {
-                    if new.mist && !prev.mist {
+                if new.flood && !prev.flood {
+                    turned.push_str("M8\n");
+                }
+                if turned.is_empty() {
+                    self.out.push_str("M9\n");
+                    if new.mist {
                         self.out.push_str("M7\n");
                     }
-                    if new.flood && !prev.flood {
+                    if new.flood {
                         self.out.push_str("M8\n");
                     }
+                } else {
+                    self.out.push_str(&turned);
                 }
             }
             self.coolant = new;
