@@ -3,6 +3,86 @@
 //! emit (по повторно разобранному тексту), standalone. parser.rs и
 //! emitter.rs делегируют сюда — единственная копия правил валидации.
 //!
+//! Итерация 5 (MLIR verify-паттерн): инварианты сгруппированы ПО ТИПУ ОПА —
+//! [`verify_op`] (exhaustive match по вариантам Op: добавление нового варианта
+//! Op = обязательный verify-арм, компилятор enforce) + [`verify_kept_op`]
+//! (инварианты итогового AST после отбрасывания zero-length) + program-level
+//! pre ([`verify_program_end`]) / post ([`check_linking`]). Поведение
+//! идентично итерации 4 — рефактор под защитой тестов (48 golden + 36 unit).
+//!
+//! ===========================================================================
+//! ЧЕК-ЛИСТ ОБЯЗАТЕЛЬСТВ SPEC-EID-L1 v0.15 → ТЕСТЫ (grep по obligation-словам
+//! §2/§3/§5/§6/§10; трассируемость правило↔тест. Тесты: tests/spec_obligations.rs
+//! [новые, spec_*], tests/roundtrip.rs, tests/grammar_conformance.rs):
+//!   §2 принцип 2 (Q11):
+//!     (a) первый motion без якоря — unknown легален / known нелегален
+//!          → spec_3_q11_breakpoint_matrix [a-known, a-unknown, a-anchor-*]
+//!     (b) смена wcs, критерий РАЗНОСТИ (обе системы in-text) —
+//!          → spec_3_q11_breakpoint_matrix [b-unknown, b-known, b-computable-*],
+//!            roundtrip::cross_wcs_linking_with_defines, known_at_uncomputable_rejected
+//!     (c) machine-frame ход (вычислим ⇔ нет preset И origin in-text;
+//!         L20-origin не считается; последующие цепляются) —
+//!          → spec_3_q11_breakpoint_matrix [c-known-ok, c-unknown-err, c-noorigin-*,
+//!            c-preset-*], roundtrip::machine_frame_linking
+//!     (d) wcs-ход после machine (тот же критерий) —
+//!          → spec_3_q11_breakpoint_matrix [d-withorigin-*, d-noorigin-*]
+//!     unknown-оп обязан быть RAPID/LINEAR; ARC unknown → err
+//!          → roundtrip::verify_broken_ast_exact_codes [#8], neg_arc_unknown_start
+//!     связывание вне разрывов = end предыдущего (точное равенство/якоря) —
+//!          → roundtrip::unknown_outside_break_rejected, preset_anchor_rules,
+//!            set_here_anchor_rules
+//!     частичный end (дефолт-0 в (a) / наследует неизвестное в (b)-(d) /
+//!         machine — только полные) — N/A-core: end в EID AST — полный vec3,
+//!         правило канонизатора диалекта (агенты C/D)
+//!   §3:
+//!     program_end ровно один / последний / единственный в минимальной —
+//!          → spec_3_pend_invariants_three_modes (×3 режима: parse / validate /
+//!            validate_with_notices), minimal_program_valid,
+//!            verify_broken_ast_exact_codes [#1-3]
+//!     linear/arc в итоговом AST требуют feed ≠ none (после отбрасывания!) —
+//!          → spec_3_feed_final_ast, roundtrip::linear_feed_none_rejected,
+//!            zero_length_linear_feed_none_dropped_not_error
+//!     zero-length (start == end; arc: sweep≠360 + pitch=0; dwell 0) —
+//!         drop+notice, не ошибка → spec_3_zero_length_all_kinds_with_preset,
+//!         roundtrip::zero_length_rapid_dropped_with_notice, dwell_zero_*
+//!     start == end + center ≠ start + sweep = 360 = полный круг (kept) —
+//!          → spec_3_full_circle_sweep360_kept [+ 359-drop негатив]
+//!     path_mode глобален (один на программу) —
+//!          → spec_3_path_mode_single (дубликат строки = lexical err; AST —
+//!            одно поле по конструкции)
+//!     machine-frame — только полные end — N/A-core (см. §2 частичный end)
+//!   §5 / D-правила (grammar.ebnf v0.3):
+//!     D4 TOOL_CHANGE tool= == state.tool → spec_5_d4_tool_mismatch,
+//!         roundtrip::d4_tool_change_mismatch, verify_broken [#12]
+//!     D5 пресетки до первого motion-опа → roundtrip::d5_set_here_after_motion,
+//!         verify_broken [#13]
+//!     D6 RAW/PEND без state → grammar_conformance::op_pend_valid, op_raw_valid
+//!     D7 sweep ∈ (0°,360°] / |normal|=1 / dwell ≥ 0 / p ∈ 1..9 →
+//!         spec_5_d7_domains, roundtrip::arc_domains_and_geometry,
+//!         verify_broken [#9,#10,#14,#15], grammar_conformance::p_domain_lexical_boundary
+//!     D8 sub= только RAPID/LINEAR/ARC/DWELL → grammar_conformance::
+//!         sub_valid_on_motion_ops, sub_invalid_on_non_motion
+//!   §6 (в EID AST нет R-формы — R-правила знака/chord>2R/start==end —
+//!      канонизатор C/D; инварианты РЕЗУЛЬТАата проверяются здесь):
+//!     ρ_start ≈ ρ_end планиметрически (хорда > 2R → невозможная дуга) —
+//!          → spec_6_impossible_arc, roundtrip::arc_domains_and_geometry
+//!     (end−start)·normal ≈ pitch → verify_broken [#11-семейство],
+//!         arc_domains_and_geometry
+//!     уравнение позиции end ≈ center + Rot(n,dir,sweep)·(start−center) +
+//!         pitch·normal (закрывает sweep vs 360°−sweep) →
+//!         spec_6_arc_direction_must_match_rotation, verify_broken [#11]
+//!     R+pitch валиден (pitch — обычное поле) → spec_6_arc_units_agnostic_inch
+//!         [+ pitch≠0 во всех arc-тестах], golden #46
+//!   §10:
+//!     10.2 эмиссия 4dp/без экспоненты → roundtrip::fmt_num_rules
+//!     10.4 eid_version = версия grammar → grammar_conformance::magic_*
+//!     10.5 single-final-rounding — N/A-core (канонизатор C/D); emit-сторона:
+//!         emitter::emit_num округляет одним fmt_num (без промежуточных)
+//!     10.6 квантование входа к 4dp; zero-check ПОСЛЕ квантования —
+//!          → spec_10_quantized_zero_check [-0.0000 ≡ 0.0000 → drop;
+//!            0.0001 ≠ 0.0000 → kept]
+//! ===========================================================================
+//!
 //! Источники правил: SPEC-EID-L1 v0.15 (§3 инварианты, §5 опы, §6 каноническая
 //! форма дуги, §2 принцип 2 / Q11 — точки разрыва и связывание), grammar.ebnf
 //! v0.3 (D4–D8), допуски — EQUIVALENCE §4. Все диагностики pass'а помечены
@@ -166,12 +246,31 @@ fn motion_parts(op: &Op) -> Option<(&StartPoint, &Point3, &State)> {
     }
 }
 
-fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Vec<Diagnostic>) {
-    let mut errors: Vec<Diagnostic> = Vec::new();
-    let ops = &program.ops;
+/// Контекст verify одного опа (MLIR-паттерн: pass'овое состояние, общее
+/// для всех армов match'а).
+struct VerifyCtx {
+    /// Индекс опа в исходном (сыром) списке ops.
+    index: usize,
+    /// Индекс первого motion-опа сырого списка. FRAME_PRESET — поле заголовка
+    /// (позиция структурная); WCS_SET_HERE — оп, проверяется по текстовому
+    /// порядку (D5).
+    first_motion_raw: Option<usize>,
+}
 
-    // --- §3: program_end ровно один раз, последний; в минимальной программе —
-    //     единственный; опов после него нет. --------------------------------
+/// Результат verify одного опа (до cross-op-проходов).
+#[derive(Default)]
+struct OpVerify {
+    /// Нарушения, действительные независимо от отбрасывания zero-length
+    /// (D4, D5, D7-домены).
+    hard: Vec<Diagnostic>,
+    /// zero-length кандидат (SPEC §3): notice в режиме канонизации,
+    /// диагностика в режиме эмиссии.
+    zero: Option<(NoticeKind, String)>,
+}
+
+/// Program-level pre: §3 program_end — ровно один, последний; в минимальной
+/// программе — единственный; опов после него нет.
+fn verify_program_end(ops: &[Op], errors: &mut Vec<Diagnostic>) {
     if ops.is_empty() {
         errors.push(diag(
             ErrorCode::InvalidInput,
@@ -205,99 +304,183 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
             ));
         }
     }
+}
 
-    // --- D5: FRAME_PRESET/WCS_SET_HERE — только до первого motion-опа.
-    //     FRAME_PRESET — поле заголовка (позиция структурная); WCS_SET_HERE —
-    //     оп, проверяем по текстовому порядку. -------------------------------
-    let first_motion_raw = ops.iter().position(is_motion);
-    for (j, o) in ops.iter().enumerate() {
-        if let Op::WcsSetHere { .. } = o {
-            if let Some(fm) = first_motion_raw {
-                if j > fm {
-                    errors.push(diag(
+/// Per-op verify (MLIR verify-паттерн, итерация 5): инварианты сгруппированы
+/// ПО ТИПУ ОПА (exhaustive match по вариантам Op — добавление нового варианта
+/// требует арма здесь, компилятор enforce), не по типу правила.
+/// zero-кандидат вынесен отдельно: его судьба (notice vs диагностика) решает
+/// run() по режиму прохода.
+fn verify_op(op: &Op, ctx: &VerifyCtx) -> OpVerify {
+    let mut v = OpVerify::default();
+    match op {
+        Op::Rapid { start, end, .. } => {
+            v.zero = zero_motion(start, end);
+        }
+        Op::Linear { start, end, .. } => {
+            v.zero = zero_motion(start, end);
+        }
+        Op::Arc { start, end, sweep_deg, pitch, .. } => {
+            // start == end при sweep != 360° и pitch == 0 — нулевой ход,
+            // не дуга (SPEC §3/§6; sweep=0 сюда же — CORPUS #13).
+            v.zero = zero_arc(start, end, sweep_deg, pitch);
+        }
+        Op::Dwell { seconds, .. } => {
+            if nval(seconds) < 0.0 {
+                v.hard.push(diag(
+                    ErrorCode::InvalidInput,
+                    format!("dwell seconds={} < 0 (D7, SPEC §5.2)", seconds.text),
+                    op_src(op),
+                ));
+            }
+            if nval(seconds) == 0.0 {
+                v.zero = Some((NoticeKind::ZeroDwell, "zero dwell dropped (seconds == 0, SPEC §5.2)".into()));
+            }
+        }
+        Op::ToolChange { tool, state, .. } => {
+            // D4: значение op-поля tool= равно state-полю tool=
+            if state.tool != Some(*tool) {
+                v.hard.push(diag(
+                    ErrorCode::InvalidInput,
+                    format!("TOOL_CHANGE tool={tool} != state tool={} (D4)", state.tool.map(|t| t.to_string()).unwrap_or_else(|| "none".into())),
+                    op_src(op),
+                ));
+            }
+        }
+        Op::ProgramStop { .. } => {}
+        Op::ProgramEnd { .. } => {} // программа-уровень: verify_program_end
+        Op::WcsDefine { p, .. } => {
+            check_p_domain(op, *p, &mut v.hard);
+        }
+        Op::WcsSetHere { p, .. } => {
+            check_p_domain(op, *p, &mut v.hard);
+            // D5: только до первого motion-опа (SPEC §3/§5.3)
+            if let Some(fm) = ctx.first_motion_raw {
+                if ctx.index > fm {
+                    v.hard.push(diag(
                         ErrorCode::InvalidInput,
                         "WCS_SET_HERE after first motion op (D5, SPEC §3/§5.3: only a preset before the first motion)",
-                        op_src(o),
+                        op_src(op),
                     ));
                 }
             }
         }
+        Op::Raw { .. } => {}
     }
+    v
+}
 
-    // --- D4 / D7 (домены, не зависящие от отбрасывания) ---------------------
-    for o in ops.iter() {
-        match o {
-            Op::ToolChange { tool, state, .. } => {
-                // D4: значение op-поля tool= равно state-полю tool=
-                if state.tool != Some(*tool) {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        format!("TOOL_CHANGE tool={tool} != state tool={} (D4)", state.tool.map(|t| t.to_string()).unwrap_or_else(|| "none".into())),
-                        op_src(o),
-                    ));
-                }
-            }
-            Op::WcsDefine { p, .. } | Op::WcsSetHere { p, .. } => {
-                if *p < 1 || *p > 9 {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        format!("p={} out of domain 1..9 (D7: G54..G59.3)", p),
-                        op_src(o),
-                    ));
-                }
-            }
-            Op::Dwell { seconds, .. } => {
-                if nval(seconds) < 0.0 {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        format!("dwell seconds={} < 0 (D7, SPEC §5.2)", seconds.text),
-                        op_src(o),
-                    ));
-                }
-            }
-            _ => {}
+/// D7: домен номера системы p (1..9: G54..G59.3).
+fn check_p_domain(op: &Op, p: u8, errors: &mut Vec<Diagnostic>) {
+    if !(1..=9).contains(&p) {
+        errors.push(diag(
+            ErrorCode::InvalidInput,
+            format!("p={p} out of domain 1..9 (D7: G54..G59.3)"),
+            op_src(op),
+        ));
+    }
+}
+
+/// zero-length candidate для rapid/linear.
+fn zero_motion(start: &StartPoint, end: &Point3) -> Option<(NoticeKind, String)> {
+    if let StartPoint::Known(s) = start {
+        if p3_eq(s, end) {
+            return Some((NoticeKind::ZeroLengthMotion, "zero-length motion dropped (start == end, SPEC §3)".into()));
         }
     }
+    None
+}
 
-    // --- Отбрасывание zero-length (Parse: drop+notice; Emit: ошибка) --------
+/// zero-length candidate для arc.
+fn zero_arc(start: &StartPoint, end: &Point3, sweep_deg: &Num, pitch: &Num) -> Option<(NoticeKind, String)> {
+    if let StartPoint::Known(s) = start {
+        if p3_eq(s, end) && nval(sweep_deg) != 360.0 && nval(pitch) == 0.0 {
+            return Some((NoticeKind::ZeroLengthArc, "zero-length arc dropped (start == end, sweep != 360°, pitch == 0; SPEC §3/§6)".into()));
+        }
+    }
+    None
+}
+
+/// Kept-pass (exhaustive match по вариантам Op): инварианты «итогового AST» —
+/// применяются только к выжившим после отбрасывания zero-length (SPEC §3:
+/// feed для linear/arc; D7-домены дуги; ARC с unknown-стартом) + §6-геометрия
+/// (eps_pos — по выжившим endpoint'ам, EQUIVALENCE §4).
+fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
+    match op {
+        Op::Linear { state, .. } => {
+            if state.feed.is_none() {
+                errors.push(diag(
+                    ErrorCode::InvalidInput,
+                    "linear with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
+                    op_src(op),
+                ));
+            }
+        }
+        Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state, .. } => {
+            if matches!(start, StartPoint::Unknown) {
+                errors.push(diag(
+                    ErrorCode::InvalidInput,
+                    "arc with start=unknown is invalid (SPEC §2 Q11: arc requires a numeric start)",
+                    op_src(op),
+                ));
+            }
+            let s = nval(sweep_deg);
+            if s <= 0.0 || s > 360.0 {
+                errors.push(diag(
+                    ErrorCode::InvalidInput,
+                    format!("sweep={} out of domain (0°, 360°] (D7, SPEC §6)", sweep_deg.text),
+                    op_src(op),
+                ));
+            }
+            let len = vlen(&vec_vals(normal));
+            if (len - 1.0).abs() > 0.001 {
+                // 0.001 — допуск 4dp-квантования компонент единичного вектора (D7)
+                errors.push(diag(
+                    ErrorCode::InvalidInput,
+                    format!("|normal| = {len:.6} != 1 (D7)"),
+                    op_src(op),
+                ));
+            }
+            if state.feed.is_none() {
+                errors.push(diag(
+                    ErrorCode::InvalidInput,
+                    "arc with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
+                    op_src(op),
+                ));
+            }
+            if let StartPoint::Known(sk) = start {
+                check_arc_geometry(op, sk, end, center, normal, *dir, nval(sweep_deg), nval(pitch), eps_pos, errors);
+            }
+        }
+        Op::Rapid { .. }
+        | Op::Dwell { .. }
+        | Op::ToolChange { .. }
+        | Op::ProgramStop { .. }
+        | Op::ProgramEnd { .. }
+        | Op::WcsDefine { .. }
+        | Op::WcsSetHere { .. }
+        | Op::Raw { .. } => {}
+    }
+}
+
+fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Vec<Diagnostic>) {
+    let mut errors: Vec<Diagnostic> = Vec::new();
+    let ops = &program.ops;
+
+    // --- Program-level pre: §3 program_end ----------------------------------
+    verify_program_end(ops, &mut errors);
+    let first_motion_raw = ops.iter().position(is_motion);
+
+    // --- Per-op pass (MLIR verify-паттерн: exhaustive match по Op) ----------
+    //     Отбрасывание zero-length: Parse-путь — drop+notice; Emit-путь —
+    //     ошибка (SPEC §3).
     let mut kept: Vec<Op> = Vec::new();
     let mut notices: Vec<Notice> = Vec::new();
     for (i, o) in ops.iter().enumerate() {
-        let zero: Option<(NoticeKind, String)> = match o {
-            Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => {
-                if let StartPoint::Known(s) = start {
-                    if p3_eq(s, end) {
-                        Some((NoticeKind::ZeroLengthMotion, "zero-length motion dropped (start == end, SPEC §3)".into()))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Op::Arc { start, end, sweep_deg, pitch, .. } => {
-                // start == end при sweep != 360° и pitch == 0 — нулевой ход,
-                // не дуга (SPEC §3/§6; sweep=0 сюда же — CORPUS #13).
-                if let StartPoint::Known(s) = start {
-                    if p3_eq(s, end) && nval(sweep_deg) != 360.0 && nval(pitch) == 0.0 {
-                        Some((NoticeKind::ZeroLengthArc, "zero-length arc dropped (start == end, sweep != 360°, pitch == 0; SPEC §3/§6)".into()))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Op::Dwell { seconds, .. } => {
-                if nval(seconds) == 0.0 {
-                    Some((NoticeKind::ZeroDwell, "zero dwell dropped (seconds == 0, SPEC §5.2)".into()))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        match zero {
+        let ctx = VerifyCtx { index: i, first_motion_raw };
+        let ov = verify_op(o, &ctx);
+        errors.extend(ov.hard);
+        match ov.zero {
             Some((kind, message)) => {
                 if reject_zero_length {
                     errors.push(diag(
@@ -317,66 +500,14 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
         }
     }
 
-    // --- Проверки по выжившим опам ------------------------------------------
-    // D7-домены дуги; ARC с unknown-стартом; feed для linear/arc (SPEC §3:
-    // требование относится к опам в итоговом AST, т.е. после отбрасывания).
-    for o in kept.iter() {
-        match o {
-            Op::Arc { start, sweep_deg, normal, state, .. } => {
-                if matches!(start, StartPoint::Unknown) {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        "arc with start=unknown is invalid (SPEC §2 Q11: arc requires a numeric start)",
-                        op_src(o),
-                    ));
-                }
-                let s = nval(sweep_deg);
-                if s <= 0.0 || s > 360.0 {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        format!("sweep={} out of domain (0°, 360°] (D7, SPEC §6)", sweep_deg.text),
-                        op_src(o),
-                    ));
-                }
-                let len = vlen(&vec_vals(normal));
-                if (len - 1.0).abs() > 0.001 {
-                    // 0.001 — допуск 4dp-квантования компонент единичного вектора (D7)
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        format!("|normal| = {len:.6} != 1 (D7)"),
-                        op_src(o),
-                    ));
-                }
-                if state.feed.is_none() {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        "arc with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
-                        op_src(o),
-                    ));
-                }
-            }
-            Op::Linear { state, .. } => {
-                if state.feed.is_none() {
-                    errors.push(diag(
-                        ErrorCode::InvalidInput,
-                        "linear with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
-                        op_src(o),
-                    ));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // --- §6: геометрическая валидация выживших дуг --------------------------
+    // --- Kept-pass: инварианты итогового AST + §6-геометрия -----------------
     let eps_pos = eps_for(&kept);
     for o in kept.iter() {
-        if let Op::Arc { start: StartPoint::Known(s), end, center, normal, dir, sweep_deg, pitch, .. } = o {
-            check_arc_geometry(o, s, end, center, normal, *dir, nval(sweep_deg), nval(pitch), eps_pos, &mut errors);
-        }
+        verify_kept_op(o, eps_pos, &mut errors);
     }
 
-    // --- Связывание start (SPEC §2 принцип 2, Q11; v0.9 обязанность) --------
+    // --- Program-level post: связывание start (SPEC §2 принцип 2, Q11; v0.9
+    //     обязанность) по выжившим -------------------------------------------
     check_linking(program, &kept, &mut errors);
 
     (kept, notices, errors)
