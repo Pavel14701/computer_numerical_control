@@ -24,7 +24,7 @@ pub trait Adapter {
 // ===========================================================================
 
 use std::cell::RefCell;
-use crate::parser::Notice;
+use crate::verify::Notice;
 
 /// Адаптер канонического текста EID/L1 (dialect_name = "eid-l1").
 ///

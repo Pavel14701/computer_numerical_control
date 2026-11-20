@@ -1,16 +1,19 @@
 //! Итерация 1 — Агент A (EID Core): round-trip на пилотных golden + негативные
 //! и позитивные unit-тесты парсера/эмиттера/валидации.
+//! Итерация 4 — verify-pass (MLIR-паттерн): validate на любом этапе пайплайна;
+//! Diagnostic.stage (interface v0.1.2).
 //!
 //! Критерии: parse(golden) → Ok; emit(parsed) == golden байт-в-байт (golden
 //! написаны по grammar.ebnf v0.3); parse(emit(parsed)) ≡ первый AST (сравнение
 //! на f64-зеркале, EQUIVALENCE §3/§4); emit(parsed) дважды — байт-в-байт;
-//! LF/CRLF не важен для parse.
+//! LF/CRLF не важен для parse; validate(golden) = пусто (все 48).
 
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::*;
-use eid_core::diag::ErrorCode;
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_core::emitter;
 use eid_core::parser::{self, NoticeKind};
+use eid_core::verify;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -905,5 +908,361 @@ fn emit_op_number_limit() {
     assert!(
         ds.iter().any(|d| d.code == ErrorCode::LimitExceeded),
         "expected E_LIMIT_EXCEEDED, got {ds:?}"
+    );
+}
+
+// ===========================================================================
+// Итерация 4: verify-pass (MLIR-паттерн) — validate на любом этапе пайплайна
+// ===========================================================================
+
+/// Хелперы построения AST для verify-тестов (структурно, не через текст).
+mod astbuild {
+    use eid_core::ast::*;
+    use eid_core::emitter::fmt_num;
+
+    pub fn n(v: f64) -> Num {
+        Num::new(fmt_num(v), v)
+    }
+    pub fn p3(x: f64, y: f64, z: f64) -> Point3 {
+        Point3 { x: n(x), y: n(y), z: n(z) }
+    }
+    #[allow(dead_code)]
+    pub fn src() -> SrcSpan {
+        SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }
+    }
+    /// Снапшот состояния: feed (None = none), wcs, frame, tool.
+    pub fn st(feed: Option<f64>, wcs: Wcs, frame: Frame, tool: Option<u32>) -> State {
+        State {
+            feed: feed.map(n),
+            spindle: Spindle::Off,
+            coolant: Coolant { flood: false, mist: false },
+            tool,
+            frame,
+            wcs,
+        }
+    }
+    pub fn program(ops: Vec<Op>) -> Program {
+        Program {
+            eid_version: "EID/L1 v0.3".into(),
+            units: Units::Mm,
+            path_mode: PathMode::ExactPath,
+            frame_preset: None,
+            ops,
+        }
+    }
+    pub fn pend() -> Op {
+        Op::ProgramEnd { src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } }
+    }
+    pub fn rapid(start: StartPoint, end: Point3, st: State) -> Op {
+        Op::Rapid { start, end, state: st, src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None }
+    }
+    pub fn linear(start: StartPoint, end: Point3, st: State) -> Op {
+        Op::Linear { start, end, state: st, src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn arc(start: StartPoint, end: Point3, center: Point3, normal: Point3, dir: Dir, sweep: f64, pitch: f64, st: State) -> Op {
+        Op::Arc {
+            start,
+            end,
+            center,
+            normal,
+            dir,
+            sweep_deg: n(sweep),
+            pitch: n(pitch),
+            state: st,
+            src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+            sub: None,
+        }
+    }
+}
+
+/// validate(golden) = пусто для всех 48 golden (и notices пусты: golden —
+/// пост-канонизационная форма). Pass вызывается standalone на сыром
+/// parse_raw-AST — «любой этап пайплайна».
+#[test]
+fn verify_all_goldens_clean() {
+    for f in golden_files() {
+        let text = fs::read_to_string(&f).unwrap();
+        let name = f.display().to_string();
+        let raw = parser::parse_raw(&text, &name)
+            .unwrap_or_else(|ds| panic!("{name}: raw parse failed: {ds:#?}"));
+        let ds = verify::validate(&raw);
+        assert!(
+            ds.is_empty(),
+            "{name}: validate(golden) not empty: {:#?}",
+            ds.iter().map(|d| (&d.code, &d.stage, &d.message)).collect::<Vec<_>>()
+        );
+        let report = verify::validate_with_notices(&raw);
+        assert!(
+            report.notices.is_empty(),
+            "{name}: golden must contain no droppable ops: {:#?}",
+            report.notices
+        );
+        assert!(
+            report.diagnostics.is_empty(),
+            "{name}: golden diagnostics: {:#?}",
+            report.diagnostics
+        );
+        assert_eq!(report.kept_ops.len(), raw.ops.len(), "{name}: kept_ops must match when clean");
+    }
+}
+
+/// validate(сломанный AST) → точные коды + Stage::Verify на каждой диагностике.
+#[test]
+fn verify_broken_ast_exact_codes() {
+    use astbuild::*;
+    let ok_st = st(None, Wcs::G54, Frame::Wcs, None);
+    let feed_st = st(Some(100.0), Wcs::G54, Frame::Wcs, None);
+
+    let check = |prog: Program, ctx: &str| -> Vec<Diagnostic> {
+        let ds = verify::validate(&prog);
+        assert!(!ds.is_empty(), "{ctx}: expected diagnostics, got empty");
+        assert!(
+            ds.iter().all(|d| d.code == ErrorCode::InvalidInput),
+            "{ctx}: expected all E_INVALID_INPUT, got {:#?}",
+            ds.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        assert!(
+            ds.iter().all(|d| d.stage == Stage::Verify),
+            "{ctx}: expected all Stage::Verify, got {:#?}",
+            ds.iter().map(|d| d.stage).collect::<Vec<_>>()
+        );
+        ds
+    };
+
+    // 1. пустой список опов (нет PEND)
+    check(program(vec![]), "empty ops");
+    // 2. PEND не последний
+    check(
+        program(vec![
+            pend(),
+            rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+        ]),
+        "PEND not last",
+    );
+    // 3. дубликат PEND
+    check(
+        program(vec![
+            rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+            pend(),
+            pend(),
+        ]),
+        "duplicate PEND",
+    );
+    // 4. zero-length rapid в каноническом AST (путь эмиссии — reject, не notice)
+    let ds = check(
+        program(vec![
+            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), ok_st.clone()),
+            pend(),
+        ]),
+        "zero-length rapid in AST",
+    );
+    assert!(ds.iter().any(|d| d.message.contains("must be dropped")), "zero-length message");
+    // 5. zero-length dwell в каноническом AST
+    let ds = check(
+        program(vec![
+            Op::Dwell { seconds: n(0.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None },
+            pend(),
+        ]),
+        "zero dwell in AST",
+    );
+    assert!(ds.iter().any(|d| d.message.contains("must be dropped")), "zero dwell message");
+    // 6. linear с feed=none
+    check(
+        program(vec![
+            linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+            pend(),
+        ]),
+        "linear feed none",
+    );
+    // 7. arc с feed=none
+    check(
+        program(vec![
+            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, ok_st.clone()),
+            pend(),
+        ]),
+        "arc feed none",
+    );
+    // 8. ARC с unknown-стартом
+    check(
+        program(vec![
+            arc(StartPoint::Unknown, p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            pend(),
+        ]),
+        "arc unknown start",
+    );
+    // 9. sweep вне (0°, 360°]
+    check(
+        program(vec![
+            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 400.0, 2.0, feed_st.clone()),
+            pend(),
+        ]),
+        "sweep 400",
+    );
+    // 10. |normal| != 1
+    check(
+        program(vec![
+            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 2.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            pend(),
+        ]),
+        "normal len 2",
+    );
+    // 11. end не согласован с геометрией (§6.3)
+    check(
+        program(vec![
+            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(1.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            pend(),
+        ]),
+        "arc endpoint inconsistent",
+    );
+    // 12. D4: TOOL_CHANGE tool= != state.tool
+    check(
+        program(vec![
+            Op::ToolChange { tool: 3, state: st(None, Wcs::G54, Frame::Wcs, None), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            pend(),
+        ]),
+        "D4 mismatch",
+    );
+    // 13. D5: WCS_SET_HERE после motion-опа
+    check(
+        program(vec![
+            rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+            Op::WcsSetHere { p: 2, delta: p3(1.0, 0.0, 0.0), state: st(None, Wcs::G55, Frame::Wcs, None), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            pend(),
+        ]),
+        "set_here after motion",
+    );
+    // 14. D7: p вне 1..9
+    check(
+        program(vec![
+            Op::WcsDefine { p: 0, origin: p3(0.0, 0.0, 0.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            pend(),
+        ]),
+        "wcs_define p=0",
+    );
+    // 15. D7: dwell < 0
+    check(
+        program(vec![
+            Op::Dwell { seconds: n(-1.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None },
+            pend(),
+        ]),
+        "negative dwell",
+    );
+    // 16. Q11: unknown вне точки разрыва (второй motion, та же wcs)
+    check(
+        program(vec![
+            rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+            rapid(StartPoint::Unknown, p3(2.0, 0.0, 0.0), ok_st.clone()),
+            pend(),
+        ]),
+        "unknown outside break",
+    );
+    // 17. Q11: known в точке разрыва (первый motion без якоря)
+    check(
+        program(vec![
+            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(2.0, 0.0, 0.0), ok_st.clone()),
+            pend(),
+        ]),
+        "known at break",
+    );
+    // 18. Q11: known после смены wcs без in-text origins (критерий разности)
+    check(
+        program(vec![
+            rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
+            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(2.0, 0.0, 0.0), st(None, Wcs::G55, Frame::Wcs, None)),
+            pend(),
+        ]),
+        "known at (b) break",
+    );
+}
+
+/// Позитивный контроль: валидные AST — validate пуст, notices пуст.
+#[test]
+fn verify_valid_ast_clean() {
+    use astbuild::*;
+    let feed_st = st(Some(100.0), Wcs::G54, Frame::Wcs, None);
+    // (a)-break: rapid unknown первым + linear (вычисленный start), PEND
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(0.0, 0.0, 5.0), st(None, Wcs::G54, Frame::Wcs, None)),
+        linear(StartPoint::Known(p3(0.0, 0.0, 5.0)), p3(10.0, 0.0, 5.0), feed_st.clone()),
+        pend(),
+    ]);
+    let ds = verify::validate(&p);
+    assert!(ds.is_empty(), "valid AST flagged: {ds:#?}");
+    // валидная дуга (golden #46-образная)
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs, None)),
+        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+        pend(),
+    ]);
+    assert!(verify::validate(&p).is_empty(), "valid arc flagged");
+    // минимальная программа (CORPUS #42)
+    let p = program(vec![pend()]);
+    assert!(verify::validate(&p).is_empty(), "minimal program flagged");
+}
+
+/// provenance Stage: Parse — лексика, Verify — валидатор, Emit — эмиссия.
+#[test]
+fn diagnostic_stage_provenance() {
+    // Parse: неверный magic
+    let ds = parser::parse(
+        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n",
+        "t",
+    )
+    .unwrap_err();
+    assert!(!ds.is_empty());
+    assert!(
+        ds.iter().all(|d| d.stage == Stage::Parse),
+        "parse stage: {:#?}",
+        ds.iter().map(|d| d.stage).collect::<Vec<_>>()
+    );
+
+    // Verify: сломанный AST (нет PEND)
+    let bad = astbuild::program(vec![]);
+    let ds = verify::validate(&bad);
+    assert!(!ds.is_empty());
+    assert!(ds.iter().all(|d| d.stage == Stage::Verify));
+
+    // Emit: eid_version != v0.3
+    let mut p = parser::parse(&prog("OP 001 PEND\n"), "t").unwrap();
+    p.eid_version = "EID/L1 v0.2".into();
+    let ds = emitter::emit(&p).unwrap_err();
+    assert!(
+        ds.iter().all(|d| d.stage == Stage::Emit),
+        "emit stage: {:#?}",
+        ds.iter().map(|d| d.stage).collect::<Vec<_>>()
+    );
+
+    // Emit: RAW reason с кавычкой
+    let mut p = parser::parse(
+        &prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"),
+        "t",
+    )
+    .unwrap();
+    for op in p.ops.iter_mut() {
+        if let Op::Raw { reason, .. } = op {
+            *reason = "bad\"quote".into();
+        }
+    }
+    let ds = emitter::emit(&p).unwrap_err();
+    assert!(ds.iter().all(|d| d.stage == Stage::Emit));
+
+    // Emit: лимит нумерации (1000 опов → номер 1000 не представим 3 цифрами)
+    use astbuild::*;
+    let mut ops = Vec::new();
+    for i in 0..999 {
+        let start = if i == 0 {
+            StartPoint::Unknown
+        } else {
+            StartPoint::Known(p3(i as f64, 0.0, 0.0))
+        };
+        ops.push(rapid(start, p3((i + 1) as f64, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs, None)));
+    }
+    ops.push(pend());
+    let p = program(ops);
+    let ds = emitter::emit(&p).unwrap_err();
+    assert!(
+        ds.iter().any(|d| d.code == ErrorCode::LimitExceeded && d.stage == Stage::Emit),
+        "limit exceeded with Emit stage: {ds:?}"
     );
 }

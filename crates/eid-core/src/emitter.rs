@@ -12,8 +12,9 @@
 //!     прочие нарушения канонической формы — ошибка, не молчаливый пропуск.
 
 use crate::ast::*;
-use crate::diag::{Diagnostic, ErrorCode};
+use crate::diag::{Diagnostic, ErrorCode, Stage};
 use crate::parser;
+use crate::verify;
 
 /// Канонический формат числа: ровно 4 dp, без экспоненты, "-0.0000" → "0.0000".
 pub fn fmt_num(v: f64) -> String {
@@ -29,7 +30,14 @@ pub fn fmt_num(v: f64) -> String {
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: None, options: Vec::new(), limit: None }
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: None,
+        options: Vec::new(),
+        limit: None,
+    }
 }
 
 /// Число на эмиссию: verbatim-текст, если он уже каноничен (4 dp, не
@@ -107,8 +115,11 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
 
     // Каноническая форма обязана быть валидной до эмиссии (R1: parse(emit(x))
     // обязан вернуть тот же AST — эмиссия невалидного AST дала бы текст,
-    // который сам парсер отверг бы).
-    parser::validate(program)?;
+    // который сам парсер отверг бы). Валидация — pass verify (Stage::Verify).
+    let ds = verify::validate(program);
+    if !ds.is_empty() {
+        return Err(ds);
+    }
 
     if program.eid_version != "EID/L1 v0.3" {
         errors.push(err(
@@ -158,6 +169,7 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
             // op_num = ровно 3 цифры (grammar); охрана эмиссии — E_LIMIT_EXCEEDED.
             errors.push(Diagnostic {
                 code: ErrorCode::LimitExceeded,
+                stage: Stage::Emit,
                 message: format!("op number {n} exceeds 3-digit numbering (grammar v0.3: 001..999)"),
                 src: None,
                 options: Vec::new(),

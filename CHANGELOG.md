@@ -49,6 +49,32 @@ bare G64). Причина: AST нёс `Blend { t: Option<Num> }`, а grammar v0.
 
 ## IMPLEMENTATION-PLAN / интерфейсы
 
+### v0.1.2 — 2026-11-20 (итерация 4: Diagnostic.stage + verify-pass)
+
+1. **`eid_core::diag`:** `Diagnostic` += `stage: Stage` (новый enum
+   `Stage { Parse, Canonicalize, Verify, Emit }`) — этап пайплайна,
+   на котором возникла диагностика; MLIR-паттерн (каждый pass помечает
+   свои диагностики, потребители фильтруют по этапу). Изменение
+   аддитивное, но ломает литералы построения Diagnostic. **Coordinated
+   transit:** eid-core обновлён Агентом A; eid-grbl (3 конструкции:
+   emit.rs, canonicalize.rs ×2), eid-linuxcnc (11: emit.rs, lexer.rs ×2,
+   parser.rs ×8), eid-harness (1: translate.rs) — владельцы C/D/B
+   адаптируют (2–4 места на крейт, mechanical: `stage: Stage::*`);
+   workspace кратко красный между коммитами — документированный transit,
+   не баг. eid-integration/eid-cli не затронуты.
+2. **`eid_core::verify`** (новый модуль, MLIR-pass): валидация канонического
+   AST — отдельный проход, вызываемый на любом этапе пайплайна:
+   `validate(&Program) -> Vec<Diagnostic>` (путь эмиссии/standalone:
+   zero-length в AST = диагностика) и `validate_with_notices(&Program)
+   -> VerifyReport { kept_ops, notices, diagnostics }` (путь канонизации:
+   drop+notice, SPEC §3). parser.rs/emitter.rs делегируют — единственная
+   копия правил (устранено дублирование путей reject/drop). Типы
+   `Notice`/`NoticeKind`/`wcs_to_p` переехали в verify; пути
+   `eid_core::parser::*` сохранены через re-export — eid-grbl/eid-linuxcnc
+   не затронуты. Все диагностики pass'а: `Stage::Verify`; парсер —
+   `Stage::Parse`; эмиттер — `Stage::Emit`. Тесты eid-core: 36/36
+   (новые: validate(golden48)=∅, broken-AST→точные коды+Stage, stage-provenance).
+
 ### v0.1.1 — 2026-11-20 (итерация 2, подготовка)
 
 `eid_harness::manifest::FileEntry` += `expected_diags: Vec<ErrorCode>` —
