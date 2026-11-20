@@ -7,6 +7,13 @@ LinuxCNC-семпла пропущен на приёме). Файлы лежат
 В manifest.toml НЕ внесены, не парсились — приёмка в корпус после
 проверки лицензий оркестратором (CORPUS §7).
 
+**Р ruling оркестратора (CORPUS v0.6.4, 2026-11-20) — два контура:**
+* **published** — пермиссивные лицензии (MIT/Apache/CC0/...) → остаётся в
+  `tier_b/inbox/`, публикуется с корпусом;
+* **local-dev** — GPL/неясные → `tier_b/local/`, тестируются parse-or-
+  diagnose, **никогда не публикуются**. Parse-or-diagnose критерий CORPUS §7
+  работает и на local-файлах.
+
 Именование: `lcnc_<dir-слаг>_<имя>` — источники LinuxCNC; `grbljs_<имя>` —
 источники cncjs (GRBL-предположение).
 
@@ -24,15 +31,15 @@ LinuxCNC-семпла пропущен на приёме). Файлы лежат
   `nc_files/orphans/README`, целиком: «abandoned or superseded .ngc files»);
   авторы отдельных примеров в дереве master не документированы.
 - Диалект-предположение: **linuxcnc** (родной репозиторий контроллера).
-- СТАТУС ЛИЦЕНЗИИ: **сомнительный** — GPL-2.0 + неясное per-file
-  авторство (большинство файлов — вклады участников без явных заголовков).
-  Требует решения оркестратора (GPL-совместимость приёма в корпус).
+- СТАТУС ЛИЦЕНЗИИ: **сомнительный → РЕШЕНО: local-dev** (ruling
+  оркестратора, CORPUS v0.6.4) — файлы перемещены в `tier_b/local/`,
+  тестируются, никогда не публикуются.
 - Каталоги выборки: nc_files/ (корень), ngcgui_lib (+lathe), macros/,
   probe/basic_probe/macros/, remap-subroutines/, nurbs/G5/ (полностью),
   tests/trajectory-planner/circular-arcs/nc_files/quick-tests/ + arc-feed/,
   tests/interp/good/, configs/sim/gmoccapy/macros/.
 
-| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+| Файл (tier: **local-dev**) | Путь в репо | Байт | sha256 (12) |
 |---|---|---|---|
 | `lcnc_configs_sim_gmoccapy_macros_change.ngc` | `configs/sim/gmoccapy/macros/change.ngc` | 1924 | `3d4d204d2164` |
 | `lcnc_configs_sim_gmoccapy_macros_change_g43.ngc` | `configs/sim/gmoccapy/macros/change_g43.ngc` | 601 | `6059250a6807` |
@@ -125,11 +132,114 @@ LinuxCNC-семпла пропущен на приёме). Файлы лежат
 
 ---
 
+## Источник 3+ (итерация 4, добор published-контура): 20 файлов, 7 под-источников, все MIT
+
+Дата: 2026-11-20. Отбор: GitHub repo-search с license:mit/noassertion-
+фильтром; лицензии каждой репо проверены GitHub API (license.spdx_id).
+FluidNC (NOASSERTION), grblHAL (no license), gnea/grbl (NOASSERTION) —
+НЕ пригодны для published, не собирались (см. отчёт).
+
+### sameer/svg2gcode — MIT (3 файл.)
+
+- URL базы: https://github.com/sameer/svg2gcode
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: grbl-предположение (IJK-дуги, обычный словарь).
+- Примечание: svg→gcode конвертер (452★); тестовые файлы конвертера.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_svg2g_circular_interpolation.gcode` | `sameer/svg2gcode/g_code/tests/circular_interpolation.gcode` | 2166 | `1505503d1281` |
+| `mit_svg2g_shapes.gcode` | `sameer/svg2gcode/g_code/tests/shapes.gcode` | 24152 | `865c6a7200b1` |
+| `mit_svg2g_square.gcode` | `sameer/svg2gcode/g_code/tests/square.gcode` | 1074 | `260ae3aea04b` |
+
+### Nikolay-Kha/PyCNC — MIT (3 файл.)
+
+- URL базы: https://github.com/Nikolay-Kha/PyCNC
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: grbl-подобный/собственный (простые G0/G1/G2/G3).
+- Примечание: PyCNC (650★) — драйвер RPi CNC; тесты библиотеки.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_pycnc_circles.gcode` | `Nikolay-Kha/PyCNC/tests/circles.gcode` | 414 | `ca3ec1943c6e` |
+| `mit_pycnc_rects.gcode` | `Nikolay-Kha/PyCNC/tests/rects.gcode` | 200 | `ff82c147066f` |
+| `mit_pycnc_test_parser.gcode` | `Nikolay-Kha/PyCNC/tests/test_parser.gcode` | 311 | `4e940c76cf86` |
+
+### TheSaturdayThing/shapeoko_arduino — MIT (2 файл.)
+
+- URL базы: https://github.com/TheSaturdayThing/shapeoko_arduino
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: grbl (Shapeoko работает на GRBL).
+- Примечание: Shapeoko-проект: логотип .nc (50KB), circle.nc (пропущен как content-dup c cncjs circle.gcode), drill-файл .tap.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_shpk_MIT_EC_Logo.nc` | `TheSaturdayThing/shapeoko_arduino/GCode/MIT EC Logo/MIT EC Logo.nc` | 50048 | `3f40f9e0382d` |
+| `mit_shpk_ncdrill1.tap` | `TheSaturdayThing/shapeoko_arduino/Electronics/shields/buildlog shield/gerber/ncdrill1.tap` | 1815 | `0a21ab855f24` |
+
+### filipecaixeta/cncwebsim — MIT (2 файл.)
+
+- URL базы: https://github.com/filipecaixeta/cncwebsim
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: grbl (web-симулятор GRBL-подобного словаря).
+- Примечание: web-симулятор: fresa (фреза), torno (токарный) — испанские программы.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_cws_fresa.gcode` | `filipecaixeta/cncwebsim/gcode/fresa.gcode` | 4949 | `bee648eddcb7` |
+| `mit_cws_torno.gcode` | `filipecaixeta/cncwebsim/gcode/torno.gcode` | 3791 | `29fb9df4965c` |
+
+### sliptonic/hilbert_cnc — MIT (1 файл.)
+
+- URL базы: https://github.com/sliptonic/hilbert_cnc
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: универсальный G0/G1 (автор — контрибьютор LinuxCNC/QTdragon).
+- Примечание: hilbert-кривая 123KB — длинная реальная программа.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_hilbert_test.ngc` | `sliptonic/hilbert_cnc/test.ngc` | 123041 | `c3b75f3e724a` |
+
+### ErwinRieger/ddprint-test-gcode — MIT (6 файл.)
+
+- URL базы: https://github.com/ErwinRieger/ddprint-test-gcode
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: marlin-3dp (E-слова экструзии — вне GRBL/LCNC словаря → ожидаемо диагностика; robustness-материал).
+- Примечание: тестовые файлы ddprint: dwell, simple_square, m_retract, buchse, eck3, ltr.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_ddp_buchse.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/buchse.gcode` | 1166 | `4bb2ca85e6cf` |
+| `mit_ddp_dwell.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/dwell.gcode` | 83 | `4c7be72c2ec6` |
+| `mit_ddp_eck3.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/eck3.gcode` | 3319 | `f639ce6728a0` |
+| `mit_ddp_ltr.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/ltr.gcode` | 368 | `1d71ddd66e13` |
+| `mit_ddp_m_retract.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/m_retract.gcode` | 68 | `e85e8ad15b2f` |
+| `mit_ddp_simple_square.gcode` | `ErwinRieger/ddprint-test-gcode/test_files/simple_square.gcode` | 263 | `07271ef17d44` |
+
+### cncjs/cncjs (examples/gcode/tball) — MIT (3 файл.)
+
+- URL базы: https://github.com/cncjs/cncjs (examples/gcode/tball)
+- Дата: 2026-11-20; лицензия: MIT (GitHub API license — проверена).
+- Диалект-предположение: grbl (хост cncjs).
+- Примечание: tball-программы: гравировка/карман (pocket >600KB — отброшены 2).
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `mit_tball_tball-engrave-laser.gcode` | `cncjs/cncjs/examples/gcode/tball/tball-engrave-laser.gcode` | 77416 | `d8a8fdd133a8` |
+| `mit_tball_tball-engrave.gcode` | `cncjs/cncjs/examples/gcode/tball/tball-engrave.gcode` | 77543 | `46b42bba579d` |
+| `mit_tball_tball.gcode` | `cncjs/cncjs/examples/gcode/tball/tball.gcode` | 61508 | `61dfc201991f` |
+
+---
+
 ## Сводка
 
-- Всего файлов в inbox: **72** (LinuxCNC 60 + cncjs/GRBL 12), содержимо уникальны (sha256).
-- Диалект-разбивка: linuxcnc-предположение 60, grbl-предположение 12.
-- Лицензии: MIT — 12 файлов (чистые); GPL-2.0/per-file неизвестно — 60 файлов (сомнительные — вся секция Источник 1).
+- **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **32 файла** (все
+  MIT); local-dev (tier_b/local) = **60 файлов** (GPL-2.0/неясные, не публикуются).
+- Диалект-разбивка inbox: grbl-предположение ~29 (cncjs 12 + tball 3 +
+  svg2gcode 3 + PyCNC 3 + shapeoko 3 + cncwebsim 2 + ddprint 3 вне-словарные);
+  linuxcnc-предположение 3 (hilbert + 2 прочих); marlin-3dp 3 (ddprint,
+  E-слова — robustness-диагностика).
+- published: все MIT — чистые; local-dev: GPL-2.0/per-file неизвестно.
 - Контент-профили для приёмки: LinuxCNC — вендор-примеры + тесты
   интерпретатора (tests/interp содержит параметрику/OWord — часть файлов
   ожидаемо даст E_UNSUPPORTED_SYNTAX/RUNTIME_STATE — штатный parse-or-

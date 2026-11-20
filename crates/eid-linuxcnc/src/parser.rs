@@ -42,7 +42,7 @@ use eid_core::parser::{Notice, NoticeKind};
 use eid_core::ast::{Coolant, Spindle};
 
 /// eid_version = версия grammar.ebnf (SPEC §10.4).
-const EID_VERSION: &str = "EID/L1 v0.2";
+const EID_VERSION: &str = "EID/L1 v0.3";  // grammar v0.3 (magic bump)
 
 /// Публичный результат parse: Program + line-level диагностики + notices.
 #[derive(Debug, Clone)]
@@ -1351,6 +1351,7 @@ fn eps_pos(a: &[f64; 3], b: &[f64; 3]) -> f64 {
 // ===========================================================================
 
 /// Производный ход развёртки (SPEC §11): src исходного блока + sub=<i>.
+/// §7.7: каждый ход несёт полный resolved-state (feed — модальный).
 fn m_rapid(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
     Op::Rapid {
         start: StartPoint::Known(p3_snap(from)),
@@ -1407,6 +1408,7 @@ fn approach_clearance(units: Units) -> f64 {
 /// (§7.1: G99 → R; G98 → initial Z из предшествующих опов). Повторы L —
 /// полная последовательность с абсолютными координатами (§7.2–7.3: G91 —
 /// шаг X/Y/R/Z на повтор, LinuxCNC); порядок пиков точный (§7.4).
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn expand_cycle(
     st: &mut St,
@@ -1523,10 +1525,11 @@ fn expand_cycle(
         }
         let z_bottom = if st.distance_abs { z_word } else { r_cur + z_word };
 
-        // 1. XY traverse на текущем z.
+        // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
+        //    с подходом запрещён).
         pending.push(m_rapid(st, [fx, fy, cz], [cx, cy, cz], src.clone(), sub));
         sub += 1;
-        // 2. rapid на R-плоскость.
+        // 2. подход к R-плоскости — отдельный оп (§7.7 #2).
         pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
         sub += 1;
         cz = r_cur;
