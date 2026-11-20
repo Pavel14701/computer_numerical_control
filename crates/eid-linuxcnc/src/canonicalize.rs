@@ -61,10 +61,20 @@ pub struct ResolvedArc {
     pub radius: f64,
 }
 
+/// Итог разрешения: оп или zero-sweep drop (SPEC §10.6 v0.12 / CORPUS #13).
+pub enum ArcOutcome {
+    /// Явные слова осей в кадре + квантованный end == start (в плоскости) +
+    /// pitch == 0 → нулевая дуга → drop+notice. Различение с full-circle —
+    /// по форме команды (без слов осей end наследуется → полный круг),
+    /// зеркально eid-grbl (R3-симметрия).
+    ZeroSweep,
+    Resolved(ResolvedArc),
+}
+
 /// Класс ошибки дуги.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArcError {
-    /// R при start == end — центр неоднозначен (N19, SPEC §6 v0.7).
+    /// R при start == end — центр неоднозначен (N19, SPEC §6 v0.7/v0.12).
     RFullCircle,
     /// Планиметрическая хорда > 2R — невозможная дуга (N5b, SPEC §6).
     ChordTooLong,
@@ -101,12 +111,21 @@ fn dist2(a: [f64; 2], b: [f64; 2]) -> f64 {
 
 /// Разрешение дуги (SPEC §6).
 ///
-/// * `start`, `end` — resolved абсолютные точки;
+/// * `start`, `end` — resolved абсолютные точки (входы квантованы, §10.6);
 /// * `mode_abs` — G90.1 (абсолютные центры) / G91.1 = false (инкрементальные
 ///   от start) — ОБА режима, ABSORB (COVERAGE §2.2);
 /// * `offsets` — значения I/J/K по осям X/Y/Z (None = слово не задано → 0);
 /// * `r_word` — R-слово; при наличии — приоритет над IJK (интерпретация,
-///   см. отчёт итерации 2).
+///   см. отчёт итерации 2);
+/// * `explicit_end` — в кадре были слова осей (форма команды; §10.6/§6 v0.12).
+///
+/// sweep-выведение (v0.12): IJK-форма, start == end (в плоскости):
+///  * без слов осей (end наследуется) или при pitch ≠ 0 → sweep = 360°
+///    (полный круг / винтовая, CORPUS #08);
+///  * явный end, квантованный к старту, pitch == 0 → [`ArcOutcome::ZeroSweep`]
+///    → drop+notice у вызывающего (CORPUS #13); различение — по форме
+///    команды, зеркально eid-grbl (R3-симметрия).
+///  * R-форма при start == end → `ArcError::RFullCircle` (N19).
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_arc(
     start: &[f64; 3],
@@ -117,38 +136,61 @@ pub fn resolve_arc(
     offsets: [Option<f64>; 3],
     r_word: Option<f64>,
     eps_pos: f64,
-) -> Result<ResolvedArc, ArcError> {
+    explicit_end: bool,
+) -> Result<ArcOutcome, ArcError> {
     let (n_axis, u, v) = plane_def(plane);
     let s2 = [start[u], start[v]];
     let e2 = [end[u], end[v]];
     let pitch = end[n_axis] - start[n_axis]; // SPEC §6.2: (end−start)·normal
 
-    let (center, rho) = if let Some(r) = r_word {
-        resolve_r(plane, dir, s2, e2, r, start[n_axis], eps_pos)?
-    } else {
-        // --- IJK-форма ------------------------------------------------------
-        let offs = [
-            offsets[0].unwrap_or(0.0),
-            offsets[1].unwrap_or(0.0),
-            offsets[2].unwrap_or(0.0),
-        ];
-        let mut center = [0.0f64; 3];
-        center[u] = if mode_abs { offs[u] } else { start[u] + offs[u] };
-        center[v] = if mode_abs { offs[v] } else { start[v] + offs[v] };
-        center[n_axis] = start[n_axis]; // ось вращения — через start
-        let rho_s = dist2(s2, [center[u], center[v]]);
-        let rho_e = dist2(e2, [center[u], center[v]]);
-        let tol_r = eps_pos.max(1e-6 * rho_s);
-        if (rho_s - rho_e).abs() > tol_r {
-            return Err(ArcError::RadiusMismatch); // N5a
+    if let Some(r) = r_word {
+        let (center, rho) = resolve_r(plane, dir, s2, e2, r, start[n_axis], eps_pos)?;
+        let a0 = (s2[1] - center[v]).atan2(s2[0] - center[u]);
+        let a1 = (e2[1] - center[v]).atan2(e2[0] - center[u]);
+        let sweep_deg = sweep_from_angles(a0, a1, dir);
+        return Ok(ArcOutcome::Resolved(ResolvedArc {
+            center,
+            sweep_deg,
+            pitch,
+            radius: rho,
+        }));
+    }
+
+    // --- IJK-форма ----------------------------------------------------------
+    let offs = [
+        offsets[0].unwrap_or(0.0),
+        offsets[1].unwrap_or(0.0),
+        offsets[2].unwrap_or(0.0),
+    ];
+    let mut center = [0.0f64; 3];
+    center[u] = if mode_abs { offs[u] } else { start[u] + offs[u] };
+    center[v] = if mode_abs { offs[v] } else { start[v] + offs[v] };
+    center[n_axis] = start[n_axis]; // ось вращения — через start
+    let rho_s = dist2(s2, [center[u], center[v]]);
+    let rho_e = dist2(e2, [center[u], center[v]]);
+    let tol_r = eps_pos.max(1e-6 * rho_s);
+    if (rho_s - rho_e).abs() > tol_r {
+        return Err(ArcError::RadiusMismatch); // N5a
+    }
+
+    if planar_eq(s2, e2) {
+        if explicit_end && pitch.abs() < 1e-9 {
+            return Ok(ArcOutcome::ZeroSweep); // §10.6 v0.12, CORPUS #13
         }
-        (center, rho_s)
-    };
+        // Полный круг center-формой (SPEC §6 v0.12, CORPUS #08): end
+        // наследуется (без слов осей) либо винтовая с pitch ≠ 0.
+        return Ok(ArcOutcome::Resolved(ResolvedArc {
+            center,
+            sweep_deg: 360.0,
+            pitch,
+            radius: rho_s,
+        }));
+    }
 
     let a0 = (s2[1] - center[v]).atan2(s2[0] - center[u]);
     let a1 = (e2[1] - center[v]).atan2(e2[0] - center[u]);
-    let sweep_deg = if planar_eq(s2, e2) { 360.0 } else { sweep_from_angles(a0, a1, dir) };
-    Ok(ResolvedArc { center, sweep_deg, pitch, radius: rho })
+    let sweep_deg = sweep_from_angles(a0, a1, dir);
+    Ok(ArcOutcome::Resolved(ResolvedArc { center, sweep_deg, pitch, radius: rho_s }))
 }
 
 /// R-форма: центр из start, end, R, direction, normal (SPEC §6).

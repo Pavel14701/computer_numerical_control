@@ -17,7 +17,8 @@
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::{Op, PathMode, StartPoint};
 use eid_core::diag::ErrorCode;
-use eid_harness::diff::{semantic_diff, DiffConfig};
+use eid_core::parser::NoticeKind;
+use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::PathBuf;
 
@@ -582,4 +583,133 @@ fn unit_arc_r_negative_major_sweep() {
         }
         other => panic!("op 1 must be Arc, got {other:?}"),
     }
+}
+
+// ===========================================================================
+// SPEC v0.12 (красный-протокол): sweep=360 center-form, квантование входа,
+// независимость Distance/ArcDistance (CORPUS #08/#13/#39), #33
+// ===========================================================================
+
+#[test]
+fn unit_full_circle_center_form_no_axis_words() {
+    // SPEC §6 v0.12 (CORPUS #08): явный G2 с I/J/K БЕЗ слов осей — end
+    // наследует старт → полный круг, sweep = 360° (не zero-sweep drop).
+    let src = "G21 G90 G94 G17 G91.1\nG0 X10.0000 Y0.0000 Z0.0000\nG2 I-5.0000 J0.0000 F120.0\nM2\n";
+    let p = parse_str(src).expect("parses");
+    assert_eq!(p.ops.len(), 3, "RAPID + ARC(360°) + PEND");
+    match &p.ops[1] {
+        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, .. } => {
+            assert_eq!((s.x.value, s.y.value, s.z.value), (10.0, 0.0, 0.0));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (10.0, 0.0, 0.0));
+            assert_eq!((center.x.value, center.y.value, center.z.value), (5.0, 0.0, 0.0));
+            assert_eq!(sweep_deg.value, 360.0);
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+        }
+        other => panic!("op 1 must be Arc, got {other:?}"),
+    }
+}
+
+#[test]
+fn unit_zero_sweep_quantized_end_dropped() {
+    // SPEC §10.6 v0.12 (CORPUS #13): слово X0.00004 квантуется к 0.0000 при
+    // построении значения → end == start при явных словах осей и pitch == 0
+    // → zero-sweep дуга → drop+notice (не полный круг).
+    let src = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "G0 X0.0000 Y0.0000 Z0.0000\n",
+        "G2 X0.00004 Y0.0000 I5.0000 J0.0000 F100.0\n",
+        "G1 X10.0000\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "unit13.ngc").expect("parses");
+    assert_eq!(p.ops.len(), 3, "RAPID + LINEAR + PEND (дуга отброшена)");
+    assert!(matches!(&p.ops[1], Op::Linear { .. }));
+    let notices = a.take_notices();
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
+        "zero-length arc notice отсутствует: {notices:?}"
+    );
+}
+
+#[test]
+fn unit_zero_sweep_helical_explicit_end_kept() {
+    // Явный end, квантованный к старту В ПЛОСКОСТИ, но pitch ≠ 0 — полный
+    // винтовой оборот: НЕ zero-sweep, sweep = 360° (SPEC §6 v0.12).
+    let src = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "G0 X10.0000 Y0.0000 Z0.0000\n",
+        "G2 X10.0000 Y0.0000 Z5.0000 I-5.0000 J0.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, pitch, .. } => {
+            assert_eq!(sweep_deg.value, 360.0);
+            assert_eq!(pitch.value, 5.0);
+        }
+        other => panic!("op 1 must be Arc, got {other:?}"),
+    }
+}
+
+#[test]
+fn unit_modal_distance_and_arcdist_independent() {
+    // CORPUS #39 — проверка гипотезы о конфликте: G91 (Distance) и G91.1
+    // (Arc-Distance) — РАЗНЫЕ модальные группы (COVERAGE §2.2), заголовок
+    // парсится без конфликта; валидная G91.1-дуга канонизуется абсолютной.
+    // (Файл #39 как записан даёт E_INVALID_INPUT по радиусам — I15 при
+    // инкрементальных центрах от старта (10,0) даёт центр (25,0), ρ 15 ≠
+    // ρ_end 11.18; корректные файлы: GRBL-пара I5.0 либо заголовок G90.1 —
+    // File-wrong, отчёт итерации 3b.)
+    let src = concat!(
+        "G21 G91 G94 G17 G91.1\n",
+        "M3 S12000\n",
+        "G0 X5.0000\n",
+        "G1 X5.0000 F100.0\n",
+        "G2 X5.0000 Y5.0000 I5.0000 J0.0000\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("G91 + G91.1 сосуществуют без конфликта");
+    assert_eq!(p.ops.len(), 4);
+    match &p.ops[2] {
+        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, state, .. } => {
+            // G91: end = base + (5,5) = (15,5); G91.1: center = start + (5,0).
+            assert_eq!((s.x.value, s.y.value, s.z.value), (10.0, 0.0, 0.0));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (15.0, 5.0, 0.0));
+            assert_eq!((center.x.value, center.y.value, center.z.value), (15.0, 0.0, 0.0));
+            assert_eq!(sweep_deg.value, 90.0);
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+            assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
+        }
+        other => panic!("op 2 must be Arc, got {other:?}"),
+    }
+}
+
+#[test]
+fn vector_33_wcs_define_multi_linking_and_feed() {
+    // Ключевая семантика #33: кросс-WCS связывание при обеих in-text origins
+    // (точка разрыва (b), критерий вычислимости §2 v0.10) + feed переживает
+    // G0 и смену WCS (SPEC §4).
+    let mine = parse_linuxcnc("33_wcs_define_multi/wcs_define_multi.linuxcnc.ngc").expect("parses");
+    assert!(matches!(&mine.ops[0], Op::WcsDefine { p: 1, .. }));
+    assert!(matches!(&mine.ops[1], Op::WcsDefine { p: 2, .. }));
+    match &mine.ops[4] {
+        Op::Rapid { start: StartPoint::Known(s), end, state, .. } => {
+            // start = prev_end + O_G54 − O_G55 = (10,0,5) + (1,2,3) − (4,5,6).
+            assert_eq!((s.x.value, s.y.value, s.z.value), (7.0, -3.0, 2.0));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (12.0, -3.0, 2.0));
+            assert_eq!(state.wcs, eid_core::ast::Wcs::G55);
+            assert_eq!(state.feed.as_ref().unwrap().value, 150.0, "SPEC §4: feed живёт через G0/WCS");
+        }
+        other => panic!("op 4 must be Rapid, got {other:?}"),
+    }
+    // Golden OP005 feed=none — File-wrong (отчёт итерации 3b; противоречит
+    // golden #03 feed_survives_rapid). Допускаем ровно это расхождение;
+    // после ревизии golden diff станет пустым.
+    let golden = parse_golden("33_wcs_define_multi/golden.eid");
+    let d = semantic_diff(&mine, &golden, &DiffConfig::default());
+    assert!(
+        d.iter().all(|x| matches!(x, Divergence::StateField { index: 4, field: "feed" })),
+        "#33: расхождения вне feed на op 4 — разбор неверен: {d:?}"
+    );
 }

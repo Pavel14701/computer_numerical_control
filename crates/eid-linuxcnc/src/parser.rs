@@ -106,6 +106,8 @@ struct St {
     last_motion: Option<LastMotion>,
     ops: Vec<Op>,
     diags: Vec<Diagnostic>,
+    /// Drop-with-notice, собранные на ходе разбора (zero-sweep дуги, §10.6).
+    notices: Vec<Notice>,
 }
 
 impl St {
@@ -234,6 +236,7 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
         last_motion: None,
         ops: Vec::new(),
         diags: Vec::new(),
+        notices: Vec::new(),
     };
 
     for ld in &lines {
@@ -809,12 +812,27 @@ fn parse_block(
     let frame_took_axes = gs
         .iter()
         .any(|&(maj, min)| (maj, min) == (92, 0) || (maj, min) == (10, 0));
-    if has_axis_words && !frame_took_axes {
+    // Полный круг center-формой (SPEC §6 v0.12, CORPUS #08): явный G2/G3 с
+    // I/J/K или R БЕЗ слов осей — end наследует старт → sweep = 360°.
+    let explicit_arc_with_data = matches!(explicit_motion, Some(MotionKind::G2) | Some(MotionKind::G3))
+        && (ijk.iter().any(|o| o.is_some()) || r_word.is_some());
+    let motion_block = (has_axis_words || explicit_arc_with_data) && !frame_took_axes;
+    if motion_block {
         match st.motion {
-            Some(kind) => {
-                let op = build_motion(st, kind, g53, &axes, ijk, r_word, line_no, line)?;
-                pending.push(op);
-            }
+            Some(kind) => match build_motion(st, kind, g53, &axes, ijk, r_word, line_no, line)? {
+                MotionBuilt::Op(op) => pending.push(op),
+                MotionBuilt::Dropped(op, kind_, msg) => {
+                    // Zero-sweep дуга (§10.6 v0.12, CORPUS #13): op не попадает
+                    // в список; notice с записью отброшенного.
+                    let idx = (st.ops.len() + pending.len()) as u32;
+                    st.notices.push(Notice {
+                        kind: kind_,
+                        message: msg,
+                        op_index: idx as usize,
+                        op,
+                    });
+                }
+            },
             None => {
                 return Err(fl!(
                     ErrorCode::InvalidInput,
@@ -845,7 +863,7 @@ fn parse_block(
         return Err(fl!(ErrorCode::InvalidInput, "Q-слово без G64 в кадре"));
     }
     let is_arc = matches!(st.motion, Some(MotionKind::G2) | Some(MotionKind::G3))
-        && has_axis_words
+        && (has_axis_words || explicit_arc_with_data)
         && !frame_took_axes;
     if r_word.is_some() && !is_arc {
         return Err(fl!(ErrorCode::InvalidInput, "R-слово без дуги G2/G3"));
@@ -1057,6 +1075,15 @@ fn link_start(
 
 /// Построение motion-опа (вызывается только при наличии координатных слов).
 #[allow(clippy::too_many_arguments)]
+/// Итог построения motion-опа: оп либо zero-sweep drop (SPEC §10.6 v0.12).
+enum MotionBuilt {
+    Op(Op),
+    Dropped(Op, NoticeKind, String),
+}
+
+/// Построение motion-опа (вызывается только при наличии координатных слов
+/// либо явного G2/G3 с I/J/K/R — полный круг, SPEC §6 v0.12).
+#[allow(clippy::too_many_arguments)]
 fn build_motion(
     st: &mut St,
     kind: MotionKind,
@@ -1066,7 +1093,7 @@ fn build_motion(
     r_word: Option<f64>,
     line_no: usize,
     line: &str,
-) -> Result<Op, Vec<Diagnostic>> {
+) -> Result<MotionBuilt, Vec<Diagnostic>> {
     let machine = g53;
     let frame = if machine { Frame::Machine } else { Frame::Wcs };
     macro_rules! fl {
@@ -1174,6 +1201,7 @@ fn build_motion(
                 ));
             }
             let dir = if kind == MotionKind::G2 { Dir::Cw } else { Dir::Ccw };
+            let explicit_end = axes.iter().any(|a| a.is_some());
             let resolved = canonicalize::resolve_arc(
                 &start_v,
                 &end,
@@ -1183,6 +1211,7 @@ fn build_motion(
                 ijk,
                 r_word,
                 eps_pos(&start_v, &end),
+                explicit_end,
             )
             .map_err(|e| match e {
                 ArcError::RFullCircle => fl!(
@@ -1198,6 +1227,36 @@ fn build_motion(
                     "несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)",
                 ),
             })?;
+            let resolved = match resolved {
+                canonicalize::ArcOutcome::ZeroSweep => {
+                    // §10.6 v0.12 (CORPUS #13): явный end, квантованный к
+                    // старту, pitch == 0 — нулевая дуга → drop+notice.
+                    let mut state = st.snapshot(frame);
+                    if let Some(f) = &st.feed {
+                        state.feed = Some(f.clone());
+                    }
+                    let (n_axis, _, _) = canonicalize::plane_def(st.plane);
+                    let mut normal = [0.0; 3];
+                    normal[n_axis] = 1.0;
+                    let op = Op::Arc {
+                        start: StartPoint::Known(p3_snap(start_v)),
+                        end: p3_snap(end),
+                        center: p3_snap(start_v), // центр вырожден — запись
+                        normal: p3_snap(normal),
+                        dir,
+                        sweep_deg: num_snap(360.0),
+                        pitch: num_snap(0.0),
+                        state,
+                        src: st.src(line_no, line),
+                        sub: None,
+                    };
+                    let msg = "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6; CORPUS #13)".to_string();
+                    st.last_motion = Some(LastMotion { end, frame, wcs: st.wcs });
+                    st.saw_motion = true;
+                    return Ok(MotionBuilt::Dropped(op, NoticeKind::ZeroLengthArc, msg));
+                }
+                canonicalize::ArcOutcome::Resolved(r) => r,
+            };
 
             // G93: feed = len(траектории) × F; длина винтовой дуги —
             // sqrt((sweep·ρ)² + pitch²) (SPEC §4, §6).
@@ -1234,7 +1293,7 @@ fn build_motion(
     // last_motion: end нового опа (связывание следующего, SPEC §2 v0.9).
     st.last_motion = Some(LastMotion { end, frame, wcs: st.wcs });
     st.saw_motion = true;
-    Ok(op)
+    Ok(MotionBuilt::Op(op))
 }
 
 /// ε_pos = max(0.001, 1e-7·L) (EQUIVALENCE §4); локальный масштаб по ходу.
@@ -1293,8 +1352,9 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         _ => {}
     }
 
-    // Drop-with-notice (SPEC §3/§5.2) — rapid/linear start==end, dwell 0.
-    let mut notices: Vec<Notice> = Vec::new();
+    // Drop-with-notice (SPEC §3/§5.2/§10.6): ход-разбора (zero-sweep дуги)
+    // + пост-проход (zero-length rapid/linear, dwell 0).
+    let mut notices: Vec<Notice> = st.notices;
     let mut kept: Vec<Op> = Vec::new();
     for (i, o) in st.ops.iter().enumerate() {
         let zero: Option<(NoticeKind, String)> = match o {

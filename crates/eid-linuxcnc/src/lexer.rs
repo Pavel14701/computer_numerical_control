@@ -331,6 +331,10 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
 }
 
 /// Число слова → f64. Принимает "+5", "-.5", "10.", "10.0000".
+/// SPEC §10.6 v0.12 — квантование входа: слова диалектного входа → 4dp
+/// при построении значения (single-final-rounding применяется и ко входам);
+/// zero-length проверки выполняются уже по квантованным значениям.
+/// Формула зеркальна eid-grbl (R3-симметрия): (v·10⁴).round()/10⁴.
 pub fn word_num(s: &str) -> Option<f64> {
     let norm = if let Some(rest) = s.strip_prefix('+') {
         if rest.starts_with('.') { format!("0{rest}") } else { rest.to_string() }
@@ -341,7 +345,8 @@ pub fn word_num(s: &str) -> Option<f64> {
     } else {
         s.to_string()
     };
-    norm.parse::<f64>().ok()
+    let v: f64 = norm.parse().ok()?;
+    Some((v * 10_000.0).round() / 10_000.0)
 }
 
 /// G/M-номер → (major, minor): "91.1" → (91, 1), "0" → (0, 0).
