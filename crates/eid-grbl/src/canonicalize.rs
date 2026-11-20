@@ -163,8 +163,7 @@ struct Ctx {
     pos_mach: Option<Point3>,       // машинные координаты текущей позиции
     ops: Vec<Op>,
     notices: Vec<Notice>,
-    path_exact: bool,               // G61
-    units_mm_seen_motion: usize,    // счётчик motion-опов
+    units_established: bool, // первое слово G20/G21 устанавливает (SPEC §2.5 v0.12)
     g43_family_seen: bool,          // правило семейств §1.3 (G49): G43.1 в файле
     g92_values: Option<(Point3, Wcs)>, // для Program.frame_preset (только G92)
     end_count: usize,               // M2/M30
@@ -280,8 +279,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         pos_mach: None,
         ops: Vec::new(),
         notices: Vec::new(),
-        path_exact: false,
-        units_mm_seen_motion: 0,
+        units_established: false,
         g43_family_seen: parsed
             .blocks
             .iter()
@@ -334,11 +332,9 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
     let program = Program {
         eid_version: "EID/L1 v0.2".to_string(),
         units: ctx.units,
-        path_mode: if ctx.path_exact {
-            eid_core::ast::PathMode::ExactPath
-        } else {
-            eid_core::ast::PathMode::Blend { t: None }
-        },
+        // SPEC §3 v0.12: отсутствие G61/G61.1/G64 → exact_path (дефолт);
+        // G61 — единственный path-код словаря GRBL — тоже exact_path.
+        path_mode: eid_core::ast::PathMode::ExactPath,
         frame_preset: ctx.g92_values.take().map(|(values, wcs)| eid_core::ast::FramePreset { values, wcs }),
         ops: std::mem::take(&mut ctx.ops),
     };
@@ -422,23 +418,26 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     }
 
     // (5) Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
+    // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
+    // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12).
     for g in &b.g_codes {
         if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
             let u = if *g == GCode::UnitsIn { Units::In } else { Units::Mm };
             if u != ctx.units {
-                return Err(vec![err(
-                    ErrorCode::UnsupportedSemantics,
-                    "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                    &ctx.file, line, blen,
-                )]);
+                if ctx.units_established {
+                    return Err(vec![err(
+                        ErrorCode::UnsupportedSemantics,
+                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
+                        &ctx.file, line, blen,
+                    )]);
+                }
+                ctx.units = u;
             }
+            ctx.units_established = true;
         }
     }
 
     // (6) Метаданные и IGNORED_SAFE-коды (COVERAGE §2.1/§2.2/§2.4).
-    if b.g_codes.contains(&GCode::PathExact) {
-        ctx.path_exact = true; // META(exact_path); Q3 — поведение сверяет этап 3
-    }
     if b.g_codes.contains(&GCode::CycleCancel) {
         ctx.motion = None; // G80: cancel cycle-моды; голые координаты дадут INVALID
     }
@@ -526,22 +525,18 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     }
 
     // Чтение текущей позиции в целевом фрейме (точки разрыва (a)–(d), SPEC §2).
+    // §5.3-нарушения (пресетка/не-in-text origins) внутри reading_now → Err;
+    // легальный случай None — первый machine-ход = точка разрыва (c) v0.10:
+    // RAPID получает start=unknown (CORPUS #37), последующие цепляются.
     let reading = reading_now(ctx, g53)?;
-    if g53 && reading.is_none() {
-        return Err(vec![err(
-            ErrorCode::RuntimeState,
-            "machine-frame move: start not statically known (SPEC §5.3; CORPUS n1/n16)",
-            &ctx.file, line, blen,
-        )]);
-    }
 
     if matches!(mode, GCode::ArcCw | GCode::ArcCcw) {
         return arc_block(ctx, b, mode, reading);
     }
 
     // Цель: слова G90/G91 + наследование осей (SPEC §2: частичный end при
-    // неизвестном reading — E_RUNTIME_STATE).
-    let end = resolve_end(ctx, b, &reading)?
+    // неизвестном reading — E_RUNTIME_STATE; дефолт-0 — только для WCS-старта (a)).
+    let end = resolve_end(ctx, b, &reading, !g53)?
         .expect("end known: reading known or full G90 triple");
 
     let frame = if g53 { Frame::Machine } else { Frame::Wcs };
@@ -638,11 +633,17 @@ fn machine_start(ctx: &Ctx) -> Option<Point3> {
 
 /// Целевая точка хода: слова (G90 abs / G91 inc) + наследование reading.
 /// SPEC §2 v0.11: в точке разрыва (a) — старт программы — отсутствующие оси
-/// end наследуют дефолт контроллера (0) в активном фрейме; после
-/// genuinely-неизвестных позиций ((b)–(d)) частичный end → E_RUNTIME_STATE.
-fn resolve_end(ctx: &Ctx, b: &Block, reading: &Option<Point3>) -> Result<Option<Point3>, Vec<Diagnostic>> {
+/// end наследуют дефолт контроллера (0) в активном фрейме (allow_controller_default);
+/// после genuinely-неизвестных позиций ((b)–(d), вкл. machine-ходы) частичный
+/// end → E_RUNTIME_STATE.
+fn resolve_end(
+    ctx: &Ctx,
+    b: &Block,
+    reading: &Option<Point3>,
+    allow_controller_default: bool,
+) -> Result<Option<Point3>, Vec<Diagnostic>> {
     let rv = reading.as_ref().map(|p| e3(p));
-    let at_start = reading.is_none() && ctx.prev_end.is_none();
+    let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
     let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
         v[i] = match b.word(w) {
@@ -714,7 +715,7 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
     let start = reading.ok_or_else(|| {
         vec![err(ErrorCode::RuntimeState, "arc with unknown start (SPEC §2)", &ctx.file, line, blen)]
     })?;
-    let end = resolve_end(ctx, b, &Some(start.clone()))?
+    let end = resolve_end(ctx, b, &Some(start.clone()), true)?
         .expect("end known: reading known or full G90 triple");
 
     let (a0, a1, al) = plane_axes(&ctx.plane);
@@ -797,9 +798,37 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
         }
     };
 
-    // zero-length arc: радиус 0, хорда 0, pitch 0 → drop + notice (SPEC §3/§6).
+    // zero-length arc (SPEC §3/§6, CORPUS #13): end-слова, квантованные до
+    // стартовой точки (§10.6), — нулевой ход, не полное кольцо (§6 ловушка (а)
+    // — 360° только для наследованного end без слов, CORPUS #08). Проверка
+    // ПОСЛЕ квантования входа.
     let rho_s = ((s[a0] - c[a0]).powi(2) + (s[a1] - c[a1]).powi(2)).sqrt();
     let rho_e = ((e[a0] - c[a0]).powi(2) + (e[a1] - c[a1]).powi(2)).sqrt();
+    let explicit_end = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
+    if explicit_end && chord_plane < 1e-9 && pitch.abs() < 1e-9 {
+        let f = ctx.feed.clone().unwrap_or_else(|| num_f64(0.0));
+        let mut st = ctx.state(Frame::Wcs);
+        st.feed = Some(f);
+        let op = Op::Arc {
+            start: StartPoint::Known(start),
+            end: end.clone(),
+            center: pt(c[0], c[1], c[2]),
+            normal: pt(normal[0], normal[1], normal[2]),
+            dir,
+            sweep_deg: num_f64(sweep.to_degrees()),
+            pitch: num_f64(pitch),
+            state: st,
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        };
+        ctx.push_drop(
+            op,
+            NoticeKind::ZeroLengthArc,
+            "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6; CORPUS #13)".into(),
+        );
+        update_pos(ctx, false, end);
+        return Ok(());
+    }
     let mut near_degenerate = false;
     if b.word('R').is_some() && (180.0 - sweep.to_degrees()).abs() < 0.114 {
         near_degenerate = true; // |cos(sweep/2)| < 1e-3 (EQUIVALENCE §4)

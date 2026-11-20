@@ -65,6 +65,32 @@ fn roundtrip_pilot_46_arc_r_helix() {
 }
 
 #[test]
+fn roundtrip_08_full_circle() {
+    roundtrip("08_arc_full_circle/arc_full_circle.grbl.ngc");
+}
+
+#[test]
+fn roundtrip_10_helix_inch() {
+    roundtrip("10_arc_helix_inch/arc_helix_inch.grbl.ngc");
+}
+
+#[test]
+fn roundtrip_13_degenerate_zero_sweep() {
+    // Дуга отброшена с notice на обеих сторонах round-trip → diff 0.
+    roundtrip("13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc");
+}
+
+#[test]
+fn roundtrip_47_crlf_dollar_dollar() {
+    // $$ + полный CRLF-файл: RAW verbatim, байты байт-в-байт (только RAW-строка
+    // проходит через emit дословно; заголовок — свой, по брифу п.1).
+    roundtrip("47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc");
+    let a = parse_grbl(&corpus("47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"));
+    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    assert!(text.contains("$$\r\n"), "CRLF при $$ потерян: {text:?}");
+}
+
+#[test]
 fn emit_never_uses_r_form() {
     // EQUIVALENCE §4 политика: R не эмитится никогда — только IJK-пара.
     let a = parse_grbl(&corpus("11_arc_R_semicircle/arc_R_semicircle.grbl.ngc"));

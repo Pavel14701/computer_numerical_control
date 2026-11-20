@@ -316,7 +316,7 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             ctx.line(&line);
             ctx.first_motion = false;
         }
-        Op::Arc { start, end, center, normal, state, .. } => {
+        Op::Arc { start, end, center, normal, state, sweep_deg, pitch, .. } => {
             ctx.state_prefix(state);
             // Плоскость из канонической нормали; G17/18/19 при смене (бриф п.1).
             let n = [normal.x.value(), normal.y.value(), normal.z.value()];
@@ -334,17 +334,22 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             let s = start_pt(start);
             let c = [center.x.value(), center.y.value(), center.z.value()];
             let (w0, ax0, w1, ax1) = arc_pair(&plane);
-            let mut line = format!(
-                "{} X{} Y{} Z{} {}{} {}{}",
-                motion_code(op),
-                fmt_num(end.x.value()),
-                fmt_num(end.y.value()),
-                fmt_num(end.z.value()),
-                w0,
-                fmt_num(c[ax0] - s[ax0]),
-                w1,
-                fmt_num(c[ax1] - s[ax1])
-            );
+            let offsets = format!(" {}{} {}{}", w0, fmt_num(c[ax0] - s[ax0]), w1, fmt_num(c[ax1] - s[ax1]));
+            // Полное кольцо (sweep 360°, pitch 0) — БЕЗ end-слов (легальный
+            // формат grbl): end-слова == start перепарсер трактовал бы как
+            // вырожденную дугу (CORPUS #13-различитель); pitch ≠ 0 несёт Z.
+            let full_circle = (sweep_deg.value() - 360.0).abs() < 1e-6 && pitch.value().abs() < 1e-9;
+            let target = if full_circle {
+                String::new()
+            } else {
+                format!(
+                    " X{} Y{} Z{}",
+                    fmt_num(end.x.value()),
+                    fmt_num(end.y.value()),
+                    fmt_num(end.z.value())
+                )
+            };
+            let mut line = format!("{}{} {}", motion_code(op), target, offsets);
             let fv = state.feed.as_ref().map(|num| num.value());
             if fv != ctx.feed {
                 line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));

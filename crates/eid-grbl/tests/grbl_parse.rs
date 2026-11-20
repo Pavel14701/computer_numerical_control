@@ -47,13 +47,17 @@ fn feed_of(op: &Op) -> Option<f64> {
     }
 }
 
-fn corpus(dir: &str) -> String {
+fn corpus(rel: &str) -> String {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_a/v0");
+    let p = base.join(rel);
+    if p.is_file() {
+        return std::fs::read_to_string(&p).expect("read");
+    }
     let mut hit = None;
-    for e in std::fs::read_dir(base.join(dir)).expect(dir) {
-        let p = e.expect("entry").path();
-        if p.file_name().unwrap().to_string_lossy().ends_with(".grbl.ngc") {
-            hit = Some(std::fs::read_to_string(&p).expect("read"));
+    for e in std::fs::read_dir(&p).expect(rel) {
+        let f = e.expect("entry").path();
+        if f.file_name().unwrap().to_string_lossy().ends_with(".grbl.ngc") {
+            hit = Some(std::fs::read_to_string(&f).expect("read"));
         }
     }
     hit.expect("no .grbl.ngc in dir")
@@ -243,6 +247,109 @@ fn negative_n15_n16_n17_frames() {
 #[test]
 fn negative_n19_r_full_circle_invalid() {
     assert_eq!(err_code(parse(&corpus("n19_arc_R_full_circle"))), ErrorCode::InvalidInput);
+}
+
+// ---------------------------------------------------------------------------
+// SPEC v0.12: дефолт path_mode, установление единиц, квантование входа
+// ---------------------------------------------------------------------------
+
+#[test]
+fn spec_v012_path_mode_default_exact_path() {
+    // SPEC §3 v0.12: отсутствие G61/G61.1/G64 → exact_path.
+    let p = parse(&corpus("01_linear_box/linear_box.grbl.ngc")).expect("ok");
+    assert_eq!(p.path_mode, eid_core::ast::PathMode::ExactPath);
+}
+
+#[test]
+fn spec_v012_first_units_word_establishes() {
+    // CORPUS #10: G20 первым словом — легальный inch-файл (не смена единиц).
+    let p = parse(&corpus("10_arc_helix_inch/arc_helix_inch.grbl.ngc")).expect("ok");
+    assert_eq!(p.units, Units::In);
+    match &p.ops[1] {
+        Op::Arc { pitch, sweep_deg, .. } => {
+            assert!((pitch.value() - 0.1).abs() <= EPS, "pitch {}", pitch.value());
+            assert!((sweep_deg.value() - 90.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // n7 (G21 в шапке → G20 после) по-прежнему Err SEMANTICS.
+    assert_eq!(err_code(parse(&corpus("n7_unit_switch_mid"))), ErrorCode::UnsupportedSemantics);
+}
+
+#[test]
+fn spec_v0106_input_quantization_drops_near_zero_arc() {
+    // CORPUS #13: end 0.00004 → 0.0000 (§10.6) → zero-length arc → drop+notice.
+    let out = canonicalize_with_notices(
+        &corpus("13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc"),
+        "13.ngc",
+    )
+    .expect("ok");
+    // G0, [дуга отброшена], G1 X10, M2 → 3 опа.
+    assert_eq!(out.program.ops.len(), 3);
+    assert_eq!(out.notices.len(), 1);
+    assert_eq!(out.notices[0].kind, eid_grbl::canonicalize::NoticeKind::ZeroLengthArc);
+}
+
+#[test]
+fn corpus_47_dollar_dollar_line_is_raw() {
+    // CORPUS #47: голое `$$` (dump settings) → ConfigLine → Raw{SYNTAX}.
+    let out = canonicalize_with_notices(
+        &corpus("47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"),
+        "47.ngc",
+    )
+    .expect("ok");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }
+    ));
+    // Полная CRLF-программа продолжает разбираться: Rapid/Linear/…/M2.
+    assert!(matches!(&out.program.ops[1], Op::Rapid { .. }));
+}
+
+#[test]
+fn corpus_08_full_circle_without_end_words_kept() {
+    // CORPUS #08: «G2 I-5.0 J0.0» без end-слов — настоящее полное кольцо 360°.
+    let out = canonicalize_with_notices(
+        &corpus("08_arc_full_circle/arc_full_circle.grbl.ngc"),
+        "08.ngc",
+    )
+    .expect("ok");
+    assert_eq!(out.notices.len(), 0);
+    match &out.program.ops[1] {
+        Op::Arc { sweep_deg, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "sweep {}", sweep_deg.value());
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn corpus_37_g53_known_origins_breakpoint_c() {
+    // CORPUS #37 (SPEC §2(c) v0.10): первый machine-ход при выполненных §5.3 —
+    // точка разрыва: RAPID start=unknown (не отказ); последующие цепляются.
+    let out = canonicalize_with_notices(&corpus("37_g53_known_origins/g53_known_origins.grbl.ngc"), "37.ngc")
+        .expect("parse Ok");
+    let ops = &out.program.ops;
+    // ops: [WcsDefine, Rapid(G53), Linear(G53), ProgramEnd]
+    assert_eq!(ops.len(), 4);
+    match &ops[1] {
+        Op::Rapid { start: StartPoint::Unknown, end, state, .. } => {
+            assert_pt(end, 10.0, 0.0, 0.0);
+            assert_eq!(state.frame, eid_core::ast::Frame::Machine);
+        }
+        _ => panic!("op1 не machine Rapid"),
+    }
+    // Второй machine-ход цепляется от первого.
+    match &ops[2] {
+        Op::Linear { state, .. } => {
+            assert_eq!(known(&ops[2]), [10.0, 0.0, 0.0]);
+            assert_eq!(state.frame, eid_core::ast::Frame::Machine);
+            assert_eq!(state.feed.as_ref().map(|n| n.value()), Some(150.0));
+        }
+        _ => panic!("op2 не machine Linear"),
+    }
+    // N1 (без origins) остаётся Err RUNTIME — §5.3b-диспозиция диалекта.
+    assert_eq!(err_code(parse(&corpus("n1_g53_no_origins/g53_no_origins.grbl.ngc"))), ErrorCode::RuntimeState);
 }
 
 // ---------------------------------------------------------------------------

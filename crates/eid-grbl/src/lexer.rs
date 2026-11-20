@@ -105,6 +105,9 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
             if !value.is_finite() {
                 return Err(err(word_col, LexErrorKind::BadNumber));
             }
+            // SPEC §10.6 v0.12 — квантование входа: слова диалектного входа
+            // → 4dp при построении Num (single-final-rounding и на входах).
+            let value = (value * 10_000.0).round() / 10_000.0;
             i = next;
             // N-слова — IGNORED_SAFE (COVERAGE §4): не выходим в токены.
             if letter != 'N' {
