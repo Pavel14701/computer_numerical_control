@@ -191,3 +191,92 @@ fn dwell_and_stops_emission() {
     assert!(text.contains("M0"), "{text}");
     assert!(text.lines().last().expect("non-empty") == "M2", "M2 — последняя строка");
 }
+
+// ---------------------------------------------------------------------------
+// EmissionLegality — ConversionTarget-таблица (итерация 4)
+// ---------------------------------------------------------------------------
+
+fn legality_table() -> eid_grbl::emit::EmissionLegality {
+    GrblAdapter::new().emission_legality()
+}
+
+#[test]
+fn legality_table_matches_manifest_r4_expect() {
+    // Инвариант (не числа): каждый Code из r4_expect["grbl-1.1"] обязан быть
+    // объявлен в таблице легальности; исключение — E_RAW_UNTRANSLATABLE
+    // (translate-путь, Агент E / SPEC §8.2 — вне same-dialect эмиссии).
+    // Обратно: каждый SYNTAX-класс таблицы должен быть покрыт хотя бы одним
+    // manifest-вектором; INVALID-класс таблицы — только канон-форма (§3),
+    // это инварианты AST→emit, корпусом не ожидается.
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/manifest.toml");
+    let manifest = eid_harness::manifest::load(&manifest_path).expect("manifest loads");
+    let table = legality_table();
+
+    let mut manifest_codes: Vec<ErrorCode> = Vec::new();
+    for v in &manifest.vectors {
+        if let Some(outcome) = v.r4_expect.get("grbl-1.1") {
+            if let eid_harness::manifest::Outcome::Code(code) = outcome {
+                manifest_codes.push(*code);
+            }
+        }
+    }
+    assert!(!manifest_codes.is_empty(), "manifest: нет r4_expect для grbl-1.1");
+
+    let table_codes = table.codes();
+    for code in &manifest_codes {
+        assert!(
+            *code == ErrorCode::RawUntranslatable || table_codes.contains(code),
+            "manifest r4_expect {code:?} не объявлен в таблице легальности"
+        );
+    }
+    for (cond, code) in &table.illegal {
+        if *code == ErrorCode::UnsupportedSyntax {
+            assert!(
+                manifest_codes.contains(code),
+                "SYNTAX-условие `{cond}` таблицы не покрыто manifest r4_expect"
+            );
+        } else {
+            assert_eq!(
+                *code, ErrorCode::InvalidInput,
+                "условие `{cond}`: не-SYNTAX класс таблицы обязан быть канон-формой (INVALID)"
+            );
+        }
+    }
+}
+
+#[test]
+fn legality_negative_tool_change_via_table() {
+    // Отказ #27 идёт ЧЕРЕЗ таблицу: код диагностики == code_of("tool_change").
+    let golden = EidTextAdapter::new()
+        .parse(&corpus("27_tool_change/golden.eid"), "27.golden.eid")
+        .expect("golden parses");
+    let table = legality_table();
+    let expected = table.code_of("tool_change").expect("tool_change в таблице");
+    assert_eq!(expected, ErrorCode::UnsupportedSyntax);
+    let Err(diags) = GrblAdapter::new().emit(&golden) else {
+        panic!("#27: ожидался Err из таблицы легальности");
+    };
+    assert!(!diags.is_empty());
+    for d in &diags {
+        assert_eq!(d.code, expected, "код отказа не из таблицы легальности");
+    }
+}
+
+#[test]
+fn legality_table_shape_invariants() {
+    let table = legality_table();
+    // legal: ровно виды опов, представимые ходами GRBL (COVERAGE §5).
+    for kind in [
+        "rapid", "linear", "arc", "dwell", "wcs_define", "wcs_set_here",
+        "frame_preset", "program_stop", "program_end", "raw",
+    ] {
+        assert!(table.is_legal_kind(kind), "`{kind}` отсутствует в legal");
+    }
+    assert!(!table.is_legal_kind("tool_change"));
+    // illegal: условия уникальны.
+    let mut conds: Vec<&str> = table.illegal.iter().map(|(c, _)| *c).collect();
+    conds.sort_unstable();
+    conds.dedup();
+    assert_eq!(conds.len(), table.illegal.len(), "дубли условий в illegal");
+}

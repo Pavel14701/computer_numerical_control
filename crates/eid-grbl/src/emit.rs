@@ -125,6 +125,59 @@ fn err(code: ErrorCode, msg: impl Into<String>, src: Option<eid_core::ast::SrcSp
     Diagnostic { code, message: msg.into(), src, options: Vec::new(), limit: None }
 }
 
+// ---------------------------------------------------------------------------
+// EmissionLegality — ConversionTarget-паттерн (MLIR): легальность эмиссии в
+// GRBL — ДАННЫЕ, не размазанные проверки. Единый источник кодов отказа emit:
+// валидатор проверяет условия и берёт ErrorCode ТОЛЬКО из таблицы
+// (COVERAGE §5, GRBL-колонка). E_RAW_UNTRANSLATABLE в таблицу НЕ входит —
+// это translate-путь (Агент E, SPEC §8.2), не same-dialect эмиссия.
+// ---------------------------------------------------------------------------
+
+/// Статическая таблица легальности эмиссии GRBL 1.1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmissionLegality {
+    /// Виды опов, представимые ходами GRBL (имена = op_kind()).
+    pub legal: Vec<&'static str>,
+    /// Условия отказа: (имя условия, код класса легальности).
+    pub illegal: Vec<(&'static str, ErrorCode)>,
+}
+
+impl EmissionLegality {
+    /// Код отказа по имени условия; None = условие не объявлено.
+    pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
+        self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+    }
+
+    /// Все коды отказа таблицы (без дубликатов).
+    pub fn codes(&self) -> Vec<ErrorCode> {
+        let mut v: Vec<ErrorCode> = self.illegal.iter().map(|(_, c)| *c).collect();
+        v.sort_by_key(|c| c.as_str());
+        v.dedup();
+        v
+    }
+
+    /// Вид опа легален?
+    pub fn is_legal_kind(&self, kind: &str) -> bool {
+        self.legal.contains(&kind)
+    }
+}
+
+/// Имя вида опа — ключ таблицы легальности (и словарь manifest r4_expect).
+pub fn op_kind(op: &Op) -> &'static str {
+    match op {
+        Op::Rapid { .. } => "rapid",
+        Op::Linear { .. } => "linear",
+        Op::Arc { .. } => "arc",
+        Op::Dwell { .. } => "dwell",
+        Op::ToolChange { .. } => "tool_change",
+        Op::ProgramStop { .. } => "program_stop",
+        Op::ProgramEnd { .. } => "program_end",
+        Op::WcsDefine { .. } => "wcs_define",
+        Op::WcsSetHere { .. } => "wcs_set_here",
+        Op::Raw { .. } => "raw",
+    }
+}
+
 pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
     eid_core::parser::validate(program)?;
@@ -136,8 +189,9 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
             None,
         )]);
     }
-    // GRBL-специфичная валидация (COVERAGE §5) — fail-fast до прохода.
-    let problems = validate_grbl(program);
+    // Легальность эмиссии — против таблицы (COVERAGE §5), fail-fast до прохода.
+    let table = crate::GrblAdapter::default().emission_legality();
+    let problems = validate_grbl(&table, program);
     if !problems.is_empty() {
         return Err(problems);
     }
@@ -176,8 +230,15 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     Ok(ctx.out)
 }
 
-/// GRBL-специфичная валидация канонической формы (fail-fast, COVERAGE §5).
-fn validate_grbl(program: &Program) -> Vec<Diagnostic> {
+/// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5).
+/// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
+fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic> {
+    // Условие обязано быть объявлено в таблице — иначе баг объявления, не паника пути.
+    let code = |cond: &'static str| {
+        table.code_of(cond).unwrap_or_else(|| {
+            panic!("emission-legality: условие `{cond}` не объявлено в таблице")
+        })
+    };
     let mut v = Vec::new();
     let mut ends = 0usize;
     let mut last_is_end = false;
@@ -188,35 +249,35 @@ fn validate_grbl(program: &Program) -> Vec<Diagnostic> {
         }
         match op {
             Op::ToolChange { src, .. } => v.push(err(
-                ErrorCode::UnsupportedSyntax,
+                code("tool_change"),
                 "tool_change: M6 outside GRBL 1.1 dictionary (COVERAGE §5; vector #27 r4_expect)",
                 Some(src.clone()),
             )),
             Op::Linear { state, src, .. } => {
-                check_motion_state(&mut v, state, src, true);
+                check_motion_state(table, &mut v, state, src, true);
             }
             Op::Arc { start, normal, state, src, .. } => {
-                check_motion_state(&mut v, state, src, true);
+                check_motion_state(table, &mut v, state, src, true);
                 if matches!(start, StartPoint::Unknown) {
                     v.push(err(
-                        ErrorCode::InvalidInput,
+                        code("arc_unknown_start"),
                         "arc with unknown start — IJK offsets require numeric start (SPEC §2)",
                         Some(src.clone()),
                     ));
                 }
                 let n = [normal.x.value(), normal.y.value(), normal.z.value()];
                 if let Err(m) = plane_of(&n) {
-                    v.push(err(ErrorCode::InvalidInput, m, Some(src.clone())));
+                    v.push(err(code("arc_normal_non_canonical"), m, Some(src.clone())));
                 }
             }
-            Op::Rapid { state, src, .. } => check_motion_state(&mut v, state, src, false),
+            Op::Rapid { state, src, .. } => check_motion_state(table, &mut v, state, src, false),
             Op::Raw { payload_hex, src, .. } => {
                 if payload_hex.len() % 2 != 0
                     || payload_hex.chars().any(|c| !c.is_ascii_hexdigit())
                 {
                     v.push(err(
-                        ErrorCode::InvalidInput,
-                        "raw payload_hex is not valid byte hex (grammar D9)",
+                        code("raw_payload_not_hex"),
+                        "raw payload_hex is not valid byte hex (grammar D9 v0.3)",
                         Some(src.clone()),
                     ));
                 }
@@ -227,7 +288,7 @@ fn validate_grbl(program: &Program) -> Vec<Diagnostic> {
             | Op::ProgramStop { state, src, .. } => {
                 if wcs_code(&state.wcs).is_empty() {
                     v.push(err(
-                        ErrorCode::UnsupportedSyntax,
+                        code("wcs_outside_g54_g59"),
                         "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",
                         Some(src.clone()),
                     ));
@@ -238,19 +299,24 @@ fn validate_grbl(program: &Program) -> Vec<Diagnostic> {
     }
     if ends == 0 {
         v.push(err(
-            ErrorCode::InvalidInput,
+            code("program_end_missing"),
             "program_end missing: GRBL emission requires M2 (CORPUS n14)",
             None,
         ));
     } else if ends > 1 {
-        v.push(err(ErrorCode::InvalidInput, "duplicate program_end (CORPUS n13)", None));
+        v.push(err(code("program_end_duplicate"), "duplicate program_end (CORPUS n13)", None));
     } else if !last_is_end {
-        v.push(err(ErrorCode::InvalidInput, "program_end must be the last op (CORPUS n12)", None));
+        v.push(err(
+            code("program_end_not_last"),
+            "program_end must be the last op (CORPUS n12)",
+            None,
+        ));
     }
     v
 }
 
 fn check_motion_state(
+    table: &EmissionLegality,
     v: &mut Vec<Diagnostic>,
     state: &State,
     src: &eid_core::ast::SrcSpan,
@@ -258,14 +324,18 @@ fn check_motion_state(
 ) {
     if need_feed && state.feed.is_none() {
         v.push(err(
-            ErrorCode::InvalidInput,
+            table
+                .code_of("motion_feed_none")
+                .expect("emission-legality: условие `motion_feed_none` не объявлено в таблице"),
             "linear/arc with feed=none — canonical form violation (SPEC §3/§4)",
             Some(src.clone()),
         ));
     }
     if wcs_code(&state.wcs).is_empty() {
         v.push(err(
-            ErrorCode::UnsupportedSyntax,
+            table
+                .code_of("wcs_outside_g54_g59")
+                .expect("emission-legality: условие `wcs_outside_g54_g59` не объявлено в таблице"),
             "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",
             Some(src.clone()),
         ));
