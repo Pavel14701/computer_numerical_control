@@ -1,11 +1,13 @@
 # CORPUS manifest — пилотная партия (CORPUS-CONTRACT §8)
 # sha256 проставляются скриптом при выпуске корпуса; null = черновик.
 # R4-ожидания — явные per-vector (CORPUS §6), не выводятся из общих правил.
-corpus_version: v0.0-pilot
+corpus_version: v0.1-pilot
 bindings:
-  spec: SPEC-EID-L1 v0.8
-  equivalence: EQUIVALENCE v0.1
-  grammar: grammar.ebnf v0.1
+  spec: SPEC-EID-L1 v0.10
+  equivalence: EQUIVALENCE v0.2
+  grammar: grammar.ebnf v0.2
+  coverage: COVERAGE v0.6
+  corpus_contract: CORPUS-CONTRACT v0.5
 vectors:
   - id: "01"
     name: linear_box
@@ -46,6 +48,7 @@ vectors:
     kind: positive
     golden: tier_a/v0/11_arc_R_semicircle/golden.eid
     golden_tag: golden_semicircle_R
+    golden_note: "golden = ЗНАЧЕНИЯ, ВЫВЕДЕННЫЕ из 4dp-концов файла по правилу SPEC 6 (центр -0.0351,0.0001; sweep 179.4975; single-final-rounding v0.11), НЕ идеальная геометрия R=10; расхождение с идеалом ~0.035 mm = документированная амплификация near-semicircle"
     files:
       - { path: tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
       - { path: tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
@@ -363,7 +366,7 @@ vectors:
     kind: negative
     golden: null
     files:
-      - { path: tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc, dialect: linuxcnc, expect: ok, expected_diags: [E_UNSUPPORTED_SYNTAX], sha256: null }
+      - { path: tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SYNTAX, sha256: null }
     r4_expect: {}
     note: "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет"
     notice: false

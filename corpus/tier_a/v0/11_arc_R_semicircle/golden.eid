@@ -4,7 +4,7 @@ PATH_MODE exact_path
 FRAME_PRESET none
 OP 001 RAPID start=unknown end=0.0000,10.0000,5.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=flood tool=none frame=wcs wcs=G54
 OP 002 RAPID start=0.0000,10.0000,5.0000 end=0.0000,10.0000,0.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=flood tool=none frame=wcs wcs=G54
-OP 003 ARC start=0.0000,10.0000,0.0000 end=0.0175,-9.9998,0.0000 center=0.0000,0.0000,0.0000 normal=0.0000,0.0000,1.0000 dir=cw sweep=179.9000 pitch=0.0000 src=0.1-0.0 feed=100.0000 spindle=cw,10000.0000 coolant=flood tool=none frame=wcs wcs=G54
+OP 003 ARC start=0.0000,10.0000,0.0000 end=0.0175,-9.9998,0.0000 center=-0.0351,0.0001,0.0000 normal=0.0000,0.0000,1.0000 dir=cw sweep=179.4975 pitch=0.0000 src=0.1-0.0 feed=100.0000 spindle=cw,10000.0000 coolant=flood tool=none frame=wcs wcs=G54
 OP 004 RAPID start=0.0175,-9.9998,0.0000 end=0.0175,-9.9998,5.0000 src=0.1-0.0 feed=100.0000 spindle=cw,10000.0000 coolant=flood tool=none frame=wcs wcs=G54
 OP 005 PEND
 END
