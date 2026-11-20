@@ -9,4 +9,6 @@ eid-grbl = { path = "../eid-grbl" }
 eid-linuxcnc = { path = "../eid-linuxcnc" }
 eid-harness = { path = "../eid-harness" }
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+# toml (не serde_yaml): serde_yaml в maintenance mode + unsafe-libyaml
+# транзитивно в CLI-бинарь (IMPLEMENTATION-PLAN §6, R-1).
+toml = "0.8"

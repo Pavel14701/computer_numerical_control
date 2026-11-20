@@ -207,7 +207,7 @@ fn parse_dialect(s: &str, flag: &str) -> CliResult<DialectKind> {
 // ---------------------------------------------------------------------------
 
 fn load_profile(path: &Path) -> CliResult<MachineProfile> {
-    MachineProfile::load_yaml(path).map_err(|e| CliError::Failure(format!("профиль: {e}")))
+    MachineProfile::load(path).map_err(|e| CliError::Failure(format!("профиль: {e}")))
 }
 
 fn check_input_file(path: &Path) -> CliResult<()> {
@@ -302,8 +302,8 @@ fn print_main_help() {
 eid — транслятор G-кода через канонический формат EID/L1 (GRBL 1.1 <-> LinuxCNC)
 
 ИСПОЛЬЗОВАНИЕ:
-  eid translate --from <dialect> --to <dialect> --profile <yaml> --input <file> --output <file>
-  eid verify --input <file> --profile <yaml>
+  eid translate --from <dialect> --to <dialect> --profile <toml> --input <file> --output <file>
+  eid verify --input <file> --profile <toml>
   eid --help | --version
 
 КОМАНДЫ:
@@ -316,7 +316,7 @@ eid — транслятор G-кода через канонический фо
 ОПЦИИ:
   --from <dialect>    Диалект источника (translate)
   --to <dialect>      Диалект цели (translate)
-  --profile <yaml>    MachineProfile — YAML (примеры: crates/eid-integration/profiles/)
+  --profile <toml>    MachineProfile — TOML (примеры: crates/eid-integration/profiles/)
   --input <file>      Входной файл G-кода
   --output <file>     Выходной файл (translate)
 
@@ -339,17 +339,17 @@ fn print_translate_help() {
 eid translate — перевод G-кода между диалектами через EID/L1
 
 ИСПОЛЬЗОВАНИЕ:
-  eid translate --from <dialect> --to <dialect> --profile <yaml> --input <file> --output <file>
+  eid translate --from <dialect> --to <dialect> --profile <toml> --input <file> --output <file>
 
 ФЛАГИ (все обязательны):
   --from <dialect>    Диалект источника: {DIALECT_NAMES}
   --to <dialect>      Диалект цели (тот же список)
-  --profile <yaml>    MachineProfile (см. crates/eid-integration/profiles/*.yaml)
+  --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml)
   --input <file>      Входной файл G-кода (существует, читается)
   --output <file>     Выходной файл (не совпадает с input; каталог должен существовать)
 
 ПРИМЕР:
-  eid translate --from grbl --to linuxcnc --profile crates/eid-integration/profiles/grbl_default.yaml --input corpus/demo/pocket.gcode --output pocket.ngc
+  eid translate --from grbl --to linuxcnc --profile crates/eid-integration/profiles/grbl_default.toml --input corpus/demo/pocket.gcode --output pocket.ngc
 
 СТАТУС: адаптеры диалектов (Агенты C/D) — pending (итерации 2–3). Команда
 валидирует конфигурацию и печатает resolved-параметры, трансляция не выполняется.
@@ -365,10 +365,10 @@ fn print_verify_help() {
 eid verify — проверка программы G-кода (parse, лимиты профиля; симуляция — этап 8)
 
 ИСПОЛЬЗОВАНИЕ:
-  eid verify --input <file> --profile <yaml>
+  eid verify --input <file> --profile <toml>
 
 ФЛАГИ (оба обязательны):
-  --profile <yaml>    MachineProfile (см. crates/eid-integration/profiles/*.yaml)
+  --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml)
   --input <file>      Входной файл G-кода (существует, читается)
 
 СТАТУС: адаптеры диалектов (Агенты C/D, итерации 2–3) и симулятор (Агент E,

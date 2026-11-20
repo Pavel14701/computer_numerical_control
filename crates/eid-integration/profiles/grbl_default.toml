@@ -1,0 +1,16 @@
+# MachineProfile по умолчанию: GRBL 1.1 (Агент E, итерация 2; TOML с итерации 3 — R-1).
+# Лимиты — дефолты COVERAGE §1.2 (200000 / 10000 / 1000000 / 32).
+# emit_r_arcs: false — политика EQUIVALENCE §4: эмиссия дуг всегда IJK;
+# R-эмиссия — только по флагу профиля с notice-диагностикой.
+# Формат TOML (R-1, IMPLEMENTATION-PLAN §6: serde_yaml в maintenance mode +
+# unsafe-libyaml транзитивно); ключи kebab-case
+# (serde rename_all = "kebab-case" на MachineProfile/Limits).
+name = "GRBL 1.1 default"
+dialect = "grbl-1.1"
+emit-r-arcs = false
+
+[limits]
+max-ops-per-program = 200000
+max-unroll-iterations = 10000
+max-source-lines = 1000000
+max-word-chars = 32

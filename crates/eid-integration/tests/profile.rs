@@ -1,8 +1,9 @@
-//! Тесты MachineProfile (Агент E, итерация 2): загрузка дефолтных YAML-профилей,
-//! дефолты лимитов COVERAGE §1.2, обработка невалидных профилей.
+//! Тесты MachineProfile (Агент E, итерация 2; TOML с итерации 3 — R-1):
+//! загрузка дефолтных TOML-профилей, дефолты лимитов COVERAGE §1.2,
+//! обработка невалидных профилей.
 
 use eid_integration::profile::{
-    DialectKind, Limits, MachineProfile, GRBL_DEFAULT_YAML, LINUXCNC_DEFAULT_YAML,
+    DialectKind, Limits, MachineProfile, GRBL_DEFAULT_PROFILE, LINUXCNC_DEFAULT_PROFILE,
 };
 use std::path::PathBuf;
 
@@ -30,13 +31,13 @@ fn write_temp(name: &str, content: &str) -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Загрузка обоих дефолтных YAML → ожидаемые поля.
+// 1. Загрузка обоих дефолтных TOML → ожидаемые поля.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn load_grbl_default_yaml() {
-    let path = write_temp("grbl_default.yaml", GRBL_DEFAULT_YAML);
-    let p = MachineProfile::load_yaml(&path).expect("grbl_default.yaml должен грузиться");
+fn load_grbl_default_profile() {
+    let path = write_temp("grbl_default.toml", GRBL_DEFAULT_PROFILE);
+    let p = MachineProfile::load(&path).expect("grbl_default.toml должен грузиться");
     assert_eq!(p.name, "GRBL 1.1 default");
     assert_eq!(p.dialect, DialectKind::Grbl11);
     assert_eq!(p.limits, coverage_defaults());
@@ -45,9 +46,9 @@ fn load_grbl_default_yaml() {
 }
 
 #[test]
-fn load_linuxcnc_default_yaml() {
-    let path = write_temp("linuxcnc_default.yaml", LINUXCNC_DEFAULT_YAML);
-    let p = MachineProfile::load_yaml(&path).expect("linuxcnc_default.yaml должен грузиться");
+fn load_linuxcnc_default_profile() {
+    let path = write_temp("linuxcnc_default.toml", LINUXCNC_DEFAULT_PROFILE);
+    let p = MachineProfile::load(&path).expect("linuxcnc_default.toml должен грузиться");
     assert_eq!(p.name, "LinuxCNC default");
     assert_eq!(p.dialect, DialectKind::LinuxCnc);
     assert_eq!(p.limits, coverage_defaults());
@@ -55,11 +56,11 @@ fn load_linuxcnc_default_yaml() {
 }
 
 #[test]
-fn embedded_yaml_matches_constructed_defaults() {
-    // single source of truth: YAML и конструкторы не расходятся.
-    let grbl: MachineProfile = serde_yaml::from_str(GRBL_DEFAULT_YAML).unwrap();
+fn embedded_profiles_match_constructed_defaults() {
+    // single source of truth: TOML и конструкторы не расходятся.
+    let grbl: MachineProfile = toml::from_str(GRBL_DEFAULT_PROFILE).unwrap();
     assert_eq!(grbl, MachineProfile::grbl_default());
-    let lnx: MachineProfile = serde_yaml::from_str(LINUXCNC_DEFAULT_YAML).unwrap();
+    let lnx: MachineProfile = toml::from_str(LINUXCNC_DEFAULT_PROFILE).unwrap();
     assert_eq!(lnx, MachineProfile::linuxcnc_default());
 }
 
@@ -93,33 +94,35 @@ fn dialect_defaults_have_coverage_limits_and_ijk_only() {
 
 #[test]
 fn missing_file_is_err() {
-    let path = temp_file("no_such_profile_here.yaml");
-    let err = MachineProfile::load_yaml(&path).expect_err("файл не существует");
-    assert!(err.contains("не удалось прочитать"), "неожиданная ошибка: {err}");
+    let path = temp_file("no_such_profile_here.toml");
+    let err = MachineProfile::load(&path).expect_err("файл не существует");
+    assert!(
+        err.contains("не удалось прочитать"),
+        "неожиданная ошибка: {err}"
+    );
 }
 
 #[test]
-fn malformed_yaml_is_err() {
-    let path = write_temp(
-        "malformed.yaml",
-        "name: \"незакрытая скобка\nlimits: [1, 2\n",
-    );
-    let err = MachineProfile::load_yaml(&path).expect_err("YAML сломан");
-    assert!(err.contains("невалидный YAML"), "неожиданная ошибка: {err}");
+fn malformed_toml_is_err() {
+    let path = write_temp("malformed.toml", "name = \"незакрытая скобка\nlimits = [1, 2\n");
+    let err = MachineProfile::load(&path).expect_err("TOML сломан");
+    assert!(err.contains("невалидный TOML"), "неожиданная ошибка: {err}");
 }
 
 #[test]
 fn unknown_dialect_is_err() {
-    let path = write_temp("unknown_dialect.yaml", UNKNOWN_DIALECT_YAML);
-    let err = MachineProfile::load_yaml(&path).expect_err("диалект fanuc вне словаря");
-    assert!(err.contains("unknown variant") || err.contains("невалидный YAML"),
-        "неожиданная ошибка: {err}");
+    let path = write_temp("unknown_dialect.toml", UNKNOWN_DIALECT_TOML);
+    let err = MachineProfile::load(&path).expect_err("диалект fanuc вне словаря");
+    assert!(
+        err.contains("unknown variant") || err.contains("невалидный TOML"),
+        "неожиданная ошибка: {err}"
+    );
 }
 
 #[test]
 fn empty_file_is_err() {
-    let path = write_temp("empty.yaml", "");
-    assert!(MachineProfile::load_yaml(&path).is_err());
+    let path = write_temp("empty.toml", "");
+    assert!(MachineProfile::load(&path).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +131,8 @@ fn empty_file_is_err() {
 
 #[test]
 fn profile_overrides_parse() {
-    let path = write_temp("override.yaml", OVERRIDE_YAML);
-    let p = MachineProfile::load_yaml(&path).expect("валидный профиль");
+    let path = write_temp("override.toml", OVERRIDE_TOML);
+    let p = MachineProfile::load(&path).expect("валидный профиль");
     assert_eq!(p.dialect, DialectKind::GrblHal);
     assert_eq!(p.limits.max_ops_per_program, 5000);
     assert_eq!(p.limits.max_unroll_iterations, 100);
@@ -138,26 +141,26 @@ fn profile_overrides_parse() {
     assert!(p.emit_r_arcs);
 }
 
-// YAML-фрагменты тестов (concat! — чтобы не бороться с \-continuation,
-// съедающей ведущие пробелы: отступы YAML значимы).
-const UNKNOWN_DIALECT_YAML: &str = concat!(
-    "name: \"X\"\n",
-    "dialect: fanuc\n",
-    "limits:\n",
-    "  max-ops-per-program: 1\n",
-    "  max-unroll-iterations: 2\n",
-    "  max-source-lines: 3\n",
-    "  max-word-chars: 4\n",
-    "emit-r-arcs: false\n",
+// TOML-фрагменты тестов.
+const UNKNOWN_DIALECT_TOML: &str = concat!(
+    "name = \"X\"\n",
+    "dialect = \"fanuc\"\n",
+    "\n",
+    "[limits]\n",
+    "max-ops-per-program = 1\n",
+    "max-unroll-iterations = 2\n",
+    "max-source-lines = 3\n",
+    "max-word-chars = 4\n",
 );
 
-const OVERRIDE_YAML: &str = concat!(
-    "name: \"grblHAL bench\"\n",
-    "dialect: grbl-hal\n",
-    "limits:\n",
-    "  max-ops-per-program: 5000\n",
-    "  max-unroll-iterations: 100\n",
-    "  max-source-lines: 20000\n",
-    "  max-word-chars: 8\n",
-    "emit-r-arcs: true\n",
+const OVERRIDE_TOML: &str = concat!(
+    "name = \"grblHAL bench\"\n",
+    "dialect = \"grbl-hal\"\n",
+    "emit-r-arcs = true\n",
+    "\n",
+    "[limits]\n",
+    "max-ops-per-program = 5000\n",
+    "max-unroll-iterations = 100\n",
+    "max-source-lines = 20000\n",
+    "max-word-chars = 8\n",
 );

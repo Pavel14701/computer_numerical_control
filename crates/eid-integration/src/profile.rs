@@ -2,21 +2,26 @@
 //! этап 8 исходной карты: кинематика, макросы, safety, escape hatch).
 //!
 //! Итерация 2 (Агент E): к замороженным типам добавлены только
-//! `#[derive(Serialize, Deserialize)]` (YAML, kebab-case) и чистые дополнения —
-//! `MachineProfile::load_yaml` / `grbl_default` / `linuxcnc_default`,
+//! `#[derive(Serialize, Deserialize)]` (kebab-case) и чистые дополнения —
+//! `MachineProfile::load` / `grbl_default` / `linuxcnc_default`,
 //! `DialectKind::from_name` / `as_name`. Поля и семантика типов не изменены
-//! (freeze v0.1-interface). Дефолтные профили лежат в `profiles/*.yaml` и
-//! встроены в крейт через `include_str!` (single source of truth — YAML;
-//! `grbl_default()`/`linuxcnc_default()` строятся кодом и сверяются с YAML
-//! тестом `tests/profile.rs`).
+//! (freeze v0.1-interface).
+//!
+//! Формат профиля — TOML (миграция с YAML, итерация 3): причина — R-1
+//! (IMPLEMENTATION-PLAN §6) — serde_yaml в maintenance mode и тянет
+//! unsafe-libyaml транзитивно в CLI-бинарь; hand-parse — цель v1.0.
+//! Дефолтные профили лежат в `profiles/*.toml` и встроены в крейт через
+//! `include_str!` (single source of truth — TOML; `grbl_default()`/
+//! `linuxcnc_default()` строятся кодом и сверяются с TOML тестом
+//! `tests/profile.rs`).
 
 use std::path::Path;
 
-/// Встроенный дефолтный профиль GRBL 1.1 (`profiles/grbl_default.yaml`).
-pub const GRBL_DEFAULT_YAML: &str = include_str!("../profiles/grbl_default.yaml");
+/// Встроенный дефолтный профиль GRBL 1.1 (`profiles/grbl_default.toml`).
+pub const GRBL_DEFAULT_PROFILE: &str = include_str!("../profiles/grbl_default.toml");
 
-/// Встроенный дефолтный профиль LinuxCNC (`profiles/linuxcnc_default.yaml`).
-pub const LINUXCNC_DEFAULT_YAML: &str = include_str!("../profiles/linuxcnc_default.yaml");
+/// Встроенный дефолтный профиль LinuxCNC (`profiles/linuxcnc_default.toml`).
+pub const LINUXCNC_DEFAULT_PROFILE: &str = include_str!("../profiles/linuxcnc_default.toml");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -31,7 +36,7 @@ pub enum DialectKind {
 }
 
 impl DialectKind {
-    /// Каноническое имя диалекта (совпадает с YAML-представлением и
+    /// Каноническое имя диалекта (совпадает с TOML-представлением и
     /// `Adapter::dialect_name` для двух MVP-диалектов: "grbl-1.1", "linuxcnc").
     pub fn as_name(self) -> &'static str {
         match self {
@@ -87,20 +92,22 @@ pub struct MachineProfile {
 }
 
 impl MachineProfile {
-    /// Загрузка профиля из YAML-файла.
+    /// Загрузка профиля из TOML-файла (формат профиля — TOML, причина R-1:
+    /// IMPLEMENTATION-PLAN §6 — serde_yaml в maintenance mode + unsafe-libyaml
+    /// транзитивно; hand-parse — цель v1.0).
     ///
     /// Ошибка — `String` (замороженная сигнатура; отдельный `ProfileError`
-    /// не вводится): чтение файла или парсинг/валидация YAML не прошли.
-    pub fn load_yaml(path: &Path) -> Result<MachineProfile, String> {
+    /// не вводится): чтение файла или парсинг/валидация TOML не прошли.
+    pub fn load(path: &Path) -> Result<MachineProfile, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("профиль {}: не удалось прочитать: {e}", path.display()))?;
-        let profile: MachineProfile = serde_yaml::from_str(&text)
-            .map_err(|e| format!("профиль {}: невалидный YAML: {e}", path.display()))?;
+        let profile: MachineProfile = toml::from_str(&text)
+            .map_err(|e| format!("профиль {}: невалидный TOML: {e}", path.display()))?;
         Ok(profile)
     }
 
     /// Дефолтный профиль GRBL 1.1 (лимиты COVERAGE §1.2; emit_r_arcs: false —
-    /// политика EQUIVALENCE §4). Сверяется с `GRBL_DEFAULT_YAML` тестом.
+    /// политика EQUIVALENCE §4). Сверяется с `GRBL_DEFAULT_PROFILE` тестом.
     pub fn grbl_default() -> Self {
         Self {
             name: "GRBL 1.1 default".to_string(),
@@ -111,7 +118,7 @@ impl MachineProfile {
     }
 
     /// Дефолтный профиль LinuxCNC (лимиты COVERAGE §1.2; emit_r_arcs: false —
-    /// политика EQUIVALENCE §4). Сверяется с `LINUXCNC_DEFAULT_YAML` тестом.
+    /// политика EQUIVALENCE §4). Сверяется с `LINUXCNC_DEFAULT_PROFILE` тестом.
     pub fn linuxcnc_default() -> Self {
         Self {
             name: "LinuxCNC default".to_string(),
@@ -126,6 +133,12 @@ impl MachineProfile {
 mod tests {
     use super::*;
 
+    /// Обёртка: TOML-документ верхнего уровня обязан быть таблицей.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Wrap {
+        d: DialectKind,
+    }
+
     #[test]
     fn dialect_names_agree_with_serde() {
         let all = [
@@ -137,9 +150,10 @@ mod tests {
         for (kind, name) in all {
             assert_eq!(kind.as_name(), name);
             assert_eq!(DialectKind::from_name(name), Some(kind));
-            assert_eq!(serde_yaml::to_string(&kind).unwrap().trim(), name);
-            let back: DialectKind = serde_yaml::from_str(name).unwrap();
-            assert_eq!(back, kind);
+            let ser = toml::to_string(&Wrap { d: kind }).unwrap();
+            assert_eq!(ser.trim(), format!("d = \"{name}\""));
+            let back: Wrap = toml::from_str(&format!("d = \"{name}\"")).unwrap();
+            assert_eq!(back.d, kind);
         }
         assert_eq!(DialectKind::from_name("grbl"), None);
         assert_eq!(DialectKind::from_name("fanuc"), None);
