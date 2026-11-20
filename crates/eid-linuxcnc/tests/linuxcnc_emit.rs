@@ -449,3 +449,32 @@ fn cycle_g86_restart_emits_m5_then_m3() {
     let g1 = lines.iter().position(|l| l.starts_with("G1 X20.0000")).expect("следующий ход");
     assert!(m5 < rapid_out && rapid_out < m3 && m3 < g1, "порядок M5 → rapid-out → M3 → ход:\n{text}");
 }
+
+#[test]
+fn full_circle_emits_without_end_words() {
+    // CORPUS #08 (COVERAGE §5, зеркально eid-grbl): sweep=360°, pitch=0 →
+    // `G2 I.. J..` БЕЗ end-слов; parse-back сохраняет дугу (explicit_end=false
+    // → не zero-sweep). Винтовой оборот (pitch≠0) — с off-plane end-словом.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10.0000 Y0.0000 Z0.0000\n",
+        "G2 I-5.0000 J0.0000 F120.0\n",
+        "M2\n",
+    );
+    let text = assert_rt(src, "full circle");
+    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("G2 line");
+    assert_eq!(arc, "G2 I-5.0000 J0.0000 F120.0000", "без end-слов:\n{text}");
+    assert!(!arc.contains('X') && !arc.contains('Z'), "осей нет в full-circle");
+
+    let src_h = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10.0000 Y0.0000 Z0.0000\n",
+        "G2 X10.0000 Y0.0000 Z4.0000 I-5.0000 J0.0000 F120.0\n",
+        "M2\n",
+    );
+    let text_h = assert_rt(src_h, "helical full turn");
+    let arc_h = text_h.lines().find(|l| l.starts_with("G2 ")).expect("G2 line");
+    // винтовой полный оборот: только off-plane Z end-слово (in-plane нет)
+    assert!(arc_h.starts_with("G2 Z4.0000 "), "helical: только Z-слово:\n{arc_h}");
+    assert!(!arc_h.contains("X1") && !arc_h.contains("Y0.0000"), "in-plane end-слов нет");
+}

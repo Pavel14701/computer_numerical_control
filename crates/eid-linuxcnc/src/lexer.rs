@@ -12,7 +12,9 @@
 //!  * слово = буква + число (пробелы между словами необязательны, регистр
 //!    букв не важен); слово длиннее `max_word_chars` (32) → E_LIMIT_EXCEEDED
 //!    (COVERAGE §1.2);
-//!  * прочий лексический мусор → E_INVALID_INPUT.
+//!  * неизвестная/чужая строка (напр. `$`-конфиг GRBL) → line-level
+//!    RAW{E_UNSUPPORTED_SYNTAX} (правило двух классов, CORPUS #47;
+//!    зеркально eid-grbl); D9 v0.15: payload RAW включает терминатор строки.
 
 use eid_core::ast::SrcSpan;
 use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo, Stage};
@@ -44,6 +46,10 @@ pub enum LineTok {
     Percent,
     /// Block delete `/` в начале — вся строка RAW(E_RUNTIME_STATE).
     Slash,
+    /// Неизвестная/чужая строка (напр. `$`-конфиг GRBL вне словаря LinuxCNC)
+    /// → line-level RAW{E_UNSUPPORTED_SYNTAX} (правило двух классов:
+    /// line-local, CORPUS #47; зеркально eid-grbl).
+    Unknown,
     /// Слова кадра.
     Words(Vec<Word>),
 }
@@ -52,8 +58,11 @@ pub enum LineTok {
 #[derive(Debug, Clone)]
 pub struct LineData {
     pub line_no: usize,
-    /// Исходная строка (без CRLF; триммированная) — для payload RAW (D9).
+    /// Исходная строка (без терминатора; триммированная) — для payload RAW.
     pub raw: String,
+    /// D9 v0.15: терминатор строки (`\r\n` | `\n` | "" у EOF без NL) —
+    /// payload RAW включает его.
+    pub term: &'static str,
     pub tok: LineTok,
 }
 
@@ -91,8 +100,10 @@ pub fn limit_diag(
 /// Err (SPEC §8: E_INVALID_INPUT / E_RUNTIME_STATE / E_UNSUPPORTED_SYNTAX /
 /// E_LIMIT_EXCEEDED — вход сломан или вне грамматики L1).
 pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnostic>> {
+    let chunks: Vec<&str> = src.split('\n').collect();
+    let chunks_total = chunks.len();
     let mut out = Vec::new();
-    for (i, line_raw) in src.split('\n').enumerate() {
+    for (i, line_raw) in chunks.iter().enumerate() {
         if i + 1 > MAX_SOURCE_LINES {
             return Err(vec![limit_diag(
                 "max_source_lines",
@@ -104,9 +115,18 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
             )]);
         }
         let line_no = i + 1;
-        let raw = line_raw.strip_suffix('\r').unwrap_or(line_raw).trim().to_string();
+        let is_last = i + 1 == chunks_total;
+        // D9 v0.15: терминатор строки ("\r\n" | "\n" | "" у EOF без NL).
+        let (term, content) = if let Some(stripped) = line_raw.strip_suffix('\r') {
+            ("\r\n", stripped)
+        } else if !is_last {
+            ("\n", *line_raw)
+        } else {
+            ("", *line_raw)
+        };
+        let raw = content.trim().to_string();
         let tok = lex_line(&raw, file, line_no)?;
-        out.push(LineData { line_no, raw, tok });
+        out.push(LineData { line_no, raw, term, tok });
     }
     Ok(out)
 }
@@ -320,11 +340,10 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
                 ))
             }
             _ => {
-                return Err(fail(
-                    ErrorCode::InvalidInput,
-                    format!("lexical garbage `{ch}`"),
-                    col_at(k),
-                ))
+                // Правило двух классов (CORPUS #47): неизвестная строка
+                // (напр. `$`-конфиг GRBL вне словаря LinuxCNC) — line-local →
+                // вся строка RAW{E_UNSUPPORTED_SYNTAX}, разбор продолжается.
+                return Ok(LineTok::Unknown);
             }
         }
     }

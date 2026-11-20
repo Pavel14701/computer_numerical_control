@@ -245,6 +245,8 @@ impl<'a> Writer<'a> {
                 center,
                 normal,
                 dir,
+                sweep_deg,
+                pitch,
                 state,
                 ..
             } => {
@@ -295,12 +297,29 @@ impl<'a> Writer<'a> {
                     }
                 }
                 let arc_words = arc_words.trim_end().to_string();
-                self.line(format!(
-                    "{g} X{} Y{} Z{} {arc_words}{f}",
-                    num_text(&end.x),
-                    num_text(&end.y),
-                    num_text(&end.z)
-                ));
+                // Полный круг (CORPUS #08, зеркально eid-grbl): sweep=360° и
+                // pitch=0 → БЕЗ слов осей (`G2 I.. J..` — легальный LinuxCNC-
+                // формат; с end-словами parse-back отбросил бы дугу как
+                // zero-sweep explicit-end). Винтовой полный оборот (sweep=
+                // 360°, pitch≠0) — только off-plane end-слово оси (in-plane
+                // наследуют старт). Частичная дуга — все три оси.
+                let full_turn = (sweep_deg.value - 360.0).abs() <= 1e-9;
+                let helical_turn = full_turn && pitch.value.abs() > 1e-12;
+                let axes_part = if full_turn && !helical_turn {
+                    String::new()
+                } else if helical_turn {
+                    let ev = to_f64(end);
+                    let letter = ["X", "Y", "Z"];
+                    format!("{}{} ", letter[n_axis], fmt_num(ev[n_axis]))
+                } else {
+                    format!(
+                        "X{} Y{} Z{} ",
+                        num_text(&end.x),
+                        num_text(&end.y),
+                        num_text(&end.z)
+                    )
+                };
+                self.line(format!("{g} {axes_part}{arc_words}{f}"));
                 Ok(())
             }
             Op::Arc { start: StartPoint::Unknown, .. } => {
@@ -432,14 +451,25 @@ impl<'a> Writer<'a> {
                 }
             }
         }
+        // D9 v0.15: payload включает терминатор — декодированное выводится
+        // дословно; дополнительный NL — только если декод не кончается им
+        // (иначе следующий оп склеился бы в ту же строку).
+        let finish = |w: &mut Self, s: String| {
+            if s.ends_with('\n') {
+                w.text.push_str(&s);
+            } else {
+                w.text.push_str(&s);
+                w.text.push('\n');
+            }
+        };
         match String::from_utf8(bytes) {
-            Ok(s) => self.line(s),
+            Ok(s) => finish(self, s),
             Err(e) => {
                 self.warn(
                     ErrorCode::UnsupportedSemantics,
                     "raw payload: не-UTF8 байты — вывод lossy (fidelity байт нарушена)",
                 );
-                self.line(String::from_utf8_lossy(e.as_bytes()).into_owned());
+                finish(self, String::from_utf8_lossy(e.as_bytes()).into_owned());
             }
         }
         Ok(())

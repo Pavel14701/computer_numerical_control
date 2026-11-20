@@ -172,10 +172,21 @@ impl St {
         });
     }
 
-    fn push_raw(&mut self, line_no: usize, line: &str, reason: impl Into<String> + Clone, code: ErrorCode) {
+    fn push_raw(
+        &mut self,
+        line_no: usize,
+        line: &str,
+        term: &str,
+        reason: impl Into<String> + Clone,
+        code: ErrorCode,
+    ) {
         let reason = reason.into();
-        let mut payload_hex = String::with_capacity(line.len() * 2);
-        for b in line.as_bytes() {
+        // D9 v0.15: payload — байты строки ВКЛЮЧАЯ line terminator.
+        let mut bytes = String::with_capacity(line.len() + term.len());
+        bytes.push_str(line);
+        bytes.push_str(term);
+        let mut payload_hex = String::with_capacity(bytes.len() * 2);
+        for b in bytes.as_bytes() {
             payload_hex.push_str(&format!("{b:02X}"));
         }
         self.ops.push(Op::Raw {
@@ -265,12 +276,24 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
     for ld in &lines {
         match &ld.tok {
             LineTok::Blank | LineTok::Percent => {}
+            LineTok::Unknown => {
+                // Неизвестная/чужая строка (напр. `$$`-конфиг) — line-level
+                // RAW{E_UNSUPPORTED_SYNTAX} (CORPUS #47; правило двух классов).
+                st.push_raw(
+                    ld.line_no,
+                    &ld.raw,
+                    ld.term,
+                    "неизвестная строка — вне словаря LinuxCNC (line-local)",
+                    ErrorCode::UnsupportedSyntax,
+                );
+            }
             LineTok::Slash => {
                 // Block delete: исполнение зависит от переключателя станка —
                 // не статично (COVERAGE §4) → line-level RAW.
                 st.push_raw(
                     ld.line_no,
                     &ld.raw,
+                    ld.term,
                     "block delete `/` — исполнение зависит от переключателя станка",
                     ErrorCode::RuntimeState,
                 );
@@ -556,7 +579,7 @@ fn parse_block(
         if let Some(t) = t_word {
             st.selected_tool = Some(t); // предвыбор сохраняется для последующего M6
         }
-        st.push_raw(line_no, line, reason, code);
+        st.push_raw(line_no, line, ld.term, reason, code);
         return Ok(());
     }
 
