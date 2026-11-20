@@ -1,6 +1,17 @@
 //! Corpus manifest — замороженный интерфейс v0.1 (CORPUS-CONTRACT §6).
+//!
+//! `load()` парсит `manifest.yaml` (serde_yaml — external crates разрешены для
+//! harness; eid-core остаётся std-only). Правила:
+//!  * `expect`/`r4_expect`: "ok" → [`Outcome::Ok`], "warning" → [`Outcome::Warning`],
+//!    "E_*" → [`Outcome::Code`] (обратный маппинг [`ErrorCode::as_str`]);
+//!  * пути файлов/golden хранятся относительно corpus/ (каталога манифеста);
+//!    `load` дописывает каталог манифеста и проверяет существование каждого
+//!    пути (отсутствующий файл/каталог — `Err`, не молчаливый пропуск);
+//!  * неизвестные поля YAML (golden_tag, golden_note, note, bindings) —
+//!    информационные, игнорируются (CORPUS §6: поля manifest шире структуры).
 
 use eid_core::diag::ErrorCode;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -56,6 +67,151 @@ pub struct Manifest {
     pub vectors: Vec<Vector>,
 }
 
-pub fn load(_path: &Path) -> Result<Manifest, String> {
-    todo!("Агент B, итерация 1")
+pub fn load(path: &Path) -> Result<Manifest, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read manifest {}: {e}", path.display()))?;
+    let raw: ManifestYaml =
+        serde_yaml::from_str(&text).map_err(|e| format!("invalid manifest YAML: {e}"))?;
+    // Пути внутри манифеста — относительно corpus/ (каталога manifest.yaml).
+    let root = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let mut vectors = Vec::with_capacity(raw.vectors.len());
+    for v in raw.vectors {
+        let tier = match v.tier.as_str() {
+            "A" => Tier::A,
+            "B" => Tier::B,
+            other => return Err(format!("vector {}: invalid tier `{other}` (A|B)", v.id)),
+        };
+        let kind = match v.kind.as_str() {
+            "positive" => Kind::Positive,
+            "negative" => Kind::Negative,
+            other => return Err(format!("vector {}: invalid kind `{other}` (positive|negative)", v.id)),
+        };
+        let golden = match v.golden.as_deref() {
+            None | Some("null") => None,
+            Some(rel) => Some(resolve_exists(&root, rel, &format!("golden of {}", v.id))?),
+        };
+        let mut files = Vec::with_capacity(v.files.len());
+        for f in v.files {
+            let expect = parse_outcome(&f.expect, &format!("file {}", f.path))?;
+            let mut expected_diags = Vec::with_capacity(f.expected_diags.len());
+            for c in &f.expected_diags {
+                expected_diags.push(parse_code(c)?);
+            }
+            let p = resolve_exists(&root, &f.path, &format!("file of {}", v.id))?;
+            files.push(FileEntry {
+                path: p,
+                dialect: f.dialect,
+                expect,
+                expected_diags,
+                sha256: f.sha256,
+            });
+        }
+        let mut r4_expect = BTreeMap::new();
+        for (dialect, outcome) in v.r4_expect {
+            let o = parse_outcome(&outcome, &format!("r4_expect {dialect}"))?;
+            r4_expect.insert(dialect, o);
+        }
+        vectors.push(Vector {
+            id: v.id,
+            name: v.name,
+            tier,
+            kind,
+            golden,
+            files,
+            r4_expect,
+            notice: v.notice,
+        });
+    }
+    Ok(Manifest { corpus_version: raw.corpus_version, vectors })
+}
+
+/// Относительный путь → путь относительно corpus/ + проверка существования.
+fn resolve_exists(root: &Path, rel: &str, what: &str) -> Result<PathBuf, String> {
+    let p = root.join(rel);
+    if !p.is_file() {
+        return Err(format!(
+            "{what}: path `{rel}` does not exist under {}",
+            root.display()
+        ));
+    }
+    Ok(p)
+}
+
+fn parse_outcome(s: &str, what: &str) -> Result<Outcome, String> {
+    match s {
+        "ok" => Ok(Outcome::Ok),
+        "warning" => Ok(Outcome::Warning),
+        _ => {
+            if s.starts_with("E_") {
+                Ok(Outcome::Code(parse_code(s)?))
+            } else {
+                Err(format!(
+                    "{what}: invalid expect `{s}` (ok | warning | E_* — SPEC §8)"
+                ))
+            }
+        }
+    }
+}
+
+/// Обратный маппинг [`ErrorCode::as_str`] (строки кодов → ErrorCode).
+fn parse_code(s: &str) -> Result<ErrorCode, String> {
+    const ALL: [ErrorCode; 7] = [
+        ErrorCode::InvalidInput,
+        ErrorCode::UnsupportedSyntax,
+        ErrorCode::UnsupportedSemantics,
+        ErrorCode::RequiresMachineTable,
+        ErrorCode::RuntimeState,
+        ErrorCode::LimitExceeded,
+        ErrorCode::RawUntranslatable,
+    ];
+    ALL.into_iter()
+        .find(|c| c.as_str() == s)
+        .ok_or_else(|| format!("invalid diag code `{s}` (7 codes, SPEC §8)"))
+}
+
+// ===========================================================================
+// YAML-схема (serde). Публичные структуры выше — freeze v0.1; ниже —
+// промежуточные, точно повторяют форму manifest.yaml (CORPUS-CONTRACT §6).
+// Неизвестные поля (golden_tag, golden_note, note, bindings) serde
+// игнорирует по умолчанию.
+// ===========================================================================
+
+#[derive(Deserialize)]
+struct ManifestYaml {
+    corpus_version: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    bindings: Option<serde_yaml::Value>,
+    vectors: Vec<VectorYaml>,
+}
+
+#[derive(Deserialize)]
+struct VectorYaml {
+    id: String,
+    name: String,
+    tier: String,
+    kind: String,
+    #[serde(default)]
+    golden: Option<String>,
+    #[serde(default)]
+    files: Vec<FileYaml>,
+    #[serde(default)]
+    r4_expect: BTreeMap<String, String>,
+    #[serde(default)]
+    notice: bool,
+}
+
+#[derive(Deserialize)]
+struct FileYaml {
+    path: String,
+    dialect: String,
+    expect: String,
+    #[serde(default)]
+    expected_diags: Vec<String>,
+    #[serde(default)]
+    sha256: Option<String>,
 }

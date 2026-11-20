@@ -87,6 +87,147 @@ vectors:
     note: "GRBL R+off-plane подтверждён source-чеком (COVERAGE §6.9, 2026-11-20) — файл материализован"
     notice: false
 
+  - id: "04"
+    name: feed_G94_basic
+    tier: A
+    kind: positive
+    golden: tier_a/v0/04_feed_G94_basic/golden.eid
+    files:
+      - { path: tier_a/v0/04_feed_G94_basic/feed_G94_basic.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/04_feed_G94_basic/feed_G94_basic.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+  - id: "05"
+    name: feed_G93_inverse
+    tier: A
+    kind: positive
+    golden: tier_a/v0/05_feed_G93_inverse/golden.eid
+    files:
+      - { path: tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "G93 F2 на ходе длины 10 → feed = 10·2 = 20.0000 upm; F4 → 40.0000 (SPEC §4: G93 → len·F); эмиссия всегда G94 (EQUIVALENCE §2)"
+    notice: false
+  - id: "06"
+    name: dwell_between_moves
+    tier: A
+    kind: positive
+    golden: tier_a/v0/06_dwell_between_moves/golden.eid
+    files:
+      - { path: tier_a/v0/06_dwell_between_moves/dwell_between_moves.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/06_dwell_between_moves/dwell_between_moves.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+  - id: "07"
+    name: arc_90
+    tier: A
+    kind: positive
+    golden: tier_a/v0/07_arc_90/golden.eid
+    files:
+      - { path: tier_a/v0/07_arc_90/arc_90.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/07_arc_90/arc_90.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    notice: false
+  - id: "08"
+    name: arc_full_circle
+    tier: A
+    kind: positive
+    golden: tier_a/v0/08_arc_full_circle/golden.eid
+    files:
+      - { path: tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/08_arc_full_circle/arc_full_circle.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "IJK, start == end → sweep=360° (SPEC §6: полный круг только IJK-формой)"
+    notice: false
+  - id: "09"
+    name: arc_helix
+    tier: A
+    kind: positive
+    golden: tier_a/v0/09_arc_helix/golden.eid
+    files:
+      - { path: tier_a/v0/09_arc_helix/arc_helix.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/09_arc_helix/arc_helix.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "pitch=2.0000 — винтовая компонента вдоль +Z (thread-milling паттерн)"
+    notice: false
+  - id: "10"
+    name: arc_helix_inch
+    tier: A
+    kind: positive
+    golden: tier_a/v0/10_arc_helix_inch/golden.eid
+    files:
+      - { path: tier_a/v0/10_arc_helix_inch/arc_helix_inch.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/10_arc_helix_inch/arc_helix_inch.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "UNITS in: R=0.5, pitch=0.1 — 4dp-значения дюймов (float-ловушка #38 в контексте дуги, verbatim-хранение SPEC §10)"
+    notice: false
+  - id: "12"
+    name: arc_R_sweep270
+    tier: A
+    kind: positive
+    golden: tier_a/v0/12_arc_R_sweep270/golden.eid
+    files:
+      - { path: tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "R-10 (отрицательный знак → дуга >180°): sweep=270°, центр (0,10,0) — другая ветка R-парсинга (CORPUS §1.1)"
+    notice: false
+  - id: "13"
+    name: arc_degenerate_zero_sweep
+    tier: A
+    kind: positive
+    golden: tier_a/v0/13_arc_degenerate_zero_sweep/golden.eid
+    files:
+      - { path: tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "дуга с endpoint'ом <4dp (X0.00004 из (0,0), I5 J0): sweep≈0 → drop+notice, не ошибка (SPEC §6, §3 v0.6); golden = AST БЕЗ опа; R1-AST only (CORPUS §4)"
+    notice: true
+  - id: "14"
+    name: arc_G18
+    tier: A
+    kind: positive
+    golden: tier_a/v0/14_arc_G18/golden.eid
+    files:
+      - { path: tier_a/v0/14_arc_G18/arc_G18.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/14_arc_G18/arc_G18.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "G18 (XZ): normal=+Y; I+K literal X/Y/Z в обоих диалектах (COVERAGE §6.11); R4-отказов для GRBL нет (source-check §6.11)"
+    notice: false
+  - id: "15"
+    name: arc_G19
+    tier: A
+    kind: positive
+    golden: tier_a/v0/15_arc_G19/golden.eid
+    files:
+      - { path: tier_a/v0/15_arc_G19/arc_G19.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/15_arc_G19/arc_G19.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "G19 (YZ): normal=+X; J+K literal; см. #14"
+    notice: false
+  - id: "16"
+    name: plane_mix
+    tier: A
+    kind: positive
+    golden: tier_a/v0/16_plane_mix/golden.eid
+    files:
+      - { path: tier_a/v0/16_plane_mix/plane_mix.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/16_plane_mix/plane_mix.linuxcnc.ngc,  dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect: {}
+    note: "секции G17/G18/G19 — нормаль дуги из заявленной плоскости (SPEC §4, §6); см. #14"
+    notice: false
+  - id: "47"
+    name: raw_crlf_fidelity
+    tier: A
+    kind: positive
+    golden: tier_a/v0/47_raw_crlf_fidelity/golden.eid
+    files:
+      - { path: tier_a/v0/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+    r4_expect:
+      grbl-1.1: E_RAW_UNTRANSLATABLE
+      linuxcnc: E_RAW_UNTRANSLATABLE
+    note: "GRBL-файл с CRLF-концами строк + raw-строка '$$' (COVERAGE §2.6: $-строки → RAW); golden payload=24240D0A = байты '$$'+CRLF как есть, эмиссия не нормализует (grammar D9); same-dialect R1-text байт-в-байт"
+    notice: false
   - id: "N1"
     name: g53_no_origins
     tier: A
