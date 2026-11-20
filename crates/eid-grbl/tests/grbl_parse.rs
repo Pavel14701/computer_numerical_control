@@ -547,6 +547,7 @@ fn spec_cov_cycles_raw_classes() {
         ("G74 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
         ("G87 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
         ("G88 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
+        ("G76 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics), // токарный цикл резьбы (§1.2/§2.5)
     ];
     for (g, code) in cases {
         let out = canonicalize_with_notices(&format!("G21 G90 G94 G17\n{g}\nF100.0\nM2\n"), "c.ngc")

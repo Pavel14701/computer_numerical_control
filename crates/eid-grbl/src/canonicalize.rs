@@ -408,7 +408,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         let cycle_sem = b.unsupported_words.iter().any(|w| {
             w.letter == 'G'
                 && w.value.value().fract() == 0.0
-                && matches!(w.value.value() as i64, 74 | 84 | 87 | 88)
+                && matches!(w.value.value() as i64, 74 | 76 | 84 | 87 | 88)
         });
         let axes_sem = !cycle_sem
             && b.unsupported_words.iter().all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
