@@ -98,3 +98,226 @@ vectors:
     r4_expect: {}
     note: "G53 при выборе G54 без in-text wcs_define — SPEC §5.3(b)"
     notice: false
+
+  - id: "N2"
+    name: mid_G92
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n2_mid_G92/mid_G92.grbl.ngc,     dialect: grbl-1.1, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n2_mid_G92/mid_G92.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "G92 в середине после ходов — пресетка только до первого motion-опа (SPEC §3, Q4/Q5)"
+    notice: false
+
+  - id: "N3"
+    name: raw_vendor_block
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
+      - { path: tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
+    r4_expect:
+      grbl-1.1: E_RAW_UNTRANSLATABLE
+      linuxcnc: E_RAW_UNTRANSLATABLE
+    note: "GRBL: $110=250.000 конфиг-строка вне программы -> RAW (COVERAGE §4); LinuxCNC: M123 user-defined -> RAW (COVERAGE §3, M100-M199). Same-dialect: RAW сохранён; кросс-диалект запрещён (SPEC §8)"
+    notice: false
+
+  - id: "N4"
+    name: peck_L_over_limit
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc, dialect: linuxcnc, expect: E_LIMIT_EXCEEDED, sha256: null }
+    r4_expect: {}
+    note: "G83 с L99999 > max_unroll_iterations=10000 (COVERAGE §1.2); циклы вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N5a"
+    name: arc_radius_mismatch
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n5a_arc_radius_mismatch/arc_radius_mismatch.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n5a_arc_radius_mismatch/arc_radius_mismatch.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "старт-радиус 5, энд-радиус 3 (центр I5 J0 от (0,0)) — ветка валидации радиусов (SPEC §6)"
+    notice: false
+
+  - id: "N5b"
+    name: arc_chord_gt_2R
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n5b_arc_chord_gt_2R/arc_chord_gt_2R.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n5b_arc_chord_gt_2R/arc_chord_gt_2R.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "планиметрическая хорда 100 > 2R=10 — невозможная дуга (SPEC §6)"
+    notice: false
+
+  - id: "N6"
+    name: naked_coords_after_G80
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n6_naked_coords_after_G80/naked_coords_after_G80.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "голая координатная строка после G80 без motion-кода (COVERAGE §2.1); циклы вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N7"
+    name: unit_switch_mid
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n7_unit_switch_mid/unit_switch_mid.grbl.ngc,     dialect: grbl-1.1, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "G20 после ходов — одна система единиц на программу (SPEC §2.5/§3, COVERAGE §2.2)"
+    notice: false
+
+  - id: "N8"
+    name: tapping_G84
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n8_tapping_G84/tapping_G84.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "G84 tapping — синхронизация шпиндель-подача, не представимо ходами (COVERAGE §2.5, SPEC §7); циклы вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N9"
+    name: bare_T_linuxcnc
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "T5 без M6 — предвыбор инструмента вне L1 (COVERAGE §3, SPEC §4); GRBL-вариант — другой класс (E_INVALID_INPUT), не в этом векторе"
+    notice: false
+
+  - id: "N10"
+    name: g43_h_table
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n10_g43_h_table/g43_h_table.linuxcnc.ngc, dialect: linuxcnc, expect: E_REQUIRES_MACHINE_TABLE, sha256: null }
+    r4_expect: {}
+    note: "G43 H2 — TLO из таблицы станка (COVERAGE §2.4, SPEC §8); G43 вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N11"
+    name: m98_call
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SYNTAX, sha256: null }
+    r4_expect: {}
+    note: "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N12"
+    name: program_end_not_last
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n12_program_end_not_last/program_end_not_last.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n12_program_end_not_last/program_end_not_last.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "M2 в середине, после него ходы — инвариант «ровно один раз и последний» (SPEC §3)"
+    notice: false
+
+  - id: "N13"
+    name: program_end_duplicate
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n13_program_end_duplicate/program_end_duplicate.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "два M2 — program_end ровно один раз (SPEC §3)"
+    notice: false
+
+  - id: "N14"
+    name: program_end_missing
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n14_program_end_missing/program_end_missing.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n14_program_end_missing/program_end_missing.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "файл без M2/M30 — третий режим нарушения инварианта «ровно один раз и последний» (SPEC §3)"
+    notice: false
+
+  - id: "N15"
+    name: wcs_set_here_mid
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n15_wcs_set_here_mid/wcs_set_here_mid.grbl.ngc,     dialect: grbl-1.1, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n15_wcs_set_here_mid/wcs_set_here_mid.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "G10 L20 после motion-опа — позиционно-зависим, только пресетка (SPEC §5.3); контраст с #44 (пресетка до первого опа — легальна)"
+    notice: false
+
+  - id: "N16"
+    name: g53_after_preset
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n16_g53_after_preset/g53_after_preset.grbl.ngc,     dialect: grbl-1.1, expect: E_RUNTIME_STATE, sha256: null }
+      - { path: tier_a/v0/n16_g53_after_preset/g53_after_preset.linuxcnc.ngc, dialect: linuxcnc, expect: E_RUNTIME_STATE, sha256: null }
+    r4_expect: {}
+    note: "G53 при активном frame_preset — правило machine-frame (SPEC §5.3(a)); та же диспозиция, что N1, другая причина"
+    notice: false
+
+  - id: "N17"
+    name: multiple_preset_at_start
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.grbl.ngc,     dialect: grbl-1.1, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+      - { path: tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "два G92 подряд до ходов — множественные пресетки (Q5, класс зафиксирован SPEC v0.7)"
+    notice: false
+
+  - id: "N18"
+    name: css_g96
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n18_css_g96/css_g96.linuxcnc.ngc, dialect: linuxcnc, expect: E_UNSUPPORTED_SEMANTICS, sha256: null }
+    r4_expect: {}
+    note: "G96 S200 — токарный CSS вне скоупа §1.2 (COVERAGE §2.6); G96 вне словаря GRBL — источника нет"
+    notice: false
+
+  - id: "N19"
+    name: arc_R_full_circle
+    tier: A
+    kind: negative
+    golden: null
+    files:
+      - { path: tier_a/v0/n19_arc_R_full_circle/arc_R_full_circle.grbl.ngc,     dialect: grbl-1.1, expect: E_INVALID_INPUT, sha256: null }
+      - { path: tier_a/v0/n19_arc_R_full_circle/arc_R_full_circle.linuxcnc.ngc, dialect: linuxcnc, expect: E_INVALID_INPUT, sha256: null }
+    r4_expect: {}
+    note: "R-форма при start == end — центр неоднозначен, полный круг только IJK (SPEC §6 v0.7)"
+    notice: false
