@@ -178,15 +178,20 @@ pub fn modal_group(g: GCode) -> Option<ModalGroup> {
 }
 
 /// Разбор файла целиком: блоки + лексические ошибки (порядок строк сохранён).
+/// Raw-байты строки — С терминатором (\r\n / \n, grammar D9 v0.3): сплиттер
+/// по '\n' восстанавливает '\n' у каждой строки, кроме последней без него.
 pub fn parse_file(src: &str) -> ParsedFile {
     let mut out = ParsedFile { blocks: Vec::new(), lex_errors: Vec::new() };
-    for (idx, line) in src.split('\n').enumerate() {
+    let parts: Vec<&str> = src.split('\n').collect();
+    let n = parts.len();
+    for (idx, line) in parts.iter().enumerate() {
         let line_no = (idx + 1) as u32;
         match lexer::lex_line(line, line_no) {
             Err(e) => out.lex_errors.push(e),
             Ok(toks) if !toks.is_empty() => {
-                // raw без \n, но С \r — payload_hex байт-в-байт (grammar D9).
-                out.blocks.push(Block::from_toks(toks, line_no, line.to_string()))
+                // raw — байты строки ВКЛЮЧАЯ терминатор (\r внутри, \n достроен).
+                let raw = if idx + 1 < n { format!("{line}\n") } else { line.to_string() };
+                out.blocks.push(Block::from_toks(toks, line_no, raw));
             }
             Ok(_) => {}
         }

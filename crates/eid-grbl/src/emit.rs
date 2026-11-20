@@ -5,8 +5,9 @@
 //! Числа — eid_core::emitter::fmt_num: фиксированные 4 dp, trailing zeros
 //! сохраняются (EQUIVALENCE §1.4: два адаптера на одном EID — идентичный блок).
 //!
-//! RAW: payload-hex декодируется в исходные байты → verbatim (same-dialect
-//! fidelity, CRLF байт-в-байт). КРОСС-ДИАЛЕКТНЫЙ ОТКАЗ E_RAW_UNTRANSLATABLE —
+//! RAW: payload-hex декодируется в исходные байты строки ВКЛЮЧАЯ line
+//! terminator (grammar D9 v0.3: \r\n / \n) → verbatim (same-dialect fidelity,
+//! байт-в-байт). КРОСС-ДИАЛЕКТНЫЙ ОТКАЗ E_RAW_UNTRANSLATABLE —
 //! НЕ ЗДЕСЬ: это правило translate-пути (Агент E, итерация 3–5) — программа
 //! с RAW-опами при переводе в другой диалект отклоняется целиком ДО эмиссии
 //! (SPEC §8.2); эмиттер same-dialect только выводит payload как был.
@@ -127,10 +128,11 @@ fn err(code: ErrorCode, msg: impl Into<String>, src: Option<eid_core::ast::SrcSp
 pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
     eid_core::parser::validate(program)?;
-    if program.eid_version != "EID/L1 v0.2" {
+    // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
+    if program.eid_version != "EID/L1 v0.3" {
         return Err(vec![err(
             ErrorCode::InvalidInput,
-            format!("eid_version `{}` не поддерживается (ожидается EID/L1 v0.2)", program.eid_version),
+            format!("eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)", program.eid_version),
             None,
         )]);
     }
@@ -388,11 +390,15 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
         }
         Op::ProgramEnd { .. } => ctx.line("M2"),
         Op::Raw { payload_hex, .. } => {
-            // same-dialect fidelity: исходные байты строки verbatim (CRLF —
-            // байт-в-байт; hex — grammar D9).
+            // same-dialect fidelity: исходные байты строки verbatim ВКЛЮЧАЯ
+            // терминатор (grammar D9 v0.3: \r\n / \n байт-в-байт). Внешний '\n'
+            // не добавляется, если терминатор уже в payload.
             let bytes = decode_hex(payload_hex);
-            ctx.out.push_str(&String::from_utf8_lossy(&bytes));
-            ctx.out.push('\n');
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            ctx.out.push_str(&text);
+            if !text.ends_with('\n') {
+                ctx.out.push('\n');
+            }
         }
         Op::ToolChange { .. } => unreachable!("tool_change отбракован валидацией"),
     }

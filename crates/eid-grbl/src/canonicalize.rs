@@ -127,8 +127,8 @@ fn wcs_to_p(w: &Wcs) -> u8 {
     }
 }
 
-/// hex-кодировка байтов строки (grammar D9: чётная длина, A–F uppercase);
-/// байты verbatim включая \r (CRLF fidelity).
+/// hex-кодировка байтов строки (grammar D9 v0.3: чётная длина, A–F uppercase);
+/// байты verbatim включая line terminator (\r\n / \n).
 fn payload_hex(line: &str) -> String {
     let mut s = String::new();
     for b in line.as_bytes() {
@@ -330,7 +330,8 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
         )]);
     }
     let program = Program {
-        eid_version: "EID/L1 v0.2".to_string(),
+        // grammar v0.3 — magic-строка (SPEC §10.4): изменение формата = новая версия.
+        eid_version: "EID/L1 v0.3".to_string(),
         units: ctx.units,
         // SPEC §3 v0.12: отсутствие G61/G61.1/G64 → exact_path (дефолт);
         // G61 — единственный path-код словаря GRBL — тоже exact_path.

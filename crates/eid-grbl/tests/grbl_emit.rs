@@ -3,7 +3,7 @@
 //! Диалектные файлы — рукописные v0: byte-exact НЕ гарантирован, сравнение
 //! только AST-уровня (бриф п.9); emit дважды — байт-в-байт.
 
-use eid_core::adapter::{Adapter, EidTextAdapter};
+use eid_core::adapter::Adapter;
 use eid_core::diag::ErrorCode;
 use eid_grbl::GrblAdapter;
 use eid_harness::diff::{semantic_diff, DiffConfig};
@@ -82,12 +82,20 @@ fn roundtrip_13_degenerate_zero_sweep() {
 
 #[test]
 fn roundtrip_47_crlf_dollar_dollar() {
-    // $$ + полный CRLF-файл: RAW verbatim, байты байт-в-байт (только RAW-строка
-    // проходит через emit дословно; заголовок — свой, по брифу п.1).
+    // $$ + полный CRLF-файл: RAW verbatim С терминатором (D9 v0.3: payload
+    // "$$\r\n" → hex 24240D0A), байты байт-в-байт (только RAW-строка проходит
+    // через emit дословно; заголовок — свой, по брифу п.1).
     roundtrip("47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc");
     let a = parse_grbl(&corpus("47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"));
+    match &a.ops[0] {
+        eid_core::ast::Op::Raw { payload_hex, .. } => {
+            assert_eq!(payload_hex, "24240D0A", "payload без \\n (D9 v0.2-хвост)");
+        }
+        other => panic!("ops[0] не Raw: {other:?}"),
+    }
     let text = GrblAdapter::new().emit(&a).expect("emit ok");
     assert!(text.contains("$$\r\n"), "CRLF при $$ потерян: {text:?}");
+    assert!(!text.contains("$$\r\n\n"), "двойной терминатор после Raw");
 }
 
 #[test]
@@ -102,9 +110,37 @@ fn emit_never_uses_r_form() {
 
 #[test]
 fn vector_27_tool_change_is_syntax() {
-    let golden = EidTextAdapter::new()
-        .parse(&corpus("27_tool_change/golden.eid"), "27.golden.eid")
-        .expect("golden parses");
+    //eid-core parser пока принимает только magic v0.2 (Агент A), goldens уже
+    // v0.3 → golden.eid разбираем прямой AST-заготовкой; после обновления
+    // eid-core вернуть EidTextAdapter::parse (одна строка, пометка отчёта).
+    use eid_core::ast::*;
+    let golden = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: PathMode::ExactPath,
+        frame_preset: None,
+        ops: vec![
+            Op::ToolChange {
+                tool: 3,
+                state: State {
+                    feed: None,
+                    spindle: Spindle::Off,
+                    coolant: Coolant::default(),
+                    tool: Some(3),
+                    frame: Frame::Wcs,
+                    wcs: Wcs::G54,
+                },
+                src: SrcSpan {
+                    file: "27".into(),
+                    line_start: 1,
+                    col_start: 1,
+                    line_end: 1,
+                    col_end: 2,
+                },
+            },
+            Op::ProgramEnd { src: SrcSpan { file: "27".into(), line_start: 9, col_start: 1, line_end: 9, col_end: 2 } },
+        ],
+    };
     let Err(diags) = GrblAdapter::new().emit(&golden) else {
         panic!("#27: ожидался Err(E_UNSUPPORTED_SYNTAX)");
     };
