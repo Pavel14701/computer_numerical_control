@@ -3,7 +3,7 @@
 //! Диалектные файлы — рукописные v0: byte-exact НЕ гарантирован, сравнение
 //! только AST-уровня (бриф п.9); emit дважды — байт-в-байт.
 
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::diag::ErrorCode;
 use eid_grbl::GrblAdapter;
 use eid_harness::diff::{semantic_diff, DiffConfig};
@@ -110,37 +110,10 @@ fn emit_never_uses_r_form() {
 
 #[test]
 fn vector_27_tool_change_is_syntax() {
-    //eid-core parser пока принимает только magic v0.2 (Агент A), goldens уже
-    // v0.3 → golden.eid разбираем прямой AST-заготовкой; после обновления
-    // eid-core вернуть EidTextAdapter::parse (одна строка, пометка отчёта).
-    use eid_core::ast::*;
-    let golden = Program {
-        eid_version: "EID/L1 v0.3".into(),
-        units: Units::Mm,
-        path_mode: PathMode::ExactPath,
-        frame_preset: None,
-        ops: vec![
-            Op::ToolChange {
-                tool: 3,
-                state: State {
-                    feed: None,
-                    spindle: Spindle::Off,
-                    coolant: Coolant::default(),
-                    tool: Some(3),
-                    frame: Frame::Wcs,
-                    wcs: Wcs::G54,
-                },
-                src: SrcSpan {
-                    file: "27".into(),
-                    line_start: 1,
-                    col_start: 1,
-                    line_end: 1,
-                    col_end: 2,
-                },
-            },
-            Op::ProgramEnd { src: SrcSpan { file: "27".into(), line_start: 9, col_start: 1, line_end: 9, col_end: 2 } },
-        ],
-    };
+    // eid-core magic v0.3 (commit 655d194) — golden.eid снова через R1-парсер.
+    let golden = EidTextAdapter::new()
+        .parse(&corpus("27_tool_change/golden.eid"), "27.golden.eid")
+        .expect("golden parses");
     let Err(diags) = GrblAdapter::new().emit(&golden) else {
         panic!("#27: ожидался Err(E_UNSUPPORTED_SYNTAX)");
     };
