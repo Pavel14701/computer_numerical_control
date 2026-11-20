@@ -20,12 +20,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/01_linear_box/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/01_linear_box/linear_box.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/01_linear_box/linear_box.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/01_linear_box/linear_box.grbl.ngc"
+path = "tier_a/v1/01_linear_box/linear_box.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/01_linear_box/linear_box.linuxcnc.ngc"
+path = "tier_a/v1/01_linear_box/linear_box.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -36,12 +38,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/02_rapid_reposition/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/02_rapid_reposition/rapid_reposition.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/02_rapid_reposition/rapid_reposition.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/02_rapid_reposition/rapid_reposition.grbl.ngc"
+path = "tier_a/v1/02_rapid_reposition/rapid_reposition.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/02_rapid_reposition/rapid_reposition.linuxcnc.ngc"
+path = "tier_a/v1/02_rapid_reposition/rapid_reposition.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -52,12 +56,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/03_feed_survives_rapid/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.grbl.ngc"
+path = "tier_a/v1/03_feed_survives_rapid/feed_survives_rapid.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc"
+path = "tier_a/v1/03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -68,12 +74,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/11_arc_R_semicircle/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.grbl.ngc"
+path = "tier_a/v1/11_arc_R_semicircle/arc_R_semicircle.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc"
+path = "tier_a/v1/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -216,8 +224,10 @@ golden = "tier_a/v0/27_tool_change/golden.eid"
 # M6 вне словаря GRBL (COVERAGE §5)
 r4_expect = { "grbl-1.1" = "E_UNSUPPORTED_SYNTAX" }
 notice = false
+regression_files = [{ path = "tier_a/v0/27_tool_change/tool_change.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/27_tool_change/tool_change.linuxcnc.ngc"
+path = "tier_a/v1/27_tool_change/tool_change.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -228,12 +238,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/36_preset_G54_then_switch/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.grbl.ngc"
+path = "tier_a/v1/36_preset_G54_then_switch/preset_G54_then_switch.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc"
+path = "tier_a/v1/36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -245,12 +257,14 @@ kind = "positive"
 golden = "tier_a/v0/46_arc_R_helix/golden.eid"
 note = "GRBL R+off-plane подтверждён source-чеком (COVERAGE §6.9, 2026-11-20) — файл материализован"
 notice = false
+regression_files = [{ path = "tier_a/v0/46_arc_R_helix/arc_R_helix.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/46_arc_R_helix/arc_R_helix.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/46_arc_R_helix/arc_R_helix.grbl.ngc"
+path = "tier_a/v1/46_arc_R_helix/arc_R_helix.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/46_arc_R_helix/arc_R_helix.linuxcnc.ngc"
+path = "tier_a/v1/46_arc_R_helix/arc_R_helix.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -261,12 +275,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/04_feed_G94_basic/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.grbl.ngc"
+path = "tier_a/v1/04_feed_G94_basic/feed_G94_basic.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.linuxcnc.ngc"
+path = "tier_a/v1/04_feed_G94_basic/feed_G94_basic.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -278,12 +294,14 @@ kind = "positive"
 golden = "tier_a/v0/05_feed_G93_inverse/golden.eid"
 note = "G93 F2 на ходе длины 10 → feed = 10·2 = 20.0000 upm; F4 → 40.0000 (SPEC §4: G93 → len·F); эмиссия всегда G94 (EQUIVALENCE §2)"
 notice = false
+regression_files = [{ path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.grbl.ngc"
+path = "tier_a/v1/05_feed_G93_inverse/feed_G93_inverse.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.linuxcnc.ngc"
+path = "tier_a/v1/05_feed_G93_inverse/feed_G93_inverse.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -294,12 +312,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/06_dwell_between_moves/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.grbl.ngc"
+path = "tier_a/v1/06_dwell_between_moves/dwell_between_moves.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.linuxcnc.ngc"
+path = "tier_a/v1/06_dwell_between_moves/dwell_between_moves.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -310,12 +330,14 @@ tier = "A"
 kind = "positive"
 golden = "tier_a/v0/07_arc_90/golden.eid"
 notice = false
+regression_files = [{ path = "tier_a/v0/07_arc_90/arc_90.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/07_arc_90/arc_90.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/07_arc_90/arc_90.grbl.ngc"
+path = "tier_a/v1/07_arc_90/arc_90.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/07_arc_90/arc_90.linuxcnc.ngc"
+path = "tier_a/v1/07_arc_90/arc_90.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -327,8 +349,10 @@ kind = "positive"
 golden = "tier_a/v0/08_arc_full_circle/golden.eid"
 note = "IJK, start == end → sweep=360° (SPEC §6: полный круг только IJK-формой)"
 notice = false
+regression_files = [{ path = "tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/08_arc_full_circle/arc_full_circle.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc"
+path = "tier_a/v1/08_arc_full_circle/arc_full_circle.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
@@ -344,12 +368,14 @@ kind = "positive"
 golden = "tier_a/v0/09_arc_helix/golden.eid"
 note = "pitch=2.0000 — винтовая компонента вдоль +Z (thread-milling паттерн)"
 notice = false
+regression_files = [{ path = "tier_a/v0/09_arc_helix/arc_helix.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/09_arc_helix/arc_helix.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/09_arc_helix/arc_helix.grbl.ngc"
+path = "tier_a/v1/09_arc_helix/arc_helix.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/09_arc_helix/arc_helix.linuxcnc.ngc"
+path = "tier_a/v1/09_arc_helix/arc_helix.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -361,12 +387,14 @@ kind = "positive"
 golden = "tier_a/v0/10_arc_helix_inch/golden.eid"
 note = "UNITS in: R=0.5, pitch=0.1 — 4dp-значения дюймов (float-ловушка #38 в контексте дуги, verbatim-хранение SPEC §10)"
 notice = false
+regression_files = [{ path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.grbl.ngc"
+path = "tier_a/v1/10_arc_helix_inch/arc_helix_inch.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.linuxcnc.ngc"
+path = "tier_a/v1/10_arc_helix_inch/arc_helix_inch.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -378,12 +406,14 @@ kind = "positive"
 golden = "tier_a/v0/12_arc_R_sweep270/golden.eid"
 note = "R-10 (отрицательный знак → дуга >180°): sweep=270°, центр (0,10,0) — другая ветка R-парсинга (CORPUS §1.1)"
 notice = false
+regression_files = [{ path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.grbl.ngc"
+path = "tier_a/v1/12_arc_R_sweep270/arc_R_sweep270.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.linuxcnc.ngc"
+path = "tier_a/v1/12_arc_R_sweep270/arc_R_sweep270.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -395,12 +425,14 @@ kind = "positive"
 golden = "tier_a/v0/13_arc_degenerate_zero_sweep/golden.eid"
 note = "дуга с endpoint'ом <4dp (X0.00004 из (0,0), I5 J0): sweep≈0 → drop+notice, не ошибка (SPEC §6, §3 v0.6); golden = AST БЕЗ опа; R1-AST only (CORPUS §4)"
 notice = true
+regression_files = [{ path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc"
+path = "tier_a/v1/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc"
+path = "tier_a/v1/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -412,12 +444,14 @@ kind = "positive"
 golden = "tier_a/v0/14_arc_G18/golden.eid"
 note = "G18 (XZ): normal=+Y; I+K literal X/Y/Z в обоих диалектах (COVERAGE §6.11); R4-отказов для GRBL нет (source-check §6.11)"
 notice = false
+regression_files = [{ path = "tier_a/v0/14_arc_G18/arc_G18.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/14_arc_G18/arc_G18.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/14_arc_G18/arc_G18.grbl.ngc"
+path = "tier_a/v1/14_arc_G18/arc_G18.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/14_arc_G18/arc_G18.linuxcnc.ngc"
+path = "tier_a/v1/14_arc_G18/arc_G18.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -429,12 +463,14 @@ kind = "positive"
 golden = "tier_a/v0/15_arc_G19/golden.eid"
 note = "G19 (YZ): normal=+X; J+K literal; см. #14"
 notice = false
+regression_files = [{ path = "tier_a/v0/15_arc_G19/arc_G19.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/15_arc_G19/arc_G19.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/15_arc_G19/arc_G19.grbl.ngc"
+path = "tier_a/v1/15_arc_G19/arc_G19.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/15_arc_G19/arc_G19.linuxcnc.ngc"
+path = "tier_a/v1/15_arc_G19/arc_G19.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -446,12 +482,14 @@ kind = "positive"
 golden = "tier_a/v0/16_plane_mix/golden.eid"
 note = "секции G17/G18/G19 — нормаль дуги из заявленной плоскости (SPEC §4, §6); см. #14"
 notice = false
+regression_files = [{ path = "tier_a/v0/16_plane_mix/plane_mix.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/16_plane_mix/plane_mix.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/16_plane_mix/plane_mix.grbl.ngc"
+path = "tier_a/v1/16_plane_mix/plane_mix.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/16_plane_mix/plane_mix.linuxcnc.ngc"
+path = "tier_a/v1/16_plane_mix/plane_mix.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -464,8 +502,10 @@ golden = "tier_a/v0/47_raw_crlf_fidelity/golden.eid"
 r4_expect = { "grbl-1.1" = "E_RAW_UNTRANSLATABLE", "linuxcnc" = "E_RAW_UNTRANSLATABLE" }
 note = "GRBL-файл с CRLF-концами строк + raw-строка '$$' (COVERAGE §2.6: $-строки → RAW); golden payload=24240D0A = байты '$$'+CRLF как есть, эмиссия не нормализует (grammar D9); same-dialect R1-text байт-в-байт"
 notice = false
+regression_files = [{ path = "tier_a/v0/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc", dialect = "grbl-1.1" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"
+path = "tier_a/v1/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 
@@ -477,12 +517,14 @@ kind = "positive"
 golden = "tier_a/v0/28_stops/golden.eid"
 note = "M0/M1 — Q8: M1 ≡ отсутствие в диффе (EQUIVALENCE §5); STOP-опы без motion (SPEC §3: минимальность допустима)"
 notice = false
+regression_files = [{ path = "tier_a/v0/28_stops/stops.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/28_stops/stops.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/28_stops/stops.grbl.ngc"
+path = "tier_a/v1/28_stops/stops.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/28_stops/stops.linuxcnc.ngc"
+path = "tier_a/v1/28_stops/stops.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -494,12 +536,14 @@ kind = "positive"
 golden = "tier_a/v0/29_coolant_mist_flood/golden.eid"
 note = "M7/M8/M9: none→flood→flood+mist→none — булевы поля coolant (EQUIVALENCE §2, точные)"
 notice = false
+regression_files = [{ path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
 path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc"
+path = "tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -511,12 +555,14 @@ kind = "positive"
 golden = "tier_a/v0/30_spindle_reversal/golden.eid"
 note = "M3→M5→M4: смена режима off/cw/ccw — всегда расхождение; rpm в допуске max(0.01, 1e-6·rpm)"
 notice = false
+regression_files = [{ path = "tier_a/v0/30_spindle_reversal/spindle_reversal.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/30_spindle_reversal/spindle_reversal.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/30_spindle_reversal/spindle_reversal.grbl.ngc"
+path = "tier_a/v1/30_spindle_reversal/spindle_reversal.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/30_spindle_reversal/spindle_reversal.linuxcnc.ngc"
+path = "tier_a/v1/30_spindle_reversal/spindle_reversal.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -528,12 +574,14 @@ kind = "positive"
 golden = "tier_a/v0/31_wcs_switch_mid/golden.eid"
 note = "G54→G55→G54 без define (вариант B, EQUIVALENCE §1.2): Q11(b) — start unknown на границах смены, в G55 — цепочка"
 notice = false
+regression_files = [{ path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.grbl.ngc"
+path = "tier_a/v1/31_wcs_switch_mid/wcs_switch_mid.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.linuxcnc.ngc"
+path = "tier_a/v1/31_wcs_switch_mid/wcs_switch_mid.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -545,12 +593,14 @@ kind = "positive"
 golden = "tier_a/v0/32_wcs_define_mid/golden.eid"
 note = "G10 L2 в середине + выбор — разрешено (SPEC §5.3): запись в таблицу позиционно-независима; first motion — unknown (a)"
 notice = false
+regression_files = [{ path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.grbl.ngc"
+path = "tier_a/v1/32_wcs_define_mid/wcs_define_mid.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.linuxcnc.ngc"
+path = "tier_a/v1/32_wcs_define_mid/wcs_define_mid.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -562,12 +612,14 @@ kind = "positive"
 golden = "tier_a/v0/33_wcs_define_multi/golden.eid"
 note = "два G10 L2 (P1, P2) + ходы в обеих: wcs_define — таблица; (b): start = prev_end + O1 − O2 = (7,-3,2) вычислим"
 notice = false
+regression_files = [{ path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.grbl.ngc"
+path = "tier_a/v1/33_wcs_define_multi/wcs_define_multi.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.linuxcnc.ngc"
+path = "tier_a/v1/33_wcs_define_multi/wcs_define_multi.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -579,12 +631,14 @@ kind = "positive"
 golden = "tier_a/v0/34_preset_G54/golden.eid"
 note = "пресетка frame_preset.wcs = G54; first motion start = preset (якорь, SPEC §2)"
 notice = false
+regression_files = [{ path = "tier_a/v0/34_preset_G54/preset_G54.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/34_preset_G54/preset_G54.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/34_preset_G54/preset_G54.grbl.ngc"
+path = "tier_a/v1/34_preset_G54/preset_G54.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/34_preset_G54/preset_G54.linuxcnc.ngc"
+path = "tier_a/v1/34_preset_G54/preset_G54.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -596,12 +650,14 @@ kind = "positive"
 golden = "tier_a/v0/35_preset_G55/golden.eid"
 note = "пресетка под G55: порядок эмиссии — выборка G55 ДО G92 (EQUIVALENCE §1.4)"
 notice = false
+regression_files = [{ path = "tier_a/v0/35_preset_G55/preset_G55.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/35_preset_G55/preset_G55.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/35_preset_G55/preset_G55.grbl.ngc"
+path = "tier_a/v1/35_preset_G55/preset_G55.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/35_preset_G55/preset_G55.linuxcnc.ngc"
+path = "tier_a/v1/35_preset_G55/preset_G55.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -613,12 +669,14 @@ kind = "positive"
 golden = "tier_a/v0/37_g53_known_origins/golden.eid"
 note = "G53 при in-text origin (G10 L2, SPEC §5.3b): first machine-ход start=unknown (M0), далее цепочка Exact"
 notice = false
+regression_files = [{ path = "tier_a/v0/37_g53_known_origins/g53_known_origins.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/37_g53_known_origins/g53_known_origins.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/37_g53_known_origins/g53_known_origins.grbl.ngc"
+path = "tier_a/v1/37_g53_known_origins/g53_known_origins.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/37_g53_known_origins/g53_known_origins.linuxcnc.ngc"
+path = "tier_a/v1/37_g53_known_origins/g53_known_origins.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -630,12 +688,14 @@ kind = "positive"
 golden = "tier_a/v0/38_units_inch/golden.eid"
 note = "UNITS in, verbatim 4dp (Q7); G20"
 notice = false
+regression_files = [{ path = "tier_a/v0/38_units_inch/units_inch.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/38_units_inch/units_inch.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/38_units_inch/units_inch.grbl.ngc"
+path = "tier_a/v1/38_units_inch/units_inch.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/38_units_inch/units_inch.linuxcnc.ngc"
+path = "tier_a/v1/38_units_inch/units_inch.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -647,12 +707,14 @@ kind = "positive"
 golden = "tier_a/v0/39_modal_incremental/golden.eid"
 note = "G91 весь файл + центры: grbl инкрементальные (I5 от старта), linuxcnc G91.1 абсолютные (I15) — ABSORB в канон"
 notice = false
+regression_files = [{ path = "tier_a/v0/39_modal_incremental/modal_incremental.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/39_modal_incremental/modal_incremental.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/39_modal_incremental/modal_incremental.grbl.ngc"
+path = "tier_a/v1/39_modal_incremental/modal_incremental.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/39_modal_incremental/modal_incremental.linuxcnc.ngc"
+path = "tier_a/v1/39_modal_incremental/modal_incremental.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -665,12 +727,14 @@ golden = "tier_a/v0/40_path_exact/golden.eid"
 r4_expect = { "grbl-1.1" = "warning" }
 note = "G61: META exact_path; r4_expect grbl = warning (G61 в словаре, junction-семантика — COVERAGE §6.1, Q3)"
 notice = false
+regression_files = [{ path = "tier_a/v0/40_path_exact/path_exact.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/40_path_exact/path_exact.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/40_path_exact/path_exact.grbl.ngc"
+path = "tier_a/v1/40_path_exact/path_exact.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/40_path_exact/path_exact.linuxcnc.ngc"
+path = "tier_a/v1/40_path_exact/path_exact.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -683,8 +747,10 @@ golden = "tier_a/v0/41_path_blend/golden.eid"
 r4_expect = { "grbl-1.1" = "warning" }
 note = "G64 P0.05 → blend t=0.0500; G64 вне словаря GRBL — источника нет; r4_expect grbl = warning (Q3, потеря записывается)"
 notice = false
+regression_files = [{ path = "tier_a/v0/41_path_blend/path_blend.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/41_path_blend/path_blend.linuxcnc.ngc"
+path = "tier_a/v1/41_path_blend/path_blend.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -696,12 +762,14 @@ kind = "positive"
 golden = "tier_a/v0/42_minimal_program/golden.eid"
 note = "заголовок + program_end без motion-опов — валидна (SPEC §3 v0.6); D6: единственный PEND"
 notice = false
+regression_files = [{ path = "tier_a/v0/42_minimal_program/minimal_program.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/42_minimal_program/minimal_program.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/42_minimal_program/minimal_program.grbl.ngc"
+path = "tier_a/v1/42_minimal_program/minimal_program.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/42_minimal_program/minimal_program.linuxcnc.ngc"
+path = "tier_a/v1/42_minimal_program/minimal_program.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -713,12 +781,14 @@ kind = "positive"
 golden = "tier_a/v0/43_linear_zero_length_dropped/golden.eid"
 note = "linear start==end → drop+notice, не ошибка (SPEC §3 v0.6); golden = AST БЕЗ опа; feed=100 модален и переживает на следующий ход; R1-AST only (CORPUS §4)"
 notice = true
+regression_files = [{ path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.grbl.ngc"
+path = "tier_a/v1/43_linear_zero_length_dropped/linear_zero_length_dropped.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.linuxcnc.ngc"
+path = "tier_a/v1/43_linear_zero_length_dropped/linear_zero_length_dropped.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -730,12 +800,14 @@ kind = "positive"
 golden = "tier_a/v0/44_wcs_set_here_preset/golden.eid"
 note = "G10 L20 P2 до первого motion-опа (SPEC §5.3): узел парсится/эмитится; r4_expect: {} — G10 L20 в словаре GRBL 1.1 (COVERAGE §6.12); Q11-якорь: first motion start = delta Known"
 notice = false
+regression_files = [{ path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.grbl.ngc"
+path = "tier_a/v1/44_wcs_set_here_preset/wcs_set_here_preset.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.linuxcnc.ngc"
+path = "tier_a/v1/44_wcs_set_here_preset/wcs_set_here_preset.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -748,8 +820,10 @@ golden = "tier_a/v0/45_path_exact_stop/golden.eid"
 r4_expect = { "grbl-1.1" = "warning" }
 note = "G61.1 → PATH_MODE exact_stop (v0.2, третье значение enum); G61.1 вне словаря GRBL — источника нет; r4_expect grbl = warning (Q3; отказ был бы классом SYNTAX — COVERAGE §5)"
 notice = false
+regression_files = [{ path = "tier_a/v0/45_path_exact_stop/path_exact_stop.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/45_path_exact_stop/path_exact_stop.linuxcnc.ngc"
+path = "tier_a/v1/45_path_exact_stop/path_exact_stop.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
 
@@ -1062,11 +1136,14 @@ golden = "tier_a/v0/48_arc_centers_mode_distinct/golden.eid"
 golden_tag = "golden_centers_mode_distinct"
 note = "Единственный вектор, различающий G90.1/G91.1-режимы центров: start != 0, LinuxCNC-файл в G90.1 (абсолютный центр I15 = (15,0,0)), GRBL-файл инкрементальный I5 -> тот же центр. Под инкрементальным прочтением G90.1-файла центр (25,0) = невозможная дуга (ловушка #39) — тест различения по построению (CORPUS v0.6.2)"
 notice = false
+regression_files = [{ path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.linuxcnc.ngc", dialect = "linuxcnc" }]
+regen = "v1"
 [[vectors.files]]
-path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.grbl.ngc"
+path = "tier_a/v1/48_arc_centers_mode_distinct/arc_centers_mode_distinct.grbl-1.1.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
 [[vectors.files]]
-path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.linuxcnc.ngc"
+path = "tier_a/v1/48_arc_centers_mode_distinct/arc_centers_mode_distinct.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
+
