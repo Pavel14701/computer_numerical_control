@@ -5,23 +5,46 @@
 //! G61.1/path_mode → warning (Q3), не отказ; G43 H → E_REQUIRES_MACHINE_TABLE.
 #![allow(dead_code)]
 
-pub mod block;
-pub mod gcode;
-pub mod lexer;
-
+use std::cell::RefCell;
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
 
-pub struct GrblAdapter;
+pub mod block;
+pub mod canonicalize;
+pub mod gcode;
+pub mod lexer;
+
+/// Адаптер GRBL 1.1 (dialect_name = "grbl-1.1").
+/// drop-with-notice (zero-length / near-degenerate R-arc) — не ошибка:
+/// notices буферизуются, забрать через [`GrblAdapter::take_notices`]
+/// (паттерн EidTextAdapter, eid-core adapter.rs).
+#[derive(Debug, Default)]
+pub struct GrblAdapter {
+    notices: RefCell<Vec<canonicalize::Notice>>,
+}
+
+impl GrblAdapter {
+    pub fn new() -> Self {
+        Self { notices: RefCell::new(Vec::new()) }
+    }
+
+    /// Notices последнего `parse` (отброшенные zero-length / near-degenerate);
+    /// опустошает буфер.
+    pub fn take_notices(&self) -> Vec<canonicalize::Notice> {
+        std::mem::take(&mut *self.notices.borrow_mut())
+    }
+}
 
 impl Adapter for GrblAdapter {
     fn dialect_name(&self) -> &'static str {
         "grbl-1.1"
     }
 
-    fn parse(&self, _src: &str, _file: &str) -> Result<Program, Vec<Diagnostic>> {
-        todo!("Агент C, итерации 1–2: lexer + canonicalizer")
+    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+        let out = canonicalize::canonicalize_with_notices(src, file)?;
+        *self.notices.borrow_mut() = out.notices;
+        Ok(out.program)
     }
 
     fn emit(&self, _program: &Program) -> Result<String, Vec<Diagnostic>> {

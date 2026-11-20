@@ -38,6 +38,8 @@ pub struct WordValue {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub line_no: u32,
+    /// Исходный текст строки (без \n; для RAW payload_hex, grammar D9).
+    pub raw: String,
     pub g_codes: Vec<GCode>,
     pub m_codes: Vec<MCode>,
     /// Параметры кадра (F/I/J/K/L/P/R/S/T/X/Y/Z); для stage 2 — выписка опов.
@@ -107,9 +109,10 @@ impl Block {
         }
     }
 
-    fn from_toks(toks: Vec<Tok>, line_no: u32) -> Block {
+    fn from_toks(toks: Vec<Tok>, line_no: u32, raw: String) -> Block {
         let mut b = Block {
             line_no,
+            raw,
             g_codes: Vec::new(),
             m_codes: Vec::new(),
             words: Vec::new(),
@@ -181,7 +184,9 @@ pub fn parse_file(src: &str) -> ParsedFile {
         let line_no = (idx + 1) as u32;
         match lexer::lex_line(line, line_no) {
             Err(e) => out.lex_errors.push(e),
-            Ok(toks) if !toks.is_empty() => out.blocks.push(Block::from_toks(toks, line_no)),
+            Ok(toks) if !toks.is_empty() => {
+                out.blocks.push(Block::from_toks(toks, line_no, line.trim_end_matches('\r').to_string()))
+            }
             Ok(_) => {}
         }
     }
