@@ -2,7 +2,7 @@
 //!  * semantic_diff — мутации: сдвиг позиции, feed в допуске/за допуском,
 //!    unknown-vs-known, sweep 179.9 vs 180.1 (амплификация центра), M1-фильтрация,
 //!    RAW payload, мета (units/path_mode/frame_preset), state-поля;
-//!  * manifest::load — реальный corpus/manifest.yaml: 40 векторов (20 golden +
+//!  * manifest::load — реальный corpus/manifest.toml (TOML, миграция R-1): 57 векторов (37 golden +
 //!    20 негативных), пути существуют, notice/r4_expect по CORPUS §1.1;
 //!  * runner — R1/R2 зелёные на всех 20 golden; диалектные проверки Pending
 //!    без адаптеров (не crash); правило двух классов негативов и R4 —
@@ -30,7 +30,7 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn load_manifest() -> Manifest {
-    manifest::load(&corpus_dir().join("manifest.yaml")).expect("manifest.yaml loads")
+    manifest::load(&corpus_dir().join("manifest.toml")).expect("manifest.toml loads")
 }
 
 fn golden_path(name: &str) -> PathBuf {
@@ -448,8 +448,8 @@ fn diff_src_and_sub_are_provenance() {
 fn manifest_loads_40_vectors_20_goldens() {
     let m = load_manifest();
     let goldens = m.vectors.iter().filter(|v| v.golden.is_some()).count();
-    assert_eq!(m.vectors.len(), 40);
-    assert_eq!(goldens, 20, "20 позитивных векторов с golden AST");
+    assert_eq!(m.vectors.len(), 57, "37 позитивов + 20 негативов (после материализации 17)");
+    assert_eq!(goldens, 37, "37 позитивных векторов с golden AST");
     assert_eq!(m.vectors.iter().filter(|v| v.golden.is_none()).count(), 20, "20 негативов");
     // все пути файлов существуют (load также валидирует — двойная проверка)
     for v in &m.vectors {
@@ -475,7 +475,7 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     // notice: true — только #13 (CORPUS §1.1)
     assert_eq!(
         m.vectors.iter().filter(|v| v.notice).map(|v| v.id.clone()).collect::<Vec<_>>(),
-        vec!["13".to_string()]
+        vec!["13".to_string(), "43".to_string()]
     );
     // r4_expect непустой: #27 (grbl E_UNSUPPORTED_SYNTAX) и #47 (обе цели E_RAW_UNTRANSLATABLE)
     let v27 = v("27");
@@ -520,28 +520,50 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     assert_eq!(v("47").files[0].dialect, "grbl-1.1");
     assert_eq!(v("05").files.len(), 2);
     assert_eq!(v("13").files.len(), 2);
+    // r4 warning-цели (CORPUS §1.1 #40/#41/#45): grbl = warning, не отказ
+    assert_eq!(v("40").r4_expect.get("grbl-1.1"), Some(&Outcome::Warning));
+    assert_eq!(v("41").r4_expect.get("grbl-1.1"), Some(&Outcome::Warning));
+    assert_eq!(v("45").r4_expect.get("grbl-1.1"), Some(&Outcome::Warning));
 }
 
 #[test]
 fn manifest_load_rejects_missing_path() {
     let dir = std::env::temp_dir().join("eid_harness_it2_manifest_bad");
     std::fs::create_dir_all(&dir).unwrap();
-    let mf = dir.join("manifest.yaml");
+    let mf = dir.join("manifest.toml");
     std::fs::write(
         &mf,
-        "corpus_version: t\nvectors:\n  - id: \"1\"\n    name: x\n    tier: A\n    kind: positive\n    golden: nope/golden.eid\n    files: []\n    r4_expect: {}\n    notice: false\n",
+        "corpus_version = \"t\"
+[[vectors]]
+id = \"1\"
+name = \"x\"
+tier = \"A\"
+kind = \"positive\"
+golden = \"nope/golden.eid\"
+",
     )
     .unwrap();
     let err = manifest::load(&mf).unwrap_err();
     assert!(err.contains("does not exist"), "{err}");
-    // invalid expect-строка
+    // invalid expect-строка: путь файла существует, строка "banana" — не исход
+    std::fs::write(&dir.join("real.nc"), "mock").unwrap();
     std::fs::write(
         &mf,
-        "corpus_version: t\nvectors:\n  - id: \"1\"\n    name: x\n    tier: A\n    kind: positive\n    golden: null\n    files:\n      - { path: nope.nc, dialect: grbl-1.1, expect: banana, sha256: null }\n    r4_expect: {}\n    notice: false\n",
+        "corpus_version = \"t\"
+[[vectors]]
+id = \"1\"
+name = \"x\"
+tier = \"A\"
+kind = \"positive\"
+[[vectors.files]]
+path = \"real.nc\"
+dialect = \"grbl-1.1\"
+expect = \"banana\"
+",
     )
     .unwrap();
     let err = manifest::load(&mf).unwrap_err();
-    assert!(err.contains("invalid expect") || err.contains("does not exist"), "{err}");
+    assert!(err.contains("invalid expect"), "{err}");
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -557,19 +579,19 @@ fn runner_r1_r2_green_on_all_20_goldens() {
     assert!(rep.is_green(), "Fail'ы: {:?}", rep.vectors.iter()
         .flat_map(|v| v.checks.iter().filter(|c| matches!(c.status, Status::Fail(_))))
         .collect::<Vec<_>>());
-    assert_eq!(rep.checks("R1").len(), 20, "20 golden-проверок R1");
+    assert_eq!(rep.checks("R1").len(), 37, "37 golden-проверок R1");
     assert!(rep.checks("R1").iter().all(|c| c.status == Status::Pass), "R1 все Pass");
-    assert_eq!(rep.checks("R2").len(), 20);
+    assert_eq!(rep.checks("R2").len(), 37);
     assert!(rep.checks("R2").iter().all(|c| c.status == Status::Pass), "R2 все Pass");
     // диалектные проверки без адаптеров — Pending, не crash
     assert!(!rep.checks("parse").is_empty());
     assert!(rep.checks("parse").iter().all(|c| matches!(c.status, Status::Pending(_))));
-    assert!(rep.checks("R3").iter().all(|c| matches!(c.status, Status::Pending(_))));
+    assert!(rep.checks("R3-golden").iter().all(|c| matches!(c.status, Status::Pending(_))));
     // R4: r4_expect есть у #47 (2 цели), #27 (grbl) и N3 (2 цели, без golden → Skipped)
     let r4: Vec<_> = rep.checks("R4");
-    assert_eq!(r4.len(), 5, "#47×2 + #27×1 + N3×2");
-    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Pending(_))).count(), 5,
-        "нет адаптеров: #47 (обе цели), #27 (grbl), N3 (обе цели)");
+    assert_eq!(r4.len(), 8, "#47×2 + #27 + N3×2 + #40 + #41 + #45");
+    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Pending(_))).count(), 8,
+        "нет адаптеров: #47×2, #27, N3×2, #40, #41, #45");
     assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Skipped(_))).count(), 0,
         "Skipped — только при наличии адаптера без golden AST (см. runner_r4_emission_expectations)");
 }
@@ -841,7 +863,7 @@ fn runner_positive_r3_and_r1_text_via_mock() {
     let m1 = Manifest { corpus_version: "t".into(), vectors: vec![v1] };
     let rep1 = runner::run(&m1, &reg);
     assert!(rep1.is_green(), "{:?}", rep1.vectors);
-    assert!(rep1.checks("R3").iter().all(|c| c.status == Status::Pass), "{:?}", rep1.checks("R3"));
+    assert!(rep1.checks("R3-golden").iter().all(|c| c.status == Status::Pass), "{:?}", rep1.checks("R3-golden"));
     assert!(rep1.checks("R1").iter().all(|c| c.status == Status::Pass));
 
     // R3 Fail: parse даёт RAW-оп, golden — нет
@@ -849,7 +871,7 @@ fn runner_positive_r3_and_r1_text_via_mock() {
     let m2 = Manifest { corpus_version: "t".into(), vectors: vec![v2] };
     let rep2 = runner::run(&m2, &reg);
     assert!(!rep2.is_green());
-    let r3 = rep2.checks("R3")[0].clone();
+    let r3 = rep2.checks("R3-golden")[0].clone();
     assert!(matches!(r3.status, Status::Fail(_)), "{r3:?}");
 
     // R1-text: RAW-файл, same-dialect round-trip payload байт-в-байт → Pass

@@ -5,3 +5,4 @@
 pub mod diff;
 pub mod manifest;
 pub mod runner;
+pub mod translate;

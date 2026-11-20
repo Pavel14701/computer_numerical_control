@@ -1,0 +1,11 @@
+EID/L1 v0.2
+UNITS mm
+PATH_MODE exact_path
+FRAME_PRESET none
+OP 001 WCS_DEFINE p=1 origin=1.0000,2.0000,3.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 002 WCS_DEFINE p=2 origin=4.0000,5.0000,6.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 003 RAPID start=unknown end=0.0000,0.0000,5.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 004 LINEAR start=0.0000,0.0000,5.0000 end=10.0000,0.0000,5.0000 src=0.1-0.0 feed=150.0000 spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 005 RAPID start=7.0000,-3.0000,2.0000 end=12.0000,-3.0000,2.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G55
+OP 006 PEND
+END

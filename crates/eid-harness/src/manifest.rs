@@ -1,14 +1,19 @@
 //! Corpus manifest — замороженный интерфейс v0.1 (CORPUS-CONTRACT §6).
 //!
-//! `load()` парсит `manifest.yaml` (serde_yaml — external crates разрешены для
-//! harness; eid-core остаётся std-only). Правила:
+//! `load()` парсит `manifest.toml` (crates/eid-harness/Cargo.toml). Правила:
 //!  * `expect`/`r4_expect`: "ok" → [`Outcome::Ok`], "warning" → [`Outcome::Warning`],
 //!    "E_*" → [`Outcome::Code`] (обратный маппинг [`ErrorCode::as_str`]);
 //!  * пути файлов/golden хранятся относительно corpus/ (каталога манифеста);
 //!    `load` дописывает каталог манифеста и проверяет существование каждого
 //!    пути (отсутствующий файл/каталог — `Err`, не молчаливый пропуск);
-//!  * неизвестные поля YAML (golden_tag, golden_note, note, bindings) —
+//!  * неизвестные поля (golden_tag, golden_note, note, bindings) —
 //!    информационные, игнорируются (CORPUS §6: поля manifest шире структуры).
+//!
+//! Формат — TOML (миграция R-1, IMPLEMENTATION-PLAN §6, ruling оркестратора):
+//! serde_yaml в maintenance mode с 2024 + unsafe-libyaml транзитивно в CLI;
+//! corpus/manifest.yaml удалён (два формата = дрейф). Ключи и содержимое —
+//! 1:1 с прежним YAML; диалектные ключи r4_expect квочены ("grbl-1.1" —
+//! точка в bare key TOML недопустима).
 
 use eid_core::diag::ErrorCode;
 use serde::Deserialize;
@@ -70,9 +75,9 @@ pub struct Manifest {
 pub fn load(path: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read manifest {}: {e}", path.display()))?;
-    let raw: ManifestYaml =
-        serde_yaml::from_str(&text).map_err(|e| format!("invalid manifest YAML: {e}"))?;
-    // Пути внутри манифеста — относительно corpus/ (каталога manifest.yaml).
+    let raw: ManifestToml =
+        toml::from_str(&text).map_err(|e| format!("invalid manifest TOML: {e}"))?;
+    // Пути внутри манифеста — относительно corpus/ (каталога manifest.toml).
     let root = path
         .parent()
         .map(Path::to_path_buf)
@@ -174,23 +179,23 @@ fn parse_code(s: &str) -> Result<ErrorCode, String> {
 }
 
 // ===========================================================================
-// YAML-схема (serde). Публичные структуры выше — freeze v0.1; ниже —
-// промежуточные, точно повторяют форму manifest.yaml (CORPUS-CONTRACT §6).
+// TOML-схема (serde). Публичные структуры выше — freeze v0.1; ниже —
+// промежуточные, точно повторяют форму manifest.toml (CORPUS-CONTRACT §6).
 // Неизвестные поля (golden_tag, golden_note, note, bindings) serde
-// игнорирует по умолчанию.
+// игнорирует по умолчанию; отсутствие ключа = null/пусто (TOML без null).
 // ===========================================================================
 
 #[derive(Deserialize)]
-struct ManifestYaml {
+struct ManifestToml {
     corpus_version: String,
     #[serde(default)]
     #[allow(dead_code)]
-    bindings: Option<serde_yaml::Value>,
-    vectors: Vec<VectorYaml>,
+    bindings: Option<toml::Value>,
+    vectors: Vec<VectorToml>,
 }
 
 #[derive(Deserialize)]
-struct VectorYaml {
+struct VectorToml {
     id: String,
     name: String,
     tier: String,
@@ -198,7 +203,7 @@ struct VectorYaml {
     #[serde(default)]
     golden: Option<String>,
     #[serde(default)]
-    files: Vec<FileYaml>,
+    files: Vec<FileToml>,
     #[serde(default)]
     r4_expect: BTreeMap<String, String>,
     #[serde(default)]
@@ -206,7 +211,7 @@ struct VectorYaml {
 }
 
 #[derive(Deserialize)]
-struct FileYaml {
+struct FileToml {
     path: String,
     dialect: String,
     expect: String,

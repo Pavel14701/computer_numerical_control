@@ -1,0 +1,924 @@
+# CORPUS manifest — пилотная партия (CORPUS-CONTRACT §8)
+# sha256 проставляются скриптом при выпуске корпуса; отсутствие ключа = черновик.
+# R4-ожидания — явные per-vector (CORPUS §6), не выводятся из общих правил.
+# Формат — TOML (миграция R-1, IMPLEMENTATION-PLAN §6): serde_yaml deprecated
+# с 2024 + unsafe-libyaml транзитивно; YAML-версия удалена (дрейф недопустим).
+
+corpus_version = "v0.1-pilot"
+
+[bindings]
+spec = "SPEC-EID-L1 v0.10"
+equivalence = "EQUIVALENCE v0.2"
+grammar = "grammar.ebnf v0.2"
+coverage = "COVERAGE v0.6"
+corpus_contract = "CORPUS-CONTRACT v0.5"
+
+[[vectors]]
+id = "01"
+name = "linear_box"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/01_linear_box/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/01_linear_box/linear_box.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/01_linear_box/linear_box.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "02"
+name = "rapid_reposition"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/02_rapid_reposition/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/02_rapid_reposition/rapid_reposition.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/02_rapid_reposition/rapid_reposition.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "03"
+name = "feed_survives_rapid"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/03_feed_survives_rapid/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "11"
+name = "arc_R_semicircle"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/11_arc_R_semicircle/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "27"
+name = "tool_change"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/27_tool_change/golden.eid"
+# M6 вне словаря GRBL (COVERAGE §5)
+r4_expect = { "grbl-1.1" = "E_UNSUPPORTED_SYNTAX" }
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/27_tool_change/tool_change.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "36"
+name = "preset_G54_then_switch"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/36_preset_G54_then_switch/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "46"
+name = "arc_R_helix"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/46_arc_R_helix/golden.eid"
+note = "GRBL R+off-plane подтверждён source-чеком (COVERAGE §6.9, 2026-11-20) — файл материализован"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/46_arc_R_helix/arc_R_helix.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/46_arc_R_helix/arc_R_helix.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "04"
+name = "feed_G94_basic"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/04_feed_G94_basic/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/04_feed_G94_basic/feed_G94_basic.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "05"
+name = "feed_G93_inverse"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/05_feed_G93_inverse/golden.eid"
+note = "G93 F2 на ходе длины 10 → feed = 10·2 = 20.0000 upm; F4 → 40.0000 (SPEC §4: G93 → len·F); эмиссия всегда G94 (EQUIVALENCE §2)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/05_feed_G93_inverse/feed_G93_inverse.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "06"
+name = "dwell_between_moves"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/06_dwell_between_moves/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/06_dwell_between_moves/dwell_between_moves.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "07"
+name = "arc_90"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/07_arc_90/golden.eid"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/07_arc_90/arc_90.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/07_arc_90/arc_90.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "08"
+name = "arc_full_circle"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/08_arc_full_circle/golden.eid"
+note = "IJK, start == end → sweep=360° (SPEC §6: полный круг только IJK-формой)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/08_arc_full_circle/arc_full_circle.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "09"
+name = "arc_helix"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/09_arc_helix/golden.eid"
+note = "pitch=2.0000 — винтовая компонента вдоль +Z (thread-milling паттерн)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/09_arc_helix/arc_helix.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/09_arc_helix/arc_helix.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "10"
+name = "arc_helix_inch"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/10_arc_helix_inch/golden.eid"
+note = "UNITS in: R=0.5, pitch=0.1 — 4dp-значения дюймов (float-ловушка #38 в контексте дуги, verbatim-хранение SPEC §10)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/10_arc_helix_inch/arc_helix_inch.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "12"
+name = "arc_R_sweep270"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/12_arc_R_sweep270/golden.eid"
+note = "R-10 (отрицательный знак → дуга >180°): sweep=270°, центр (0,10,0) — другая ветка R-парсинга (CORPUS §1.1)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/12_arc_R_sweep270/arc_R_sweep270.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "13"
+name = "arc_degenerate_zero_sweep"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/13_arc_degenerate_zero_sweep/golden.eid"
+note = "дуга с endpoint'ом <4dp (X0.00004 из (0,0), I5 J0): sweep≈0 → drop+notice, не ошибка (SPEC §6, §3 v0.6); golden = AST БЕЗ опа; R1-AST only (CORPUS §4)"
+notice = true
+[[vectors.files]]
+path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "14"
+name = "arc_G18"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/14_arc_G18/golden.eid"
+note = "G18 (XZ): normal=+Y; I+K literal X/Y/Z в обоих диалектах (COVERAGE §6.11); R4-отказов для GRBL нет (source-check §6.11)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/14_arc_G18/arc_G18.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/14_arc_G18/arc_G18.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "15"
+name = "arc_G19"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/15_arc_G19/golden.eid"
+note = "G19 (YZ): normal=+X; J+K literal; см. #14"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/15_arc_G19/arc_G19.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/15_arc_G19/arc_G19.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "16"
+name = "plane_mix"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/16_plane_mix/golden.eid"
+note = "секции G17/G18/G19 — нормаль дуги из заявленной плоскости (SPEC §4, §6); см. #14"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/16_plane_mix/plane_mix.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/16_plane_mix/plane_mix.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "47"
+name = "raw_crlf_fidelity"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/47_raw_crlf_fidelity/golden.eid"
+r4_expect = { "grbl-1.1" = "E_RAW_UNTRANSLATABLE", "linuxcnc" = "E_RAW_UNTRANSLATABLE" }
+note = "GRBL-файл с CRLF-концами строк + raw-строка '$$' (COVERAGE §2.6: $-строки → RAW); golden payload=24240D0A = байты '$$'+CRLF как есть, эмиссия не нормализует (grammar D9); same-dialect R1-text байт-в-байт"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+
+[[vectors]]
+id = "28"
+name = "stops"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/28_stops/golden.eid"
+note = "M0/M1 — Q8: M1 ≡ отсутствие в диффе (EQUIVALENCE §5); STOP-опы без motion (SPEC §3: минимальность допустима)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/28_stops/stops.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/28_stops/stops.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "29"
+name = "coolant_mist_flood"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/29_coolant_mist_flood/golden.eid"
+note = "M7/M8/M9: none→flood→flood+mist→none — булевы поля coolant (EQUIVALENCE §2, точные)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "30"
+name = "spindle_reversal"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/30_spindle_reversal/golden.eid"
+note = "M3→M5→M4: смена режима off/cw/ccw — всегда расхождение; rpm в допуске max(0.01, 1e-6·rpm)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/30_spindle_reversal/spindle_reversal.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/30_spindle_reversal/spindle_reversal.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "31"
+name = "wcs_switch_mid"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/31_wcs_switch_mid/golden.eid"
+note = "G54→G55→G54 без define (вариант B, EQUIVALENCE §1.2): Q11(b) — start unknown на границах смены, в G55 — цепочка"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/31_wcs_switch_mid/wcs_switch_mid.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "32"
+name = "wcs_define_mid"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/32_wcs_define_mid/golden.eid"
+note = "G10 L2 в середине + выбор — разрешено (SPEC §5.3): запись в таблицу позиционно-независима; first motion — unknown (a)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/32_wcs_define_mid/wcs_define_mid.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "33"
+name = "wcs_define_multi"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/33_wcs_define_multi/golden.eid"
+note = "два G10 L2 (P1, P2) + ходы в обеих: wcs_define — таблица; (b): start = prev_end + O1 − O2 = (7,-3,2) вычислим"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/33_wcs_define_multi/wcs_define_multi.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "34"
+name = "preset_G54"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/34_preset_G54/golden.eid"
+note = "пресетка frame_preset.wcs = G54; first motion start = preset (якорь, SPEC §2)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/34_preset_G54/preset_G54.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/34_preset_G54/preset_G54.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "35"
+name = "preset_G55"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/35_preset_G55/golden.eid"
+note = "пресетка под G55: порядок эмиссии — выборка G55 ДО G92 (EQUIVALENCE §1.4)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/35_preset_G55/preset_G55.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/35_preset_G55/preset_G55.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "37"
+name = "g53_known_origins"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/37_g53_known_origins/golden.eid"
+note = "G53 при in-text origin (G10 L2, SPEC §5.3b): first machine-ход start=unknown (M0), далее цепочка Exact"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/37_g53_known_origins/g53_known_origins.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/37_g53_known_origins/g53_known_origins.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "38"
+name = "units_inch"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/38_units_inch/golden.eid"
+note = "UNITS in, verbatim 4dp (Q7); G20"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/38_units_inch/units_inch.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/38_units_inch/units_inch.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "39"
+name = "modal_incremental"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/39_modal_incremental/golden.eid"
+note = "G91 весь файл + центры: grbl инкрементальные (I5 от старта), linuxcnc G91.1 абсолютные (I15) — ABSORB в канон"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/39_modal_incremental/modal_incremental.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/39_modal_incremental/modal_incremental.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "40"
+name = "path_exact"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/40_path_exact/golden.eid"
+r4_expect = { "grbl-1.1" = "warning" }
+note = "G61: META exact_path; r4_expect grbl = warning (G61 в словаре, junction-семантика — COVERAGE §6.1, Q3)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/40_path_exact/path_exact.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/40_path_exact/path_exact.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "41"
+name = "path_blend"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/41_path_blend/golden.eid"
+r4_expect = { "grbl-1.1" = "warning" }
+note = "G64 P0.05 → blend t=0.0500; G64 вне словаря GRBL — источника нет; r4_expect grbl = warning (Q3, потеря записывается)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/41_path_blend/path_blend.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "42"
+name = "minimal_program"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/42_minimal_program/golden.eid"
+note = "заголовок + program_end без motion-опов — валидна (SPEC §3 v0.6); D6: единственный PEND"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/42_minimal_program/minimal_program.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/42_minimal_program/minimal_program.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "43"
+name = "linear_zero_length_dropped"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/43_linear_zero_length_dropped/golden.eid"
+note = "linear start==end → drop+notice, не ошибка (SPEC §3 v0.6); golden = AST БЕЗ опа; feed=100 модален и переживает на следующий ход; R1-AST only (CORPUS §4)"
+notice = true
+[[vectors.files]]
+path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/43_linear_zero_length_dropped/linear_zero_length_dropped.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "44"
+name = "wcs_set_here_preset"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/44_wcs_set_here_preset/golden.eid"
+note = "G10 L20 P2 до первого motion-опа (SPEC §5.3): узел парсится/эмитится; r4_expect: {} — G10 L20 в словаре GRBL 1.1 (COVERAGE §6.12); Q11-якорь: first motion start = delta Known"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/44_wcs_set_here_preset/wcs_set_here_preset.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "45"
+name = "path_exact_stop"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/45_path_exact_stop/golden.eid"
+r4_expect = { "grbl-1.1" = "warning" }
+note = "G61.1 → PATH_MODE exact_stop (v0.2, третье значение enum); G61.1 вне словаря GRBL — источника нет; r4_expect grbl = warning (Q3; отказ был бы классом SYNTAX — COVERAGE §5)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/45_path_exact_stop/path_exact_stop.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "N1"
+name = "g53_no_origins"
+tier = "A"
+kind = "negative"
+note = "G53 при выборе G54 без in-text wcs_define — SPEC §5.3(b)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n1_g53_no_origins/g53_no_origins.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_RUNTIME_STATE"
+[[vectors.files]]
+path = "tier_a/v0/n1_g53_no_origins/g53_no_origins.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_RUNTIME_STATE"
+
+[[vectors]]
+id = "N2"
+name = "mid_G92"
+tier = "A"
+kind = "negative"
+note = "G92 в середине после ходов — пресетка только до первого motion-опа (SPEC §3, Q4/Q5)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n2_mid_G92/mid_G92.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_UNSUPPORTED_SEMANTICS"
+[[vectors.files]]
+path = "tier_a/v0/n2_mid_G92/mid_G92.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_UNSUPPORTED_SEMANTICS"
+
+[[vectors]]
+id = "N3"
+name = "raw_vendor_block"
+tier = "A"
+kind = "negative"
+r4_expect = { "grbl-1.1" = "E_RAW_UNTRANSLATABLE", "linuxcnc" = "E_RAW_UNTRANSLATABLE" }
+note = "GRBL: $110=250.000 конфиг-строка вне программы -> RAW (COVERAGE §4); LinuxCNC: M123 user-defined -> RAW (COVERAGE §3, M100-M199). Same-dialect: RAW сохранён; кросс-диалект запрещён (SPEC §8). r4-цели = КРОСС-пары (CORPUS v0.5.3): grbl-файл -> linuxcnc, linuxcnc-файл -> grbl"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SYNTAX"]
+[[vectors.files]]
+path = "tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
+
+[[vectors]]
+id = "N4"
+name = "peck_L_over_limit"
+tier = "A"
+kind = "negative"
+note = "G83 с L99999 > max_unroll_iterations=10000 (COVERAGE §1.2); циклы вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_LIMIT_EXCEEDED"
+
+[[vectors]]
+id = "N5a"
+name = "arc_radius_mismatch"
+tier = "A"
+kind = "negative"
+note = "старт-радиус 5, энд-радиус 3 (центр I5 J0 от (0,0)) — ветка валидации радиусов (SPEC §6)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n5a_arc_radius_mismatch/arc_radius_mismatch.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n5a_arc_radius_mismatch/arc_radius_mismatch.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N5b"
+name = "arc_chord_gt_2R"
+tier = "A"
+kind = "negative"
+note = "планиметрическая хорда 100 > 2R=10 — невозможная дуга (SPEC §6)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n5b_arc_chord_gt_2R/arc_chord_gt_2R.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n5b_arc_chord_gt_2R/arc_chord_gt_2R.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N6"
+name = "naked_coords_after_G80"
+tier = "A"
+kind = "negative"
+note = "голая координатная строка после G80 без motion-кода (COVERAGE §2.1); циклы вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n6_naked_coords_after_G80/naked_coords_after_G80.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N7"
+name = "unit_switch_mid"
+tier = "A"
+kind = "negative"
+note = "G20 после ходов — одна система единиц на программу (SPEC §2.5/§3, COVERAGE §2.2)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n7_unit_switch_mid/unit_switch_mid.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_UNSUPPORTED_SEMANTICS"
+[[vectors.files]]
+path = "tier_a/v0/n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_UNSUPPORTED_SEMANTICS"
+
+[[vectors]]
+id = "N8"
+name = "tapping_G84"
+tier = "A"
+kind = "negative"
+note = "G84 tapping — line-level: RAW-узел + диагностика (CORPUS §1.2 v0.5, решение оркестратора); циклы вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n8_tapping_G84/tapping_G84.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
+
+[[vectors]]
+id = "N9"
+name = "bare_T_linuxcnc"
+tier = "A"
+kind = "negative"
+note = "T5 без M6 — предвыбор инструмента вне L1 (COVERAGE §3, SPEC §4); GRBL-вариант — другой класс (E_INVALID_INPUT), не в этом векторе"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
+
+[[vectors]]
+id = "N10"
+name = "g43_h_table"
+tier = "A"
+kind = "negative"
+note = "G43 H2 — TLO из таблицы станка (COVERAGE §2.4, SPEC §8); G43 вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n10_g43_h_table/g43_h_table.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+expected_diags = ["E_REQUIRES_MACHINE_TABLE"]
+
+[[vectors]]
+id = "N11"
+name = "m98_call"
+tier = "A"
+kind = "negative"
+note = "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_UNSUPPORTED_SYNTAX"
+
+[[vectors]]
+id = "N12"
+name = "program_end_not_last"
+tier = "A"
+kind = "negative"
+note = "M2 в середине, после него ходы — инвариант «ровно один раз и последний» (SPEC §3)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n12_program_end_not_last/program_end_not_last.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n12_program_end_not_last/program_end_not_last.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N13"
+name = "program_end_duplicate"
+tier = "A"
+kind = "negative"
+note = "два M2 — program_end ровно один раз (SPEC §3)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n13_program_end_duplicate/program_end_duplicate.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N14"
+name = "program_end_missing"
+tier = "A"
+kind = "negative"
+note = "файл без M2/M30 — третий режим нарушения инварианта «ровно один раз и последний» (SPEC §3)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n14_program_end_missing/program_end_missing.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n14_program_end_missing/program_end_missing.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+
+[[vectors]]
+id = "N15"
+name = "wcs_set_here_mid"
+tier = "A"
+kind = "negative"
+note = "G10 L20 после motion-опа — позиционно-зависим, только пресетка (SPEC §5.3); контраст с #44 (пресетка до первого опа — легальна)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n15_wcs_set_here_mid/wcs_set_here_mid.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_UNSUPPORTED_SEMANTICS"
+[[vectors.files]]
+path = "tier_a/v0/n15_wcs_set_here_mid/wcs_set_here_mid.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_UNSUPPORTED_SEMANTICS"
+
+[[vectors]]
+id = "N16"
+name = "g53_after_preset"
+tier = "A"
+kind = "negative"
+note = "G53 при активном frame_preset — правило machine-frame (SPEC §5.3(a)); та же диспозиция, что N1, другая причина"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n16_g53_after_preset/g53_after_preset.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_RUNTIME_STATE"
+[[vectors.files]]
+path = "tier_a/v0/n16_g53_after_preset/g53_after_preset.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_RUNTIME_STATE"
+
+[[vectors]]
+id = "N17"
+name = "multiple_preset_at_start"
+tier = "A"
+kind = "negative"
+note = "два G92 подряд до ходов — множественные пресетки (Q5, класс зафиксирован SPEC v0.7)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_UNSUPPORTED_SEMANTICS"
+[[vectors.files]]
+path = "tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_UNSUPPORTED_SEMANTICS"
+
+[[vectors]]
+id = "N18"
+name = "css_g96"
+tier = "A"
+kind = "negative"
+note = "G96 S200 — токарный CSS вне скоупа §1.2 (COVERAGE §2.6); G96 вне словаря GRBL — источника нет"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n18_css_g96/css_g96.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
+
+[[vectors]]
+id = "N19"
+name = "arc_R_full_circle"
+tier = "A"
+kind = "negative"
+note = "R-форма при start == end — центр неоднозначен, полный круг только IJK (SPEC §6 v0.7)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/n19_arc_R_full_circle/arc_R_full_circle.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "E_INVALID_INPUT"
+[[vectors.files]]
+path = "tier_a/v0/n19_arc_R_full_circle/arc_R_full_circle.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "E_INVALID_INPUT"
+

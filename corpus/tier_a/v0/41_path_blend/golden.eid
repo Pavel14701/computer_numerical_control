@@ -1,0 +1,8 @@
+EID/L1 v0.2
+UNITS mm
+PATH_MODE blend t=0.0500
+FRAME_PRESET none
+OP 001 RAPID start=unknown end=0.0000,0.0000,5.0000 src=0.1-0.0 feed=none spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 002 LINEAR start=0.0000,0.0000,5.0000 end=10.0000,0.0000,5.0000 src=0.1-0.0 feed=200.0000 spindle=cw,10000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 003 PEND
+END

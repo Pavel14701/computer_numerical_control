@@ -6,4 +6,8 @@ edition = "2021"
 [dependencies]
 eid-core = { path = "../eid-core" }
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
+toml = "0.8"
+
+[dev-dependencies]
+eid-grbl = { path = "../eid-grbl" }
+eid-linuxcnc = { path = "../eid-linuxcnc" }
