@@ -195,6 +195,7 @@
 10. **Повторный tool_change с тем же номером** — legal no-op vs переустановка: зависит от контроллера; отложено (обсуждение CORPUS v0.2).
 11. **GRBL G17/G18/G19 — решено ✔** (source-check gcode.c/master, 2026-11-20): `case 17: case 18: case 19:` — все три плоскости парсятся; assignment `PLANE_SELECT_XY/ZX/YZ` даёт полные тройки `axis_0/axis_1/axis_linear`; error-path для G18/G19 отсутствует. I/J/K — буквально X/Y/Z в GRBL и LinuxCNC (пару in-plane осей выбирает плоскость, ремапа нет). **Следствие: гипотеза ревью «GRBL = G17 only» опровергнута source'ом; векторы #14/#15/#16 — R4-отказов для GRBL не имеют; эмиссионное правило in-plane пар — §5.**
 12. **grblHAL G17/G18/G19 + IJK mapping — решено ✔** (source-check grblHAL/core gcode.c/master, 2026-11-20): `gc_get_plane_data()` — все три плоскости, отказа нет; `#define I_VALUE X_AXIS` — I/J/K literal, ремапа нет. **Наследование GRBL 1.1 (§6.11) подтверждено source'ом** — колонки `=` в §2.1 теперь обоснованы.
+13. **LinuxCNC: документированный дефолт retract-режима (G98 vs G99)** — SPEC §7.5a реализует G99 provisionally (Agent D, итерация 3-4); сверить по docs.
 
 ## 7. Спорные строки для ревью (первым делом)
 
