@@ -3,7 +3,8 @@
 //! обработка невалидных профилей.
 
 use eid_integration::profile::{
-    DialectKind, Limits, MachineProfile, GRBL_DEFAULT_PROFILE, LINUXCNC_DEFAULT_PROFILE,
+    AxisLimits, AxisRange, DialectKind, Limits, MachineProfile, GRBL_DEFAULT_PROFILE,
+    LINUXCNC_DEFAULT_PROFILE,
 };
 use std::path::PathBuf;
 
@@ -140,6 +141,50 @@ fn profile_overrides_parse() {
     assert_eq!(p.limits.max_word_chars, 8);
     assert!(p.emit_r_arcs);
 }
+
+// ---------------------------------------------------------------------------
+// 5. axis_limits (итерация 4): дефолт None, опциональное чтение, contains.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn axis_limits_default_is_none() {
+    // дефолтные TOML-профили не задают axis-limits; конструкторы — тоже
+    assert_eq!(MachineProfile::grbl_default().axis_limits, None);
+    assert_eq!(MachineProfile::linuxcnc_default().axis_limits, None);
+    let p: MachineProfile = toml::from_str(GRBL_DEFAULT_PROFILE).unwrap();
+    assert_eq!(p.axis_limits, None);
+}
+
+#[test]
+fn axis_limits_optional_field_parses() {
+    let path = write_temp("axis.toml", AXIS_LIMITS_TOML);
+    let p = MachineProfile::load(&path).expect("профиль с axis_limits");
+    let a = p.axis_limits.expect("axis_limits прочитаны");
+    assert_eq!(a.x, AxisRange { min: -100.0, max: 400.0 });
+    assert_eq!(a.y, AxisRange { min: 0.0, max: 300.0 });
+    assert_eq!(a.z, AxisRange { min: -10.0, max: 150.0 });
+    assert!(a.contains(0.0, 0.0, 0.0));
+    assert!(a.contains(400.0, 300.0, 150.0));
+    assert!(!a.contains(400.1, 0.0, 0.0));
+    assert!(!a.contains(0.0, -0.001, 0.0));
+}
+
+const AXIS_LIMITS_TOML: &str = concat!(
+    "name = \"Bench XYZ\"\n",
+    "dialect = \"linuxcnc\"\n",
+    "emit-r-arcs = false\n",
+    "\n",
+    "[axis-limits]\n",
+    "x = { min = -100.0, max = 400.0 }\n",
+    "y = { min = 0.0, max = 300.0 }\n",
+    "z = { min = -10.0, max = 150.0 }\n",
+    "\n",
+    "[limits]\n",
+    "max-ops-per-program = 200000\n",
+    "max-unroll-iterations = 10000\n",
+    "max-source-lines = 1000000\n",
+    "max-word-chars = 32\n",
+);
 
 // TOML-фрагменты тестов.
 const UNKNOWN_DIALECT_TOML: &str = concat!(

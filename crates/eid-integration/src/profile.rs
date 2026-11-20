@@ -80,6 +80,35 @@ impl Default for Limits {
     }
 }
 
+/// Рабочий диапазон одной оси (станочные лимиты хода; structural-проверка
+/// mock-сима, итерация 4). Единицы — единицы программы (mm/in не различаются
+/// на этом уровне; профиль задаёт их для своего станка).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AxisRange {
+    pub min: f64,
+    pub max: f64,
+}
+
+/// Пер-осевые лимиты хода станка. Опционально (дефолт — None: проверка
+/// отключена); это НЕ retract_clearance (ruling SPEC: константа, не параметр
+/// профиля — детерминизм) и не допуски эквивалентности (EQUIVALENCE §4).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AxisLimits {
+    pub x: AxisRange,
+    pub y: AxisRange,
+    pub z: AxisRange,
+}
+
+impl AxisLimits {
+    /// Внутри диапазона по всем трём осям?
+    pub fn contains(&self, x: f64, y: f64, z: f64) -> bool {
+        let in_range = |r: &AxisRange, v: f64| r.min <= v && v <= r.max;
+        in_range(&self.x, x) && in_range(&self.y, y) && in_range(&self.z, z)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct MachineProfile {
@@ -89,6 +118,9 @@ pub struct MachineProfile {
     /// R-эмиссия дуг — по флагу профиля с notice (EQUIVALENCE §4: по умолчанию
     /// всегда IJK; R1 всегда через IJK).
     pub emit_r_arcs: bool,
+    /// Пер-осевые лимиты хода станка (mock-sim, итерация 4); None = не заданы.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub axis_limits: Option<AxisLimits>,
 }
 
 impl MachineProfile {
@@ -114,6 +146,7 @@ impl MachineProfile {
             dialect: DialectKind::Grbl11,
             limits: Limits::default(),
             emit_r_arcs: false,
+            axis_limits: None,
         }
     }
 
@@ -125,6 +158,7 @@ impl MachineProfile {
             dialect: DialectKind::LinuxCnc,
             limits: Limits::default(),
             emit_r_arcs: false,
+            axis_limits: None,
         }
     }
 }
