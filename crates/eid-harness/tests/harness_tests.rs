@@ -62,7 +62,7 @@ fn state(feed: Option<f64>) -> State {
 
 fn prog(ops: Vec<Op>) -> Program {
     Program {
-        eid_version: "EID/L1 v0.2".into(),
+        eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
         path_mode: PathMode::ExactPath,
         frame_preset: None,
@@ -712,7 +712,7 @@ fn mock_program(raw: Option<ErrorCode>) -> Program {
     }
     ops.push(Op::ProgramEnd { src: s });
     Program {
-        eid_version: "EID/L1 v0.2".into(),
+        eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
         path_mode: PathMode::ExactPath,
         frame_preset: None,
@@ -737,12 +737,12 @@ impl Adapter for MockAdapter {
             Mock::Refuse(code) => Err(vec![diag(*code)]),
             Mock::RoundTrip => eid_core::emitter::emit(p),
             // «Эмитит успешно, но текст не парсится обратно» — для Fail-путей R1-text
-            _ => Ok("EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n".to_string()),
+            _ => Ok("EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n".to_string()),
         }
     }
 }
 
-const MINIMAL_GOLDEN: &str = "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+const MINIMAL_GOLDEN: &str = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
 
 fn vec_negative(id: &str, file: &Path, expect: Outcome, diags: Vec<ErrorCode>) -> Vector {
     Vector {
@@ -842,7 +842,7 @@ fn runner_positive_r3_and_r1_text_via_mock() {
     let golden = tmp_file("golden_min.eid", MINIMAL_GOLDEN);
     let raw_file = tmp_file(
         "raw.eid",
-        "EID/L1 v0.2\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 RAW reason=\"mock\" code=E_UNSUPPORTED_SYNTAX src=0.1-0.0 payload=414243\nOP 002 PEND\nEND\n",
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 RAW reason=\"mock\" code=E_UNSUPPORTED_SYNTAX src=0.1-0.0 payload=414243\nOP 002 PEND\nEND\n",
     );
     let mut reg = Registry::new();
     // RoundTrip-адаптер: parse/emit через eid parser/emitter под именем "mock-eid"
