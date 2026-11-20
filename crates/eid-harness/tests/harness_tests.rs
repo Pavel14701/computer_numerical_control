@@ -194,10 +194,80 @@ fn diff_m1_filtered_m0_counts() {
 }
 
 #[test]
-fn diff_sweep_near_semicircle_amplifies_center_tolerance() {
-    // sweep 179.9 vs 180.1 (CORPUS #11-диспозиция): sweep — расхождение
-    // (0.2 > max(1e-4, 1e-6·sweep)); центры — в пределах амплифицированного
-    // допуска q·A (cap 1000): h = 5/tan(sweep/2), |Δcenter| = 2|h| ≈ 8.7e-3 ≤ 0.1.
+fn diff_sweep_amplified_tolerance_rounded_center_pair_ok() {
+    // EQUIVALENCE §4 v0.3 (СТОП-2 отчёта D): 179.4975 vs 179.4973 при R≈10
+    // (геометрия golden #11: start (0,10,0), end (0.0175,-9.9998,0), центр
+    // derived (−0.0351,0.0001,0)). Без члена deg(q·A/R): Δ = 0.0002° >
+    // 1e-6·sweep = 1.795e-4° → ложнокрасный; с членом (deg(1e-4·228/10) ≈
+    // 0.1307°) → ok.
+    let mk = |sweep_val: f64| {
+        prog(vec![
+            Op::Rapid {
+                start: StartPoint::Unknown,
+                end: p3(0.0, 10.0, 0.0),
+                state: state(None),
+                src: src(),
+                sub: None,
+            },
+            Op::Arc {
+                start: StartPoint::Known(p3(0.0, 10.0, 0.0)),
+                end: p3(0.0175, -9.9998, 0.0),
+                center: p3(-0.0351, 0.0001, 0.0),
+                normal: p3(0.0, 0.0, 1.0),
+                dir: Dir::Cw,
+                sweep_deg: Num::new(format!("{sweep_val:.4}"), sweep_val),
+                pitch: num(0.0),
+                state: state(Some(100.0)),
+                src: src(),
+                sub: None,
+            },
+            Op::ProgramEnd { src: src() },
+        ])
+    };
+    assert!(semantic_diff(&mk(179.4975), &mk(179.4973), &DiffConfig::default()).is_empty());
+}
+
+#[test]
+fn diff_sweep_half_degree_from_semicircle_diverges() {
+    // 179.4975 vs 180.0 при том же округлённом центре (R≈10): AND-логика
+    // (min по сторонам) — ε(179.4975) ≈ 0.1307° < Δ = 0.5025° → divergence,
+    // ровно одна (sweep); центр/end идентичны → ok.
+    let mk = |sweep_val: f64| {
+        prog(vec![
+            Op::Rapid {
+                start: StartPoint::Unknown,
+                end: p3(0.0, 10.0, 0.0),
+                state: state(None),
+                src: src(),
+                sub: None,
+            },
+            Op::Arc {
+                start: StartPoint::Known(p3(0.0, 10.0, 0.0)),
+                end: p3(0.0175, -9.9998, 0.0),
+                center: p3(-0.0351, 0.0001, 0.0),
+                normal: p3(0.0, 0.0, 1.0),
+                dir: Dir::Cw,
+                sweep_deg: Num::new(format!("{sweep_val:.4}"), sweep_val),
+                pitch: num(0.0),
+                state: state(Some(100.0)),
+                src: src(),
+                sub: None,
+            },
+            Op::ProgramEnd { src: src() },
+        ])
+    };
+    let d = semantic_diff(&mk(179.4975), &mk(180.0), &DiffConfig::default());
+    assert_eq!(d, vec![Divergence::Geometry { index: 1, field: "sweep" }], "{d:?}");
+    // Симметрия эквивалентности: дифф не зависит от порядка сторон.
+    let d_rev = semantic_diff(&mk(180.0), &mk(179.4975), &DiffConfig::default());
+    assert_eq!(d_rev, vec![Divergence::Geometry { index: 1, field: "sweep" }], "{d_rev:?}");
+}
+
+#[test]
+fn diff_sweep_near_semicircle_both_sides_amplified_ok() {
+    // Обе стороны near-180 (R=5, пер-сайдовые центры h = 5/tan(sweep/2)):
+    // ε = deg(1e-4·A/5) ≈ 1.313° > Δ = 0.2° → ok (v0.3; прежний тест считал
+    // это расхождением при допуске 1e-6·sweep).
     let mk = |sweep: f64, h: f64| {
         prog(vec![
             Op::Rapid {
@@ -224,17 +294,23 @@ fn diff_sweep_near_semicircle_amplifies_center_tolerance() {
     };
     let h_pos = 5.0 / ((179.9_f64 / 2.0).to_radians().tan());
     let h_neg = 5.0 / ((180.1_f64 / 2.0).to_radians().tan());
-    let d = semantic_diff(&mk(179.9, h_pos), &mk(180.1, h_neg), &DiffConfig::default());
-    assert!(has(&d, &Divergence::Geometry { index: 1, field: "sweep" }), "{d:?}");
-    assert!(!has(&d, &Divergence::Geometry { index: 1, field: "center" }), "{d:?}");
-    assert_eq!(d.len(), 1);
-    // Контроль: обычная дуга 90° (A ≈ 1.41), центр сдвинут на 0.5 → center расходится.
+    assert!(semantic_diff(&mk(179.9, h_pos), &mk(180.1, h_neg), &DiffConfig::default()).is_empty());
+    // Контроль центра: обычная дуга 90° (A ≈ 1.41), центр сдвинут на 0.5 →
+    // center расходится (амплификация центра не резиновая).
     let mut c = prog(base_ops());
     if let Op::Arc { center, .. } = &mut c.ops[2] {
         *center = p3(15.5, 0.0, 5.0);
     }
     let d = semantic_diff(&prog(base_ops()), &c, &DiffConfig::default());
     assert!(has(&d, &Divergence::Geometry { index: 2, field: "center" }), "{d:?}");
+    // Контроль sweep: обычная дуга 90°, sweep 90 → 91 (A(91) ≈ 1.44, R = 5:
+    // ε ≈ 0.0016° < 1°) → sweep расходится.
+    let mut s = prog(base_ops());
+    if let Op::Arc { sweep_deg, .. } = &mut s.ops[2] {
+        *sweep_deg = num(91.0);
+    }
+    let d = semantic_diff(&prog(base_ops()), &s, &DiffConfig::default());
+    assert!(has(&d, &Divergence::Geometry { index: 2, field: "sweep" }), "{d:?}");
 }
 
 #[test]
@@ -407,10 +483,38 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     let v47 = v("47");
     assert_eq!(v47.r4_expect.get("grbl-1.1"), Some(&Outcome::Code(ErrorCode::RawUntranslatable)));
     assert_eq!(v47.r4_expect.get("linuxcnc"), Some(&Outcome::Code(ErrorCode::RawUntranslatable)));
-    // N3 — негатив с r4_expect и line-level ожиданиями (правило двух классов)
+    // N3 — line-level негатив: Ok-исход + expected_diags (правило двух классов)
     let n3 = v("N3");
     assert!(matches!(n3.files[0].expect, Outcome::Ok));
     assert_eq!(n3.files[0].expected_diags, vec![ErrorCode::UnsupportedSyntax]);
+    // N11 — Err-класс с CORPUS v0.5.2 (подпрограмма структурна: после M98
+    // поток управления расходится): expect = код отказа, expected_diags пуст.
+    let n11 = v("N11");
+    assert_eq!(n11.files[0].expect, Outcome::Code(ErrorCode::UnsupportedSyntax));
+    assert!(n11.files[0].expected_diags.is_empty());
+    // Класс-списки CORPUS §1.2 v0.5.2: Err = {N1,N2,N4,N5a,N5b,N6,N7,N11,N12,
+    // N13,N14,N15,N16,N17,N19}; line-level = {N3,N8,N9,N10,N18} — сверка
+    // манифеста со списком (loader не знает о классах — проверяем форму).
+    let err_class = ["N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N11", "N12", "N13", "N14", "N15", "N16", "N17", "N19"];
+    let line_class = ["N3", "N8", "N9", "N10", "N18"];
+    for id in err_class {
+        let vv = v(id);
+        for f in &vv.files {
+            assert!(
+                matches!(f.expect, Outcome::Code(_)) && f.expected_diags.is_empty(),
+                "{id}: Err-класс, файл {:?}", f.path
+            );
+        }
+    }
+    for id in line_class {
+        let vv = v(id);
+        for f in &vv.files {
+            assert!(
+                matches!(f.expect, Outcome::Ok) && !f.expected_diags.is_empty(),
+                "{id}: line-level класс, файл {:?}", f.path
+            );
+        }
+    }
     // новые векторы присутствуют с ожидаемыми диалектами
     assert_eq!(v("47").files.len(), 1, "raw_crlf_fidelity — только GRBL-файл");
     assert_eq!(v("47").files[0].dialect, "grbl-1.1");
@@ -832,6 +936,101 @@ fn runner_r4_emission_expectations() {
     assert!(matches!(r4[0].status, Status::Pending(_)), "{:?}", r4[0]);
 
     std::fs::remove_file(&golden).ok();
+    std::fs::remove_file(&f).ok();
+}
+
+/// Модель целевого адаптера для R4-негативов: эмиссия программы с RAW-опом
+/// отказывает E_RAW_UNTRANSLATABLE (SPEC §8.2; CORPUS v0.5.1 — N3/#47),
+/// без RAW — успешна.
+struct RawRefuseAdapter;
+
+impl Adapter for RawRefuseAdapter {
+    fn dialect_name(&self) -> &'static str {
+        "mock-rawrefuse"
+    }
+    fn parse(&self, _s: &str, _f: &str) -> Result<Program, Vec<Diagnostic>> {
+        Ok(mock_program(None))
+    }
+    fn emit(&self, p: &Program) -> Result<String, Vec<Diagnostic>> {
+        if p.ops.iter().any(|o| matches!(o, Op::Raw { .. })) {
+            Err(vec![diag(ErrorCode::RawUntranslatable)])
+        } else {
+            Ok(MINIMAL_GOLDEN.to_string())
+        }
+    }
+}
+
+#[test]
+fn runner_r4_negative_file_as_source() {
+    // CORPUS v0.5.1: негатив с r4_expect — parse(файл) → Ok → эмиссия AST
+    // в каждую цель → ожидаемый код. Заменяет прежний Skipped при golden=null.
+    let f = tmp_file("r4neg.txt", "mock raw input");
+    let mut reg = Registry::new();
+    reg.register(Arc::new(MockAdapter::new("mock-raw-sem", Mock::OkWithRaw(ErrorCode::UnsupportedSemantics))));
+    reg.register(Arc::new(MockAdapter::new("mock-clean", Mock::OkClean)));
+    reg.register(Arc::new(RawRefuseAdapter));
+
+    let mk_neg = |dialect: &str, expect: Outcome, diags: Vec<ErrorCode>| Vector {
+        id: "RN".into(),
+        name: "r4neg".into(),
+        tier: Tier::A,
+        kind: Kind::Negative,
+        golden: None,
+        files: vec![FileEntry {
+            path: f.clone(),
+            dialect: dialect.into(),
+            expect,
+            expected_diags: diags,
+            sha256: None,
+        }],
+        r4_expect: [("mock-rawrefuse".to_string(), Outcome::Code(ErrorCode::RawUntranslatable))]
+            .into_iter()
+            .collect(),
+        notice: false,
+    };
+
+    // Line-level негатив (Ok + RAW в AST): эмиссия отказывает ожидаемым кодом → Pass.
+    let m1 = Manifest {
+        corpus_version: "t".into(),
+        vectors: vec![mk_neg("mock-raw-sem", Outcome::Ok, vec![ErrorCode::UnsupportedSemantics])],
+    };
+    let rep1 = runner::run(&m1, &reg);
+    let r4 = rep1.checks("R4");
+    assert_eq!(r4.len(), 1, "{:?}", rep1.vectors);
+    assert!(matches!(r4[0].status, Status::Pass), "{:?}", r4[0]);
+    // Цель в target — источник файл, не golden.
+    assert!(
+        r4[0].target.ends_with("→mock-rawrefuse") && !r4[0].target.starts_with("golden"),
+        "{}",
+        r4[0].target
+    );
+
+    // Тот же негатив, но эмиссия успешна (AST без RAW) → Fail.
+    let m2 = Manifest {
+        corpus_version: "t".into(),
+        vectors: vec![mk_neg("mock-clean", Outcome::Ok, vec![])],
+    };
+    let rep2 = runner::run(&m2, &reg);
+    let r4 = rep2.checks("R4");
+    assert_eq!(r4.len(), 1);
+    match &r4[0].status {
+        Status::Fail(msg) => assert!(msg.contains("expected emit refusal E_RAW_UNTRANSLATABLE"), "{msg}"),
+        s => panic!("expected Fail, got {s:?}"),
+    }
+
+    // Структурный негатив с r4_expect: нет Ok-источника (parse = Err) → Skipped.
+    let mut nstruct = vec_negative("RS", &f, Outcome::Code(ErrorCode::RuntimeState), vec![]);
+    nstruct.files[0].dialect = "mock-refuse".into();
+    nstruct.r4_expect.insert("mock-rawrefuse".to_string(), Outcome::Code(ErrorCode::RawUntranslatable));
+    let m3 = Manifest { corpus_version: "t".into(), vectors: vec![nstruct] };
+    let mut reg3 = Registry::new();
+    reg3.register(Arc::new(MockAdapter::new("mock-refuse", Mock::Refuse(ErrorCode::RuntimeState))));
+    reg3.register(Arc::new(RawRefuseAdapter));
+    let rep3 = runner::run(&m3, &reg3);
+    let r4 = rep3.checks("R4");
+    assert_eq!(r4.len(), 1);
+    assert!(matches!(r4[0].status, Status::Skipped(_)), "{:?}", r4[0]);
+
     std::fs::remove_file(&f).ok();
 }
 

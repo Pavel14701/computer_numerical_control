@@ -261,8 +261,27 @@ fn diff_arc(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut Vec<
     if da != db {
         d.push(Divergence::Geometry { index: i, field: "dir" });
     }
-    // sweep: max(1e-4, 1e-6·sweep), включая sweep=360°.
-    if !num_close(swa.value(), swb.value(), 1e-4_f64.max(1e-6 * sweep_max)) {
+    // sweep (EQUIVALENCE §4 v0.3, СТОП-2 отчёта D): ε = max(1e-4°, 1e-6·sweep,
+    // deg(q·A(sweep)/R)); deg(x) = x·180/π; R — планиметрический радиус из
+    // start/center (SPEC §6.1). Угловая проекция амплифицированного шума
+    // центра: R-derived near-semicircle дуга несёт Δsweep до ~deg(q·A/R)
+    // (0.402° на #11 при допуске 1e-6·sweep = 1.8e-4° — ложнокрасный).
+    // Для ПАРЫ — min по сторонам (AND-логика: разница обязана объясняться
+    // квантованием каждой из двух репрезентаций: 179.4975 vs 180.0 при R≈10
+    // → divergence, 179.4975 vs 179.4973 → ok; R≈10 — golden #11).
+    let sweep_tol_side = |st: &StartPoint, ce: &Point3, nm: &Point3, sw: f64| -> f64 {
+        let mut t = 1e-4_f64.max(1e-6 * sw.abs());
+        if let Some(r) = planimetric_radius(st, ce, nm) {
+            if r > 1e-9 {
+                let ang_rad = cfg.q_arc * amp_factor(sw) / r;
+                t = t.max(ang_rad * 180.0 / std::f64::consts::PI);
+            }
+        }
+        t
+    };
+    let eps_sweep = sweep_tol_side(sa, ca, na, swa.value())
+        .min(sweep_tol_side(sb, cb, nb, swb.value()));
+    if !num_close(swa.value(), swb.value(), eps_sweep) {
         d.push(Divergence::Geometry { index: i, field: "sweep" });
     }
     // pitch = ε_pos (длина).
@@ -274,9 +293,31 @@ fn diff_arc(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut Vec<
 
 /// Усиление R→центр у околополуокружностей (EQUIVALENCE §4):
 /// A(sweep) = 1/max(|cos(sweep/2)|, 1e-3) — cos, не sin (ревью §4).
+/// Пол (1e-3) каппирует A на 1000 у sweep=180°.
 fn amp_factor(sweep_deg: f64) -> f64 {
     let half = (sweep_deg / 2.0).to_radians();
     1.0 / half.cos().abs().max(1e-3)
+}
+
+/// Планиметрический радиус дуги: |proj⊥normal(start − center)| (SPEC §6.1).
+/// None — start unknown (R не определён; arc с unknown-start невалиден —
+/// SPEC §2 Q11, до сравнения стороны дуга не доходит в валидном AST).
+fn planimetric_radius(start: &StartPoint, center: &Point3, normal: &Point3) -> Option<f64> {
+    let s = match start {
+        StartPoint::Known(p) => p3_vals(p),
+        StartPoint::Unknown => return None,
+    };
+    let c = p3_vals(center);
+    let n = p3_vals(normal);
+    let dxy = (s.0 - c.0, s.1 - c.1, s.2 - c.2);
+    let n2 = n.0 * n.0 + n.1 * n.1 + n.2 * n.2;
+    let planar = if n2 > 1e-12 {
+        let k = (dxy.0 * n.0 + dxy.1 * n.1 + dxy.2 * n.2) / n2;
+        (dxy.0 - n.0 * k, dxy.1 - n.1 * k, dxy.2 - n.2 * k)
+    } else {
+        dxy
+    };
+    Some((planar.0 * planar.0 + planar.1 * planar.1 + planar.2 * planar.2).sqrt())
 }
 
 /// start: unknown ≡ unknown; unknown vs known — расхождение (§3 v0.2);

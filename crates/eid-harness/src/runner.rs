@@ -132,6 +132,8 @@ pub fn run(manifest: &Manifest, adapters: &Registry) -> Report {
 
 fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffConfig) -> VectorReport {
     let mut checks = Vec::new();
+    // Ok-распарсенные AST файлов (для R3 и R4-негативов, CORPUS v0.5.1).
+    let mut parsed_ok: Vec<(String, eid_core::ast::Program)> = Vec::new();
 
     // --- Golden: R1-AST (parse→emit==файл байт-в-байт→parse→diff=0) + R2 -----
     let golden_ast = match &v.golden {
@@ -270,6 +272,12 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
                         });
                     }
                 }
+                // Негатив с Ok-исходом: AST пригоден как источник R4 (v0.5.1).
+                if v.kind == crate::manifest::Kind::Negative
+                    && matches!(f.expect, Outcome::Ok | Outcome::Warning)
+                {
+                    parsed_ok.push((target.clone(), program.clone()));
+                }
 
                 // R1-text: same-dialect RAW round-trip, payload байт-в-байт
                 // (CORPUS §4; notice:true исключает R1-text).
@@ -292,15 +300,42 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
         }
     }
 
-    // --- R4: эмиссия golden-AST в целевые диалекты (r4_expect) ---------------
+    // --- R4: ожидания эмиссии (r4_expect; CORPUS §6, правка v0.5.1) ----------
+    // Источник AST: golden (позитивы) либо Ok-распарсенные файлы (негативы:
+    // parse(файл) → Ok → эмиссия AST в каждую цель из r4_expect → ожидаемый
+    // код; единственный тест E_RAW_UNTRANSLATABLE на N3/#47-диспозицию — RAW
+    // в AST отказывает цели трансляции, SPEC §8.2). Нет адаптера цели →
+    // Pending; нет Ok-источника (структурный негатив) → Skipped.
     for (dialect, expect) in &v.r4_expect {
-        let target = format!("golden→{dialect}");
-        let status = match (adapters.get(dialect), &golden_ast) {
-            (None, _) => Status::Pending(format!("no adapter for dialect `{dialect}`")),
-            (Some(_), None) => Status::Skipped(
-                "r4_expect without golden AST (негатив: эмиссионная цель проверяется на этапе адаптера)".into(),
-            ),
-            (Some(a), Some(g)) => match a.emit(g) {
+        let adapter = match adapters.get(dialect) {
+            Some(a) => a,
+            None => {
+                checks.push(Check {
+                    relation: "R4",
+                    target: dialect.clone(),
+                    status: Status::Pending(format!("no adapter for dialect `{dialect}`")),
+                });
+                continue;
+            }
+        };
+        let sources: Vec<(String, &eid_core::ast::Program)> = match &golden_ast {
+            Some(g) => vec![("golden".to_string(), g)],
+            None => parsed_ok.iter().map(|(t, p)| (t.clone(), p)).collect(),
+        };
+        if sources.is_empty() {
+            checks.push(Check {
+                relation: "R4",
+                target: dialect.clone(),
+                status: Status::Skipped(
+                    "нет источника AST: негатив без Ok-парса (структурный) — R4 проверяется на этапе адаптера"
+                        .into(),
+                ),
+            });
+            continue;
+        }
+        for (label, program) in &sources {
+            let target = format!("{label}→{dialect}");
+            let status = match adapter.emit(program) {
                 Err(diags) => match expect {
                     Outcome::Code(c) if diags.iter().any(|dg| dg.code == *c) => Status::Pass,
                     Outcome::Code(c) => Status::Fail(format!(
@@ -320,9 +355,9 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
                         c.as_str()
                     )),
                 },
-            },
-        };
-        checks.push(Check { relation: "R4", target, status });
+            };
+            checks.push(Check { relation: "R4", target, status });
+        }
     }
 
     VectorReport { id: v.id.clone(), name: v.name.clone(), checks }
