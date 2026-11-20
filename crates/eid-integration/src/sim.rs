@@ -59,25 +59,27 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
     };
 
     // --- program_end: ровно один и последний (SPEC §3) ----------------------
+    // Ошибки structural-проверок тегируются этапом verify (MLIR-урок,
+    // interface v0.1.2: диагностика с привязкой к этапам).
     let end_count = program
         .ops
         .iter()
         .filter(|op| matches!(op, Op::ProgramEnd { .. }))
         .count();
     match end_count {
-        0 => report
-            .errors
-            .push("program_end отсутствует (SPEC §3: ровно один, последний)".to_string()),
+        0 => report.errors.push(
+            "[verify] program_end отсутствует (SPEC §3: ровно один, последний)".to_string(),
+        ),
         1 => {
             if !matches!(program.ops.last(), Some(Op::ProgramEnd { .. })) {
                 report
                     .errors
-                    .push("program_end не последний оп (SPEC §3)".to_string());
+                    .push("[verify] program_end не последний оп (SPEC §3)".to_string());
             }
         }
         n => report
             .errors
-            .push(format!("program_end продублирован: {n} шт (SPEC §3: ровно один)")),
+            .push(format!("[verify] program_end продублирован: {n} шт (SPEC §3: ровно один)")),
     }
 
     // --- motion-опы: zero-length flood + axis limits + bbox -----------------
@@ -125,7 +127,7 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
             if let Some(limits) = &profile.axis_limits {
                 if !limits.contains(x, y, z) {
                     report.errors.push(format!(
-                        "axis_limits: ход вне лимитов профиля (op {i}): x={x} y={y} z={z}"
+                        "[verify] axis_limits: ход вне лимитов профиля (op {i}): x={x} y={y} z={z}"
                     ));
                 }
             }

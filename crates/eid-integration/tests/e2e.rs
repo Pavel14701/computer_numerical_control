@@ -10,7 +10,9 @@ use eid_core::adapter::Adapter;
 use eid_harness::diff::{semantic_diff, DiffConfig};
 use eid_integration::profile::MachineProfile;
 use eid_integration::sim::mock_sim;
-use eid_integration::translate::{translate_file, translate_text, AnyAdapter, TranslateError};
+use eid_integration::translate::{
+    format_diagnostic, translate_file, translate_text, AnyAdapter, TranslateError,
+};
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -156,6 +158,15 @@ fn e2e_negative_27_tool_change_emit_syntax() {
                     .any(|d| d.code.as_str() == "E_UNSUPPORTED_SYNTAX"),
                 "#27: ожидалась E_UNSUPPORTED_SYNTAX, фактические: {:?}",
                 diags.iter().map(|d| d.code.as_str()).collect::<Vec<_>>()
+            );
+            // stage-атрибуция (MLIR-урок, interface v0.1.2): печать диагностики
+            // несёт этап — CLI stderr для #27 обязан содержать `[emit]`.
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| format_diagnostic(d).starts_with("[emit] ")),
+                "#27: format_diagnostic без [emit]-тега: {:?}",
+                diags.iter().map(format_diagnostic).collect::<Vec<_>>()
             );
         }
         other => panic!("#27: ожидался Err(Emit), фактический: {other:?}"),

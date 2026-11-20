@@ -9,7 +9,7 @@
 
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
-use eid_core::diag::Diagnostic;
+use eid_core::diag::{Diagnostic, Stage};
 use eid_grbl::GrblAdapter;
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
@@ -143,7 +143,18 @@ impl TranslateError {
     }
 }
 
-/// Единый формат печати диагностики: code + message + src (CLI, e2e).
+/// Тег этапа пайплайна для печати (MLIR-урок: диагностика привязана к этапу;
+/// interface v0.1.2 — `Diagnostic.stage`).
+pub fn stage_tag(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Parse => "parse",
+        Stage::Canonicalize => "canonicalize",
+        Stage::Verify => "verify",
+        Stage::Emit => "emit",
+    }
+}
+
+/// Единый формат печати диагностики: `[stage] code: message @ src` (CLI, e2e).
 pub fn format_diagnostic(d: &Diagnostic) -> String {
     let src = match &d.src {
         Some(s) => format!(
@@ -156,7 +167,13 @@ pub fn format_diagnostic(d: &Diagnostic) -> String {
         ),
         None => String::new(),
     };
-    let mut s = format!("{}: {}{}", d.code.as_str(), d.message, src);
+    let mut s = format!(
+        "[{}] {}: {}{}",
+        stage_tag(d.stage),
+        d.code.as_str(),
+        d.message,
+        src
+    );
     for o in &d.options {
         s.push_str(&format!("\n  вариант: {o}"));
     }
