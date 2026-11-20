@@ -7,3 +7,5 @@
 # ИСКЛЮЧЕНИЕ: вектор #47 raw_crlf_fidelity — файл намеренно CRLF, его
 # байты есть тестовые данные (R1-text payload byte-exact). Нормализация запрещена.
 corpus/tier_a/v0/47_raw_crlf_fidelity/** -text
+# v1-регенерация #47: CRLF — тестовые данные (R1-text payload byte-exact)
+corpus/tier_a/v1/47_raw_crlf_fidelity/** -text
