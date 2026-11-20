@@ -1,4 +1,18 @@
 //! semantic_diff — замороженный интерфейс v0.1.
+//!
+//! МАТРИЦА ПОКРЫТИЯ (EQUIVALENCE §4 × within/out × поля; тесты tests/eq4_matrix.rs,
+//! именование eq4_<field>_<within|out>):
+//!   позиция: eq4_position_small_out / eq4_position_large_bbox_within|out (k_pos·L)
+//!   центр:   eq4_center_amplify_179_9 (q·A cap) / eq4_center_sweep_170 / eq4_center_sweep_90
+//!   sweep:   eq4_sweep_boundary_1e4 (граница 1e-4°) / min-per-side: eq4_min_side_179_9_180_1 (+swap)
+//!   pitch:   eq4_pitch_within|out; feed: eq4_feed_floor|relative|none; rpm: eq4_rpm_floor|relative
+//!   dwell:   eq4_dwell_within|out; точные поля: covered in diff_state_fields (coolant/tool/wcs/frame)
+//!   M1:      diff_m1_* (начало/середина/конец, M0 не фильтруется, M1+M0)
+//!   unknown: diff_unknown_vs_known + eq4_breakpoints_a_d (точки разрыва (a)–(d))
+//!   min-per-side симметрия: eq4_min_side_symmetry
+//! CORPUS §1.2 two-class: runner_two_class_negatives + tier_b; v0.5.3: runner_r4_*.
+//! translate: tests/translate_checked.rs (same Ok / cross Err / payload-терминатор).
+//! manifest-инварианты: manifest_loads_* / tc_manifest_duplicate_ids.
 //! Допуски — EQUIVALENCE §4 (единственный источник коэффициентов; меняются
 //! только ревизией контракта, не кодом и не профилем).
 

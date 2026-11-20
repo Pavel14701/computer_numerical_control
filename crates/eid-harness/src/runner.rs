@@ -78,6 +78,8 @@ pub struct Check {
     pub target: String,
     /// Ожидание из контракта/манифеста (для отчёта).
     pub expected: String,
+    /// Stage первой диагностики (interface v0.1.2) — для отчёта «по этапам».
+    pub stage: Option<eid_core::diag::Stage>,
     pub status: Status,
 }
 
@@ -168,12 +170,14 @@ fn run_vector(
                     target: "golden".to_string(),
                     expected: "emit(parse(golden)) == golden-файл байт-в-байт; re-parse ≡ golden"
                         .into(),
+                    stage: None,
                     status: Status::Pass,
                 });
                 checks.push(Check {
                     relation: "R2",
                     target: "golden".to_string(),
                     expected: "parse→emit→parse→emit байт-в-байт (стабильность канона)".into(),
+                    stage: None,
                     status: Status::Pass,
                 });
                 Some(ast)
@@ -184,6 +188,7 @@ fn run_vector(
                         relation,
                         target: "golden".to_string(),
                         expected,
+                        stage: None,
                         status: Status::Fail(msg),
                     });
                 }
@@ -204,6 +209,7 @@ fn run_vector(
                     relation: "parse",
                     target: target.clone(),
                     expected: parse_expected.clone(),
+                    stage: None,
                     status: Status::Pending(format!(
                         "no adapter for dialect `{}` (registry: {:?})",
                         f.dialect,
@@ -217,6 +223,7 @@ fn run_vector(
                         relation: "R3-golden",
                         target: target.clone(),
                         expected: "parse(file) ≡ golden AST".into(),
+                        stage: None,
                         status: Status::Pending(format!(
                             "no adapter for dialect `{}`",
                             f.dialect
@@ -233,6 +240,7 @@ fn run_vector(
                     relation: "parse",
                     target: target.clone(),
                     expected: parse_expected.clone(),
+                    stage: None,
                     status: Status::Fail(format!("cannot read file: {e}")),
                 });
                 continue;
@@ -267,6 +275,7 @@ fn run_vector(
                     relation: "parse",
                     target: target.clone(),
                     expected: parse_expected.clone(),
+                    stage: None,
                     status,
                 });
             }
@@ -307,6 +316,7 @@ fn run_vector(
                     relation: "parse",
                     target: target.clone(),
                     expected: parse_expected.clone(),
+                    stage: None,
                     status,
                 });
 
@@ -320,6 +330,7 @@ fn run_vector(
                             relation: "R3-golden",
                             target: target.clone(),
                             expected: "parse(file) ≡ golden AST (semantic_diff = 0)".into(),
+                            stage: None,
                             status: if ds.is_empty() {
                                 Status::Pass
                             } else {
@@ -346,6 +357,7 @@ fn run_vector(
                             relation: "R1-text",
                             target: target.clone(),
                             expected: "неприменимо (notice)".into(),
+                            stage: None,
                             status: Status::Skipped(
                                 "notice: true — R1-text исключён (CORPUS §4)".into(),
                             ),
@@ -379,6 +391,7 @@ fn run_vector(
                         relation: "R3-consistency",
                         target: format!("{prev_l}×{label}"),
                         expected: "parse(f_prev) ≡ parse(f_next) (different dialects)".into(),
+                        stage: None,
                         status: Status::Pending("no adapter for one of the dialects".into()),
                     });
                     continue;
@@ -391,6 +404,7 @@ fn run_vector(
                         relation: "R3-consistency",
                         target: format!("{prev_l}×{label}"),
                         expected: "parse(f_prev) ≡ parse(f_next)".into(),
+                        stage: None,
                         status: Status::Fail(format!(
                             "re-parse of {} failed: {}",
                             prev_l,
@@ -407,6 +421,7 @@ fn run_vector(
                         relation: "R3-consistency",
                         target: format!("{prev_l}×{label}"),
                         expected: "parse(f_prev) ≡ parse(f_next)".into(),
+                        stage: None,
                         status: Status::Fail(format!(
                             "re-parse of {} failed: {}",
                             label,
@@ -421,6 +436,7 @@ fn run_vector(
                 relation: "R3-consistency",
                 target: format!("{prev_l}×{label}"),
                 expected: "parse(f_prev) ≡ parse(f_next) (semantic_diff = 0)".into(),
+                stage: None,
                 status: if ds.is_empty() {
                     Status::Pass
                 } else {
@@ -449,6 +465,7 @@ fn run_vector(
                     relation: "R4",
                     target: dialect.clone(),
                     expected: r4_expected,
+                    stage: None,
                     status: Status::Pending(format!("no adapter for dialect `{dialect}`")),
                 });
                 continue;
@@ -477,6 +494,7 @@ fn run_vector(
                             relation: "R4",
                             target: format!("golden→{dialect}"),
                             expected: r4_expected,
+                            stage: None,
                             status,
                         });
                     }
@@ -492,6 +510,7 @@ fn run_vector(
                             relation: "R4",
                             target: format!("golden→{dialect}"),
                             expected: r4_expected,
+                            stage: None,
                             status,
                         });
                     }
@@ -508,6 +527,7 @@ fn run_vector(
                 relation: "R4",
                 target: dialect.clone(),
                 expected: r4_expected,
+                stage: None,
                 status: Status::Skipped(
                     "нет источника AST: негатив без Ok-парса (структурный)".into(),
                 ),
@@ -523,6 +543,7 @@ fn run_vector(
                     relation: "R4",
                     target,
                     expected: r4_expected.clone(),
+                    stage: None,
                     status: Status::Skipped(
                         "same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)".into(),
                     ),
@@ -536,6 +557,7 @@ fn run_vector(
                         relation: "R4",
                         target,
                         expected: r4_expected.clone(),
+                        stage: None,
                         status: Status::Pending(format!(
                             "no adapter for source dialect `{sd}`"
                         )),
@@ -564,7 +586,7 @@ fn run_vector(
                     )),
                 },
             };
-            checks.push(Check { relation: "R4", target, expected: r4_expected.clone(), status });
+            checks.push(Check { relation: "R4", target, expected: r4_expected.clone(), stage: None, status });
         }
     }
 
@@ -678,6 +700,7 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
                 relation: "R1-text",
                 target: target.to_string(),
                 expected: "same-dialect round-trip: RAW payload байт-в-байт (D9)".into(),
+                stage: None,
                 status: Status::Fail(format!(
                     "same-dialect round-trip failed: {}",
                     diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
@@ -697,8 +720,111 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
         relation: "R1-text",
         target: target.to_string(),
         expected: "same-dialect round-trip: RAW payload байт-в-байт (D9)".into(),
+        stage: None,
         status,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TierBOutcome {
+    pub path: String,
+    pub dialect: String,
+    /// "Ok" | "Err(<codes>)" | "panic" | "no-adapter".
+    pub outcome: String,
+}
+
+/// parse-or-diagnose прогон Tier B (CORPUS §3): crash=0 инвариант (паника
+/// ловится catch_unwind и фиксируется как находка, не падение), отказы
+/// по классам кодов, Ok-счётчик. Диалекты без адаптера — no-adapter
+/// (CORPUS: сторонние диалекты вне MVP — marlin-3dp и т.п.).
+#[derive(Debug, Clone, Default)]
+pub struct TierBReport {
+    pub total: usize,
+    pub parse_ok: usize,
+    pub refused_by_code: BTreeMap<String, usize>,
+    pub no_adapter: usize,
+    pub panics: usize,
+    pub entries: Vec<TierBOutcome>,
+}
+
+impl TierBReport {
+    pub fn is_crash_free(&self) -> bool {
+        self.panics == 0
+    }
+}
+
+/// Прогон Tier B: parse-or-diagnose через адаптер диалекта записи.
+pub fn run_tier_b(
+    manifest: &Manifest,
+    adapters: &Registry,
+    extra: &BTreeMap<String, Arc<dyn Adapter>>,
+) -> TierBReport {
+    let pick = |dialect: &str| -> Option<Arc<dyn Adapter>> {
+        adapters
+            .get(dialect)
+            .cloned()
+            .or_else(|| extra.get(dialect).cloned())
+    };
+    let mut rep = TierBReport::default();
+    for f in &manifest.tier_b_files {
+        rep.total += 1;
+        let path_str = f.path.display().to_string();
+        let Some(adapter) = pick(&f.dialect) else {
+            rep.no_adapter += 1;
+            rep.entries.push(TierBOutcome {
+                path: path_str,
+                dialect: f.dialect.clone(),
+                outcome: "no-adapter".into(),
+            });
+            continue;
+        };
+        let text = match std::fs::read_to_string(&f.path) {
+            Ok(t) => t,
+            Err(e) => {
+                rep.entries.push(TierBOutcome {
+                    path: path_str.clone(),
+                    dialect: f.dialect.clone(),
+                    outcome: format!("read-error: {e}"),
+                });
+                continue;
+            }
+        };
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            adapter.parse(&text, &path_str)
+        }));
+        match run {
+            Err(_) => {
+                rep.panics += 1;
+                rep.entries.push(TierBOutcome {
+                    path: path_str.clone(),
+                    dialect: f.dialect.clone(),
+                    outcome: "panic".into(),
+                });
+            }
+            Ok(Ok(_)) => {
+                rep.parse_ok += 1;
+                rep.entries.push(TierBOutcome {
+                    path: path_str,
+                    dialect: f.dialect.clone(),
+                    outcome: "Ok".into(),
+                });
+            }
+            Ok(Err(diags)) => {
+                for d in &diags {
+                    *rep.refused_by_code.entry(d.code.as_str().to_string()).or_insert(0) += 1;
+                }
+                rep.entries.push(TierBOutcome {
+                    path: path_str,
+                    dialect: f.dialect.clone(),
+                    outcome: format!(
+                        "Err({})",
+                        diags.iter().map(|d| d.code.as_str()).collect::<Vec<_>>().join(",")
+                    ),
+                });
+            }
+        }
+    }
+    rep
 }
 
 impl Vector {

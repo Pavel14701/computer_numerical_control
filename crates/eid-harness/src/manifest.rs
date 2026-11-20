@@ -70,6 +70,21 @@ pub struct Vector {
 pub struct Manifest {
     pub corpus_version: String,
     pub vectors: Vec<Vector>,
+    /// Tier B: реальные файлы (CORPUS §3/§7): parse-or-diagnose прогон.
+    pub tier_b_files: Vec<TierBFile>,
+}
+
+/// Запись [[tier_b_files]] (CORPUS §6/§7): путь, диалект, ожидание
+/// ("parse-or-diagnose"), лицензия, источник, sha256, тир публикации.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TierBFile {
+    pub path: PathBuf,
+    pub dialect: String,
+    pub expect: String,
+    pub license: Option<String>,
+    pub source: Option<String>,
+    pub sha256: Option<String>,
+    pub tier: Option<String>,
 }
 
 pub fn load(path: &Path) -> Result<Manifest, String> {
@@ -131,7 +146,39 @@ pub fn load(path: &Path) -> Result<Manifest, String> {
             notice: v.notice,
         });
     }
-    Ok(Manifest { corpus_version: raw.corpus_version, vectors })
+    // Инвариант: дубликаты id векторов — Err (id = ключ классификации/ссылок)
+    let mut seen = std::collections::BTreeSet::new();
+    for v in &vectors {
+        if !seen.insert(v.id.clone()) {
+            return Err(format!("duplicate vector id `{}`", v.id));
+        }
+    }
+
+    let mut tier_b = Vec::new();
+    for f in &raw.tier_b_files {
+        let p = root.join(&f.path);
+        if !p.is_file() {
+            return Err(format!(
+                "tier_b file `{}` does not exist under {}",
+                f.path,
+                root.display()
+            ));
+        }
+        tier_b.push(TierBFile {
+            path: p,
+            dialect: f.dialect.clone(),
+            expect: f.expect.clone().unwrap_or_else(|| "parse-or-diagnose".into()),
+            license: f.license.clone(),
+            source: f.source.clone(),
+            sha256: f.sha256.clone(),
+            tier: f.tier.clone(),
+        });
+    }
+    Ok(Manifest {
+        corpus_version: raw.corpus_version,
+        vectors,
+        tier_b_files: tier_b,
+    })
 }
 
 /// Относительный путь → путь относительно corpus/ + проверка существования.
@@ -192,6 +239,24 @@ struct ManifestToml {
     #[allow(dead_code)]
     bindings: Option<toml::Value>,
     vectors: Vec<VectorToml>,
+    #[serde(default)]
+    tier_b_files: Vec<TierBFileToml>,
+}
+
+#[derive(Deserialize)]
+struct TierBFileToml {
+    path: String,
+    dialect: String,
+    #[serde(default)]
+    expect: Option<String>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
+    tier: Option<String>,
 }
 
 #[derive(Deserialize)]

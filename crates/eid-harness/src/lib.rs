@@ -4,5 +4,7 @@
 
 pub mod diff;
 pub mod manifest;
+pub mod generator;
+pub mod mutate;
 pub mod runner;
 pub mod translate;
