@@ -266,7 +266,7 @@ vectors:
     r4_expect:
       grbl-1.1: E_RAW_UNTRANSLATABLE
       linuxcnc: E_RAW_UNTRANSLATABLE
-    note: "GRBL: $110=250.000 конфиг-строка вне программы -> RAW (COVERAGE §4); LinuxCNC: M123 user-defined -> RAW (COVERAGE §3, M100-M199). Same-dialect: RAW сохранён; кросс-диалект запрещён (SPEC §8)"
+    note: "GRBL: $110=250.000 конфиг-строка вне программы -> RAW (COVERAGE §4); LinuxCNC: M123 user-defined -> RAW (COVERAGE §3, M100-M199). Same-dialect: RAW сохранён; кросс-диалект запрещён (SPEC §8). r4-цели = КРОСС-пары (CORPUS v0.5.3): grbl-файл -> linuxcnc, linuxcnc-файл -> grbl"
     notice: false
 
   - id: "N4"
