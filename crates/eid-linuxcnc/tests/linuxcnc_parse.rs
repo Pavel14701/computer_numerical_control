@@ -287,7 +287,7 @@ fn n3_raw_vendor_block_ok_with_semantics() {
     assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
     // Payload lossless: "M123" → hex.
     match &p.ops[0] {
-        Op::Raw { payload_hex, .. } => assert_eq!(payload_hex, "4D313233"),
+        Op::Raw { payload_hex, .. } => assert_eq!(payload_hex, "4D3132330A", "D9 v0.15: payload с терминатором"),
         other => panic!("op 0 must be Raw, got {other:?}"),
     }
     assert_eq!(p.ops.len(), 4); // Raw + Rapid + Linear + PEND
@@ -313,7 +313,7 @@ fn n9_bare_t_ok_with_semantics() {
     );
     match &p.ops[0] {
         Op::Raw { payload_hex, code, .. } => {
-            assert_eq!(payload_hex, "5435"); // "T5"
+            assert_eq!(payload_hex, "54350A"); // "T5" + LF — D9 v0.15
             assert_eq!(*code, ErrorCode::UnsupportedSemantics);
         }
         other => panic!("op 0 must be Raw, got {other:?}"),
@@ -1069,4 +1069,48 @@ fn unit_cycle_g98_vs_g99_retract_target() {
         Op::Rapid { end, .. } => end,
         other => panic!("op 9: {other:?}"),
     })[2], 6.0, "G98: отвод на initial Z (6), не на R (4)");
+}
+
+#[test]
+fn unit_unknown_dollar_line_raw_syntax() {
+    // CORPUS #47-класс: неизвестная строка (`$` вне словаря LinuxCNC) —
+    // line-local RAW{E_UNSUPPORTED_SYNTAX}, разбор продолжается; payload —
+    // байты строки С терминатором (D9 v0.15).
+    let src = "G21 G90 G94\n$$\nG0 X1.0000 Y1.0000 Z1.0000\nM2\n";
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "dollar.ngc").expect("Ok (line-level)");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+            if payload_hex.as_str() == "24240A"
+    ), "payload = `$$\n` = 24240A");
+    assert!(matches!(&p.ops[1], Op::Rapid { .. }), "разбор продолжается после raw");
+    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
+}
+
+#[test]
+fn unit_raw_crlf_payload_terminator() {
+    // D9 v0.15: CRLF-файл → payload включает \r\n; emit воспроизводит
+    // терминатор дословно (не нормализует); reparse — payload равен.
+    let src = "G21 G90 G94\r\n$$\r\nG0 X1.0000 Y1.0000 Z1.0000\r\nM2\r\n";
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "crlf.ngc").expect("parses");
+    match &p.ops[0] {
+        Op::Raw { payload_hex, .. } => {
+            assert_eq!(payload_hex, "24240D0A", "`$$\r\n` — зеркально golden #47");
+        }
+        other => panic!("op 0 must be Raw: {other:?}"),
+    }
+    let text = a.emit(&p).expect("emit");
+    assert!(text.contains("$$\r\n"), "CRLF-терминатор сохранён дословно:\n{text:?}");
+    let p2 = LinuxCncAdapter::new().parse(&text, "rt.ngc").expect("reparse");
+    match (&p.ops[0], &p2.ops[0]) {
+        (Op::Raw { payload_hex: h1, .. }, Op::Raw { payload_hex: h2, .. }) => {
+            assert_eq!(h1, h2, "R1-text-класс: payload байт-в-байт");
+        }
+        _ => panic!("оба должны начинаться с Raw"),
+    }
+    let d = eid_harness::diff::semantic_diff(&p, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "{d:?}");
 }
