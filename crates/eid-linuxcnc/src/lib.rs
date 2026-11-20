@@ -6,7 +6,8 @@
 //! G76 — токарная резьба, отказ (§1.2).
 //!
 //! Итерация 2 (Агент D): parse реализован (lexer.rs → parser.rs →
-//! canonicalize.rs). emit — итерация 3 (todo!()).
+//! canonicalize.rs). Итерация 3: emit v0 (emit.rs; COVERAGE §5, EQUIVALENCE
+//! §1.4; warnings → take_diagnostics).
 //!
 //! Правило двух классов (CORPUS §1.2 v0.5): line-level RAW-конструкции дают
 //! `Ok(Program)`; их диагностики буферизуются и доступны через
@@ -16,6 +17,7 @@
 #![allow(dead_code)]
 
 pub mod canonicalize;
+pub mod emit;
 pub mod lexer;
 pub mod parser;
 
@@ -66,7 +68,9 @@ impl Adapter for LinuxCncAdapter {
         Ok(out.program)
     }
 
-    fn emit(&self, _program: &Program) -> Result<String, Vec<Diagnostic>> {
-        todo!("Агент D, итерация 3: emitter v0")
+    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+        let out = emit::emit_program(program)?;
+        *self.diagnostics.borrow_mut() = out.warnings;
+        Ok(out.text)
     }
 }

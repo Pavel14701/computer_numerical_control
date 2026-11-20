@@ -8,16 +8,16 @@
 //!  * Err-класс (структурные): N1, N2, N5a, N5b, N7, N12, N13, N14, N15,
 //!    N16, N17, N19 — точные коды;
 //!  * Ok-класс (line-level RAW + диагностика): N3, N8, N9, N10, N18.
+//!
 //! Отложено (СТОП-вопрос отчёта — нужен парсер/развёртывание циклов,
-//! итерация 3): N4 (G83 L-лимит), N6 (голые координаты после G80 — файл
-//! содержит G81). N11 (M98) реализован как жёсткий Err E_UNSUPPORTED_SYNTAX
-//! по брифу итерации 2 / SPEC §1.1 — расхождение с перечнем Ok-класса в
-//! CORPUS §1.2 заведено в отчёт.
+//! итерация 3): N4 (G83 L-лимит) и N6 (голые координаты после G80 — файл
+//! содержит G81). N11 (M98) — жёсткий Err E_UNSUPPORTED_SYNTAX; решение
+//! оркестратора CORPUS §1.2 v0.5.2 подтвердило Err.
 
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::{Op, PathMode, StartPoint};
 use eid_core::diag::ErrorCode;
-use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
+use eid_harness::diff::{semantic_diff, DiffConfig};
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::PathBuf;
 
@@ -112,15 +112,15 @@ fn pilot_03_feed_survives_rapid() {
 }
 
 #[test]
-fn pilot_11_arc_R_semicircle() {
-    // Ill-conditioned case (CORPUS §1.1 #11, EQUIVALENCE §4): golden authored
-    // из design-геометрии (center (0,0), sweep 179.9°); однозначное правило
-    // SPEC §6 (центр из start/end/R/dir/normal) на 4dp-округлённых концах
-    // файла даёт center ≈ (−0.0351, 0.0001), sweep ≈ 179.4975°.
-    // Допуск центра (q·A, cap 1000 → 0.1) поглощает центр; допуск sweep
-    // (max(1e-4, 1e-6·sweep) = 1.8e-4°) — НЕТ. Расхождение ровно одно —
-    // sweep; корпус нуждается в ревизии golden (см. отчёт итерации 2,
-    // СТОП-вопрос №2). Применение однозначного правила — не баг (CORPUS §8).
+fn pilot_11_arc_r_semicircle() {
+    // Ill-conditioned case (CORPUS §1.1 #11, EQUIVALENCE §4 v0.3): правило
+    // SPEC §6 (центр из start/end/R/dir/normal, середина±перпендикуляр) на
+    // 4dp-концах файла даёт center ≈ (−0.0351, 0.0001), sweep ≈ 179.4975°.
+    // Итерация 2 подняла СТОП: рукописный golden (design-значения
+    // (0,0)/179.9°) был не выводим правилом; оркестратор перегенерировал
+    // golden в производные значения (CORPUS v0.5.2) и зафиксировал
+    // single-final-rounding (SPEC v0.11 §10.5) + sweep-амплификацию допуска
+    // (EQUIVALENCE v0.3). Проверяем, что канонизатор воспроизводит golden.
     let mine = parse_linuxcnc("11_arc_R_semicircle/arc_R_semicircle.linuxcnc.ngc").expect("parses");
     let golden = parse_golden("11_arc_R_semicircle/golden.eid");
 
@@ -150,12 +150,12 @@ fn pilot_11_arc_R_semicircle() {
     };
     let _ = arc;
 
-    let d = semantic_diff(&mine, &golden, &DiffConfig::default());
-    assert_eq!(
-        d,
-        vec![Divergence::Geometry { index: 2, field: "sweep" }],
-        "#11: expected exactly the known golden-vs-rule sweep divergence, got {d:?}"
-    );
+    // CORPUS v0.5.2 + SPEC v0.11 §10.5: golden #11 перегенерирован в
+    // производные значения правила §6 (single-final-rounding) — они
+    // совпадают с выводом канонизатора побитово
+    // (center=-0.0351,0.0001; sweep=179.4975); расхождение итерации 2
+    // устранено ревизией golden.
+    assert_diff_empty(&mine, &golden, "#11 (golden = derived values, CORPUS v0.5.2)");
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn pilot_27_tool_change() {
 }
 
 #[test]
-fn pilot_36_preset_G54_then_switch() {
+fn pilot_36_preset_g54_then_switch() {
     // Ключевой инвариант EQUIVALENCE §1.3: Δ константен по трём сегментам;
     // точки разрыва (b) Q11: смена WCS без in-text origin → start=unknown.
     let mine = parse_linuxcnc("36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc").expect("parses");
@@ -195,7 +195,7 @@ fn pilot_36_preset_G54_then_switch() {
 }
 
 #[test]
-fn pilot_46_arc_R_helix() {
+fn pilot_46_arc_r_helix() {
     // R-форма + pitch≠0 валидна (SPEC §6 v0.7); pitch = 2.0.
     let mine = parse_linuxcnc("46_arc_R_helix/arc_R_helix.linuxcnc.ngc").expect("parses");
     let golden = parse_golden("46_arc_R_helix/golden.eid");
