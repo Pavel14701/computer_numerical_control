@@ -4,3 +4,6 @@
 * text=auto eol=lf
 *.png binary
 *.jpg binary
+# ИСКЛЮЧЕНИЕ: вектор #47 raw_crlf_fidelity — файл намеренно CRLF, его
+# байты есть тестовые данные (R1-text payload byte-exact). Нормализация запрещена.
+corpus/tier_a/v0/47_raw_crlf_fidelity/** -text
