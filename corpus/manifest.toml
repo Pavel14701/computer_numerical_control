@@ -922,3 +922,21 @@ path = "tier_a/v0/n19_arc_R_full_circle/arc_R_full_circle.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "E_INVALID_INPUT"
 
+
+[[vectors]]
+id = "48"
+name = "arc_centers_mode_distinct"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/48_arc_centers_mode_distinct/golden.eid"
+golden_tag = "golden_centers_mode_distinct"
+note = "Единственный вектор, различающий G90.1/G91.1-режимы центров: start != 0, LinuxCNC-файл в G90.1 (абсолютный центр I15 = (15,0,0)), GRBL-файл инкрементальный I5 -> тот же центр. Под инкрементальным прочтением G90.1-файла центр (25,0) = невозможная дуга (ловушка #39) — тест различения по построению (CORPUS v0.6.2)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.grbl.ngc"
+dialect = "grbl-1.1"
+expect = "ok"
+[[vectors.files]]
+path = "tier_a/v0/48_arc_centers_mode_distinct/arc_centers_mode_distinct.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
