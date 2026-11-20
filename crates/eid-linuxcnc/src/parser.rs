@@ -58,6 +58,27 @@ pub struct ParseOut {
 // Модальные состояния парсера
 // ===========================================================================
 
+/// Циклы LinuxCNC, разворачиваемые в явные ходы (SPEC §7; COVERAGE §2.5).
+/// Refuse-класс (G74/G84/G87/G88 → Raw SEMANTICS) и G76 (токарная резьба)
+/// обрабатываются в raw-скане.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CycleKind {
+    /// G81 — сверление: rapid XY → rapid R → feed Z → retract.
+    Drill,
+    /// G82 — сверление + dwell P на дне.
+    DrillDwell,
+    /// G83 — пекерование с полным отводом на R после каждого пика.
+    Peck,
+    /// G73 — chip-break: отвод на Q над последней глубиной.
+    ChipBreak,
+    /// G85 — расточка: feed-out (отвод на подаче).
+    BoreFeedOut,
+    /// G86 — расточка: dwell P?, шпиндель off, rapid out, рестарт шпинделя.
+    BoreStop,
+    /// G89 — расточка + dwell P: feed-out.
+    BoreDwell,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MotionKind {
     G0,
@@ -429,21 +450,9 @@ fn parse_block(
             "M98/M99 (подпрограммы) — вне грамматики L1 (SPEC §1.1, Q10; N11)",
         ));
     }
-    for &(maj, min) in &gs {
-        let g = if min == 0 { format!("G{maj}") } else { format!("G{maj}.{min}") };
-        if matches!(
-            (maj, min),
-            (73, 0) | (81, 0) | (82, 0) | (83, 0) | (85, 0) | (86, 0) | (89, 0)
-        ) {
-            // РАЗВЁРТЫВАНИЕ ЦИКЛОВ — итерация 3 (SPEC §7). СТОП-вопрос отчёта:
-            // без цикл-парсера N4 (G83 L-лимит) и N6 (naked coords после G80,
-            // файл содержит G81) непроверяемы в итерации 2.
-            return Err(fl!(
-                ErrorCode::UnsupportedSemantics,
-                format!("{g}: canned cycle — развёртывание в явные ходы (SPEC §7) отложено на итерацию 3"),
-            ));
-        }
-    }
+    // Развёртываемые циклы (SPEC §7) — диспетчеризация в цикловом блоке ниже
+    // (после сбора слов и модальных обновлений); refuse-циклы (G74/G84/G87/
+    // G88) и G76 остаются line-level raw (COVERAGE §2.5).
 
     // --- 2. Line-level raw (весь кадр → один RAW-узел, payload = строка) ----
     // Локальные конструкции: не искажают интерпретацию последующих опов
@@ -667,9 +676,35 @@ fn parse_block(
         }
     }
 
+    // --- 3.5 Циклы LinuxCNC (SPEC §7): разворачивание в явные ходы ----------
+    let mut pending: Vec<Op> = Vec::new();
+    let cycle_kind = gs.iter().find_map(|&(maj, min)| match (maj, min) {
+        (81, 0) => Some(CycleKind::Drill),
+        (82, 0) => Some(CycleKind::DrillDwell),
+        (83, 0) => Some(CycleKind::Peck),
+        (73, 0) => Some(CycleKind::ChipBreak),
+        (85, 0) => Some(CycleKind::BoreFeedOut),
+        (86, 0) => Some(CycleKind::BoreStop),
+        (89, 0) => Some(CycleKind::BoreDwell),
+        _ => None,
+    });
+    if let Some(kind) = cycle_kind {
+        expand_cycle(
+            st,
+            kind,
+            &axes,
+            r_word,
+            p_word.clone(),
+            l_word,
+            q_word,
+            line_no,
+            line,
+            &mut pending,
+        )?;
+    }
+
     // --- 4. Опы кадра (порядок LinuxCNC: T/M6 → dwell → stops → frame →
     //        motion → end) ------------------------------------------------------
-    let mut pending: Vec<Op> = Vec::new();
 
     // T..M6 → ToolChange (SPEC §5.2).
     if has_m6 {
@@ -808,10 +843,17 @@ fn parse_block(
     }
 
     let has_axis_words = axes.iter().any(|a| a.is_some());
-    // Оси, поглощённые G92/G10 — не «голые координаты».
+    // Оси, поглощённые G92/G10/циклом — не «голые координаты».
     let frame_took_axes = gs
         .iter()
-        .any(|&(maj, min)| (maj, min) == (92, 0) || (maj, min) == (10, 0));
+        .any(|&(maj, min)| {
+            (maj, min) == (92, 0)
+                || (maj, min) == (10, 0)
+                || matches!(
+                    (maj, min),
+                    (73, 0) | (81, 0) | (82, 0) | (83, 0) | (85, 0) | (86, 0) | (89, 0)
+                )
+        });
     // Полный круг center-формой (SPEC §6 v0.12, CORPUS #08): явный G2/G3 с
     // I/J/K или R БЕЗ слов осей — end наследует старт → sweep = 360°.
     let explicit_arc_with_data = matches!(explicit_motion, Some(MotionKind::G2) | Some(MotionKind::G3))
@@ -851,25 +893,27 @@ fn parse_block(
 
     // --- 5. Неиспользованные слова → сломанный вход -------------------------
     let has_g = |maj: i64, min: u32| gs.iter().any(|&(m, mi)| (m, mi) == (maj, min));
-    if p_word.is_some()
-        && !(has_g(4, 0) || has_g(10, 0) || has_g(64, 0))
-    {
-        return Err(fl!(ErrorCode::InvalidInput, "P-слово без потребителя в кадре (G4/G10/G64)"));
-    }
-    if l_word.is_some() && !has_g(10, 0) {
-        return Err(fl!(ErrorCode::InvalidInput, "L-слово без G10 в кадре"));
-    }
-    if q_word.is_some() && !has_g(64, 0) {
-        return Err(fl!(ErrorCode::InvalidInput, "Q-слово без G64 в кадре"));
-    }
     let is_arc = matches!(st.motion, Some(MotionKind::G2) | Some(MotionKind::G3))
         && (has_axis_words || explicit_arc_with_data)
         && !frame_took_axes;
-    if r_word.is_some() && !is_arc {
-        return Err(fl!(ErrorCode::InvalidInput, "R-слово без дуги G2/G3"));
+    // Циклы потребляют R/Z/L/P(dwell)/Q(пеки).
+    let cycle_takes_p = matches!(cycle_kind, Some(CycleKind::DrillDwell | CycleKind::BoreStop | CycleKind::BoreDwell));
+    let cycle_takes_q = matches!(cycle_kind, Some(CycleKind::Peck | CycleKind::ChipBreak));
+    let is_cycle = cycle_kind.is_some();
+    if r_word.is_some() && !is_arc && !is_cycle {
+        return Err(fl!(ErrorCode::InvalidInput, "R-слово без дуги G2/G3 или цикла"));
     }
     if ijk.iter().any(|o| o.is_some()) && !is_arc {
         return Err(fl!(ErrorCode::InvalidInput, "I/J/K без дуги G2/G3"));
+    }
+    if p_word.is_some() && !(has_g(4, 0) || has_g(10, 0) || has_g(64, 0) || cycle_takes_p) {
+        return Err(fl!(ErrorCode::InvalidInput, "P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)"));
+    }
+    if q_word.is_some() && !cycle_takes_q {
+        return Err(fl!(ErrorCode::InvalidInput, "Q-слово без пекерующего цикла (G73/G83)"));
+    }
+    if l_word.is_some() && !(has_g(10, 0) || is_cycle) {
+        return Err(fl!(ErrorCode::InvalidInput, "L-слово без G10 или цикла"));
     }
 
     st.ops.append(&mut pending);
@@ -1300,6 +1344,289 @@ fn build_motion(
 fn eps_pos(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     let l = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
     (0.001_f64).max(1e-7 * l)
+}
+
+// ===========================================================================
+// Циклы LinuxCNC — разворачивание в явные ходы (SPEC §7, правила 1–6)
+// ===========================================================================
+
+/// Производный ход развёртки (SPEC §11): src исходного блока + sub=<i>.
+fn m_rapid(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
+    Op::Rapid {
+        start: StartPoint::Known(p3_snap(from)),
+        end: p3_snap(to),
+        state: st.snapshot(Frame::Wcs),
+        src,
+        sub: Some(sub),
+    }
+}
+
+fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
+    let mut state = st.snapshot(Frame::Wcs);
+    if st.feed_inverse {
+        // G93: feed = len(траектории) × F (SPEC §4).
+        if let Some(f) = &st.feed {
+            let len = ((to[0] - from[0]).powi(2)
+                + (to[1] - from[1]).powi(2)
+                + (to[2] - from[2]).powi(2))
+            .sqrt();
+            state.feed = Some(num_snap(len * f.value));
+        }
+    }
+    Op::Linear {
+        start: StartPoint::Known(p3_snap(from)),
+        end: p3_snap(to),
+        state,
+        src,
+        sub: Some(sub),
+    }
+}
+
+fn m_dwell(st: &St, seconds: &Num, src: SrcSpan, sub: u32) -> Op {
+    Op::Dwell {
+        seconds: seconds.clone(),
+        state: st.snapshot(Frame::Wcs),
+        src,
+        sub: Some(sub),
+    }
+}
+
+/// Промежуточная высота подхода после полного отвода пека (LinuxCNC
+/// gcode.html G83/G73: «rapid to a point 0.5 mm (0.05 inch) above the last
+/// depth») — в единицах программы. Интерпретация отчёта итерации 3-4:
+/// правило ОБЯЗАНО быть единым с eid-grbl (R3); константу сверить с
+/// source LinuxCNC в COVERAGE-проходе.
+fn approach_clearance(units: Units) -> f64 {
+    if units == Units::In { 0.05 } else { 0.5 }
+}
+
+/// Разворачивание цикла (SPEC §7.1–7.6).
+///
+/// Последовательность на отверстие: rapid XY (на текущем z) → rapid на
+/// R-плоскость → [тело цикла: feed на дно, dwell/пеки/шпиндель] → отвод
+/// (§7.1: G99 → R; G98 → initial Z из предшествующих опов). Повторы L —
+/// полная последовательность с абсолютными координатами (§7.2–7.3: G91 —
+/// шаг X/Y/R/Z на повтор, LinuxCNC); порядок пиков точный (§7.4).
+#[allow(clippy::too_many_arguments)]
+fn expand_cycle(
+    st: &mut St,
+    kind: CycleKind,
+    axes: &[Option<(f64, String)>; 3],
+    r_word: Option<f64>,
+    p_word: Option<Num>,
+    l_word: Option<u32>,
+    q_word: Option<f64>,
+    line_no: usize,
+    line: &str,
+    pending: &mut Vec<Op>,
+) -> Result<(), Vec<Diagnostic>> {
+    macro_rules! fl {
+        ($code:expr, $msg:expr $(,)?) => {
+            fatal(&st.file, $code, $msg, line_no, line)
+        };
+    }
+
+    // §7.6: позиция до цикла должна быть определена предшествующими
+    // motion-опами (пресетки-якоря не считаются — strict reading).
+    if st.last_motion.is_none() {
+        return Err(fl!(
+            ErrorCode::RuntimeState,
+            "цикл как первый motion-оп — позиция не определена предшествующими ходами (SPEC §7.6)"
+        ));
+    }
+    let base = match link_start(st, false, line_no, line)? {
+        Linked::Known(b) => b,
+        Linked::UnknownRequired => {
+            return Err(fl!(
+                ErrorCode::RuntimeState,
+                "цикл после позиционно-неопределённого участка — E_RUNTIME_STATE (SPEC §7.6)"
+            ));
+        }
+    };
+
+    // Лимит развёртки (COVERAGE §1.2) — раньше прочих проверок параметров:
+    // guard транслятора имеет приоритет над диагностикой сломанных слов
+    // (N4: L99999 → E_LIMIT_EXCEEDED).
+    let l = l_word.unwrap_or(1);
+    if l as f64 > crate::lexer::MAX_UNROLL_ITERATIONS as f64 {
+        return Err(vec![crate::lexer::limit_diag(
+            "max_unroll_iterations",
+            crate::lexer::MAX_UNROLL_ITERATIONS as f64,
+            l as f64,
+            &st.file,
+            line_no,
+            1,
+        )]);
+    }
+
+    // R и Z обязательны (LinuxCNC: «It is an error if: R/Z is not specified»).
+    let r_word = r_word.ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без R-слова (плоскость отвода)"))?;
+    let z_word = axes[2]
+        .as_ref()
+        .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без Z-слова (дно отверстия)"))?
+        .0;
+    // Модальный feed обязателен (feed-ходы цикла — SPEC §4).
+    let feed = st
+        .feed
+        .clone()
+        .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без F — feed-ходы требуют модального feed (SPEC §4)"))?;
+    let _ = &feed;
+
+    // Dwell: G82/G89 — P обязателен (LinuxCNC), G86 — опционален.
+    let dwell = match kind {
+        CycleKind::DrillDwell | CycleKind::BoreDwell => Some(
+            p_word
+                .clone()
+                .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл G82/G89 без P-слова (dwell, секунды)"))?,
+        ),
+        CycleKind::BoreStop => p_word.clone(),
+        _ => None,
+    };
+    // Q: G83/G73 — обязателен, строго > 0 (иначе бесконечные пеки).
+    let q = match kind {
+        CycleKind::Peck | CycleKind::ChipBreak => {
+            let q = q_word
+                .ok_or_else(|| fl!(ErrorCode::InvalidInput, "пекерующий цикл G73/G83 без Q-слова (глубина пека)"))?;
+            if q <= 0.0 {
+                return Err(fl!(ErrorCode::InvalidInput, "Q должен быть > 0 (глубина пека)"));
+            }
+            Some(q)
+        }
+        _ => None,
+    };
+    let _ = q;
+
+    // Повторы L (default 1; лимит проверен выше, до диагностики слов).
+    let l = l_word.unwrap_or(1);
+
+    let src = st.src(line_no, line);
+    let (mut cx, mut cy, mut cz) = (base[0], base[1], base[2]);
+    let initial_z = base[2];
+    let mut r_cur = if st.distance_abs { r_word } else { initial_z };
+    let mut sub = 1u32;
+    let spindle_before = st.spindle.clone(); // рестарт G86 (Q9)
+    let units = st.units.unwrap_or(Units::Mm);
+    let mut est_total = 0usize; // guard blowup развёртки (COVERAGE §1.2)
+
+    for _ in 0..l {
+        let (fx, fy) = (cx, cy); // позиция ДО шага — оттуда traverse
+        // Позиции итерации (§7.3): G90 — константны; G91 — шаг X/Y/R на
+        // повтор (LinuxCNC), Z = инкремент от R-плоскости.
+        if st.distance_abs {
+            cx = axes[0].as_ref().map(|v| v.0).unwrap_or(cx);
+            cy = axes[1].as_ref().map(|v| v.0).unwrap_or(cy);
+            // r_cur const = r_word
+        } else {
+            r_cur += r_word;
+            cx += axes[0].as_ref().map(|v| v.0).unwrap_or(0.0);
+            cy += axes[1].as_ref().map(|v| v.0).unwrap_or(0.0);
+        }
+        let z_bottom = if st.distance_abs { z_word } else { r_cur + z_word };
+
+        // 1. XY traverse на текущем z.
+        pending.push(m_rapid(st, [fx, fy, cz], [cx, cy, cz], src.clone(), sub));
+        sub += 1;
+        // 2. rapid на R-плоскость.
+        pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+        sub += 1;
+        cz = r_cur;
+
+        // 3. Тело цикла.
+        match kind {
+            CycleKind::Drill | CycleKind::DrillDwell | CycleKind::BoreFeedOut
+            | CycleKind::BoreDwell | CycleKind::BoreStop => {
+                pending.push(m_linear(st, [cx, cy, cz], [cx, cy, z_bottom], src.clone(), sub));
+                sub += 1;
+                cz = z_bottom;
+                if let Some(p) = &dwell {
+                    pending.push(m_dwell(st, p, src.clone(), sub));
+                    sub += 1;
+                }
+            }
+            CycleKind::Peck | CycleKind::ChipBreak => {
+                // §7.4: порядок пиков точный. Глубины пеков — от R-плоскости
+                // вниз шагами Q (LinuxCNC «move down by Q»): d_k =
+                // max(z_bottom, r_cur − k·q); G83 — полный отвод на R после
+                // каждого пека; G73 — отвод на Q над последней глубиной;
+                // подход — rapid на clr над последней глубиной (≤ R).
+                let q = q.expect("пекерующий цикл без Q (проверено выше)");
+                let t = r_cur - z_bottom;
+                let mut n = if t > 0.0 { (t / q).ceil() as u64 } else { 0 };
+                if n == 0 {
+                    n = 1;
+                }
+                let est = 2 + 3 * n as usize + 1;
+                est_total += est;
+                if est_total > crate::lexer::MAX_UNROLL_ITERATIONS {
+                    return Err(vec![crate::lexer::limit_diag(
+                        "max_unroll_iterations",
+                        crate::lexer::MAX_UNROLL_ITERATIONS as f64,
+                        est_total as f64,
+                        &st.file,
+                        line_no,
+                        1,
+                    )]);
+                }
+                let clr = approach_clearance(units);
+                for k in 1..=n {
+                    let d = (r_cur - k as f64 * q).max(z_bottom);
+                    pending.push(m_linear(st, [cx, cy, cz], [cx, cy, d], src.clone(), sub));
+                    sub += 1;
+                    cz = d;
+                    if k == n {
+                        break; // финальный отвод — общий ниже (§7.1)
+                    }
+                    match kind {
+                        CycleKind::Peck => {
+                            // полный отвод на R (SPEC §7 таблица)
+                            pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+                            sub += 1;
+                            cz = r_cur;
+                        }
+                        _ => {
+                            // G73: отвод на Q над последней глубиной (≤ R)
+                            let up = (d + q).min(r_cur);
+                            pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, up], src.clone(), sub));
+                            sub += 1;
+                            cz = up;
+                        }
+                    }
+                    // подход: rapid на clr над последней глубиной (≤ R)
+                    let appr = (d + clr).min(r_cur);
+                    pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, appr], src.clone(), sub));
+                    sub += 1;
+                    cz = appr;
+                }
+            }
+        }
+
+        // 4/5. Отвод (§7.1): G99 → R, G98 → initial Z. Тип отвода: G85/G89 —
+        // feed-out (bore); G86 — rapid при выключенном шпинделе (Q9: рестарт
+        // в прежнем направлении после отвода); остальные — rapid.
+        let retract = if st.retract_g98 { initial_z } else { r_cur };
+        match kind {
+            CycleKind::BoreFeedOut | CycleKind::BoreDwell => {
+                pending.push(m_linear(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                sub += 1;
+            }
+            CycleKind::BoreStop => {
+                st.spindle = Spindle::Off;
+                pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                sub += 1;
+                st.spindle = spindle_before.clone(); // рестарт — в state последующих опов
+            }
+            _ => {
+                pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                sub += 1;
+            }
+        }
+        cz = retract;
+    }
+
+    // last_motion: конечная позиция развёртки (связывание следующего опа).
+    st.last_motion = Some(LastMotion { end: [cx, cy, cz], frame: Frame::Wcs, wcs: st.wcs });
+    st.saw_motion = true;
+    Ok(())
 }
 
 // ===========================================================================

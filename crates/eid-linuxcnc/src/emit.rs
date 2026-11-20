@@ -294,6 +294,7 @@ impl<'a> Writer<'a> {
                         arc_words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
                     }
                 }
+                let arc_words = arc_words.trim_end().to_string();
                 self.line(format!(
                     "{g} X{} Y{} Z{} {arc_words}{f}",
                     num_text(&end.x),
@@ -375,7 +376,7 @@ impl<'a> Writer<'a> {
                 };
                 if changed {
                     self.cur_feed = Some(f.clone());
-                    Ok(format!("F{}", num_text(f)))
+                    Ok(format!(" F{}", num_text(f)))
                 } else {
                     Ok(String::new())
                 }

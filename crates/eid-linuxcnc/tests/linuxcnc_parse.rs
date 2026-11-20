@@ -20,6 +20,7 @@ use eid_core::diag::ErrorCode;
 use eid_core::parser::NoticeKind;
 use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
 use eid_linuxcnc::LinuxCncAdapter;
+use eid_linuxcnc::canonicalize::to_f64;
 use std::path::PathBuf;
 
 fn corpus(rel: &str) -> PathBuf {
@@ -333,19 +334,17 @@ fn n18_css_g96_ok_with_semantics() {
 }
 
 #[test]
-#[ignore = "СТОП-вопрос итерации 2: N4 требует цикл-парсера/лимита развёртывания (итерация 3, SPEC §7)"]
 fn n4_peck_l_over_limit() {
-    // G83 L99999 > max_unroll_iterations=10000 → E_LIMIT_EXCEEDED.
-    // Развёртывание циклов — итерация 3; лимит max_unroll_iterations
-    // применяется к сумме L/K при развёртывании.
-    let res = parse_linuxcnc("n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc");
+    // Расконсервирован (итерация 3-4): L99999 > max_unroll_iterations=10000
+    // → E_LIMIT_EXCEEDED; guard проверяется до диагностики слов (в файле
+    // нет F — feed-проверка не должна опередить лимит).
     assert_err_code("n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc", ErrorCode::LimitExceeded, "N4");
-    let _ = res;
 }
 
 #[test]
-#[ignore = "СТОП-вопрос итерации 2: файл N6 содержит G81 — ожидаемый код E_INVALID_INPUT достижим только с цикл-парсером (итерация 3)"]
 fn n6_naked_coords_after_g80() {
+    // Расконсервирован (итерация 3-4): G81 в файле теперь разворачивается;
+    // голые координаты после G80 → E_INVALID_INPUT (COVERAGE §2.1).
     assert_err_code("n6_naked_coords_after_G80/naked_coords_after_G80.linuxcnc.ngc", ErrorCode::InvalidInput, "N6");
 }
 
@@ -712,4 +711,362 @@ fn vector_33_wcs_define_multi_linking_and_feed() {
         d.iter().all(|x| matches!(x, Divergence::StateField { index: 4, field: "feed" })),
         "#33: расхождения вне feed на op 4 — разбор неверен: {d:?}"
     );
+}
+
+// ===========================================================================
+// Циклы LinuxCNC — разворачивание (SPEC §7; итерация 3-4, этап A)
+// ===========================================================================
+
+#[test]
+fn unit_cycle_g81_minimal_unroll() {
+    // G99 G81: traverse XY → rapid R → feed дно → rapid retract на R.
+    // Производные опы: src блока + sub=1..5 (SPEC §11); feed модальный.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S10000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X10.0000 Y10.0000 Z-5.0000 R2.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    assert_eq!(p.ops.len(), 6, "Rapid + 4 производных + PEND");
+    let snap = |i: usize| -> ([f64; 3], [f64; 3], Option<u32>) {
+        match &p.ops[i] {
+            Op::Rapid { start: StartPoint::Known(s), end, sub, .. } => {
+                (to_f64(s), to_f64(end), *sub)
+            }
+            Op::Linear { start: StartPoint::Known(s), end, sub, .. } => {
+                (to_f64(s), to_f64(end), *sub)
+            }
+            other => panic!("op {i} не ход: {other:?}"),
+        }
+    };
+    // 1. traverse XY на текущем z=5.
+    let (s, e, sub) = snap(1);
+    assert_eq!((s, e, sub), ([0.0, 0.0, 5.0], [10.0, 10.0, 5.0], Some(1)));
+    // 2. rapid на R=2.
+    let (s, e, sub) = snap(2);
+    assert_eq!((s, e, sub), ([10.0, 10.0, 5.0], [10.0, 10.0, 2.0], Some(2)));
+    // 3. feed на дно Z=-5 (linear, feed 100).
+    match &p.ops[3] {
+        Op::Linear { start: StartPoint::Known(s), end, state, sub, .. } => {
+            assert_eq!((to_f64(s), to_f64(end)), ([10.0, 10.0, 2.0], [10.0, 10.0, -5.0]));
+            assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
+            assert_eq!(*sub, Some(3));
+        }
+        other => panic!("op 3 must be Linear: {other:?}"),
+    }
+    // 4. retract (G99) на R=2.
+    let (s, e, sub) = snap(4);
+    assert_eq!((s, e, sub), ([10.0, 10.0, -5.0], [10.0, 10.0, 2.0], Some(4)));
+    assert!(matches!(&p.ops[5], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn unit_cycle_g82_dwell_on_bottom() {
+    // G82 = G81 + dwell P (секунды) на дне, до отвода.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G82 X1.0000 Y1.0000 Z-3.0000 R1.0000 P0.5000 F80.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    assert_eq!(p.ops.len(), 7); // Rapid + 5 производных + PEND
+    match &p.ops[4] {
+        Op::Dwell { seconds, sub, .. } => {
+            assert_eq!(seconds.value, 0.5);
+            assert_eq!(*sub, Some(4));
+        }
+        other => panic!("op 4 must be Dwell: {other:?}"),
+    }
+    // Retract после dwell — sub=5.
+    match &p.ops[5] {
+        Op::Rapid { sub, .. } => assert_eq!(*sub, Some(5)),
+        other => panic!("op 5 must be Rapid: {other:?}"),
+    }
+}
+
+#[test]
+fn unit_cycle_l_repeat_g90_dedup_zero_moves() {
+    // L=2 в G90: оба отверстия в одной точке; повторные traverse/R ходы
+    // нулевые → отбрасываются с notice (SPEC §3), feed-ходы живы.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X5.0000 Y5.0000 Z5.0000\n",
+        "G99 G81 X10.0000 Y10.0000 Z-3.0000 R2.0000 F100.0 L2\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "l2.ngc").expect("parses");
+    // iter1: traverse, rapid R, feed, retract (4); iter2: traverse/R нулевые
+    // (drop), feed + retract живы (2) → initial + 6 + PEND = 8.
+    assert_eq!(p.ops.len(), 8);
+    assert!(matches!(&p.ops[5], Op::Linear { sub: Some(7), .. }));
+    assert!(matches!(&p.ops[6], Op::Rapid { sub: Some(8), .. }));
+    let notices = a.take_notices();
+    assert_eq!(notices.iter().filter(|n| n.kind == NoticeKind::ZeroLengthMotion).count(), 2);
+}
+
+#[test]
+fn unit_cycle_l_repeat_g91_steps() {
+    // G91: шаг X/R на повтор (LinuxCNC); Z — инкремент от R-плоскости.
+    let src = concat!(
+        "G21 G91 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X1.0000 Z-2.0000 R1.0000 F100.0 L2\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // iter1: xy (1,0); R = 5+1 = 6; дно = 6−2 = 4. iter2: xy (2,0); R = 7;
+    // дно = 5. Все ходы ненулевые: 8 производных + initial + PEND = 10.
+    assert_eq!(p.ops.len(), 10);
+    let end_of = |i: usize| -> [f64; 3] {
+        match &p.ops[i] {
+            Op::Rapid { end, .. } | Op::Linear { end, .. } => to_f64(end),
+            other => panic!("op {i}: {other:?}"),
+        }
+    };
+    assert_eq!(end_of(2), [1.0, 0.0, 6.0], "iter1: rapid на R=6");
+    assert_eq!(end_of(3), [1.0, 0.0, 4.0], "iter1: дно=4");
+    assert_eq!(end_of(5), [2.0, 0.0, 6.0], "iter2: traverse XY (шаг X)");
+    assert_eq!(end_of(6), [2.0, 0.0, 7.0], "iter2: rapid на R=7 (шаг R)");
+    assert_eq!(end_of(7), [2.0, 0.0, 5.0], "iter2: дно=5");
+}
+
+#[test]
+fn unit_cycle_first_motion_err_runtime_state() {
+    // SPEC §7.6: цикл как первый motion-оп → E_RUNTIME_STATE
+    // (пресетки-якоря не считаются — strict reading).
+    let src = "G21 G90 G94 G17\nG99 G81 X1.0000 Y1.0000 Z-1.0000 R1.0000 F100.0\nM2\n";
+    let err = parse_str(src).expect_err("§7.6");
+    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+}
+
+#[test]
+fn unit_cycle_after_unknown_position_err_runtime_state() {
+    // SPEC §7.6: цикл после позиционно-неопределённого участка (смена WCS
+    // без in-text origins) → E_RUNTIME_STATE.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X1.0000 Y1.0000 Z1.0000\n",
+        "G55\n",
+        "G99 G81 X2.0000 Y2.0000 Z-1.0000 R1.0000 F100.0\n",
+        "M2\n",
+    );
+    let err = parse_str(src).expect_err("§7.6");
+    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+}
+
+#[test]
+fn unit_cycle_requires_r_and_z_and_f() {
+    for (src, ctx) in [
+        ("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\nG99 G81 X2.0000 Y2.0000 Z-1.0000 F100.0\nM2\n", "без R"),
+        ("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\nG99 G81 X2.0000 Y2.0000 R1.0000 F100.0\nM2\n", "без Z"),
+        ("G21 G90 G94\nG99 G81 X2.0000 Y2.0000 Z-1.0000 R1.0000 F100.0\nM2\n", "первый motion + без F"),
+    ] {
+        let err = parse_str(src).unwrap_err();
+        assert!(!err.is_empty(), "{ctx}");
+    }
+}
+
+#[test]
+fn unit_cycle_g82_without_p_err() {
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X1.0000 Y1.0000 Z1.0000\n",
+        "G99 G82 X2.0000 Y2.0000 Z-1.0000 R1.0000 F100.0\n",
+        "M2\n",
+    );
+    let err = parse_str(src).expect_err("G82 требует P");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+}
+
+// ===========================================================================
+// Циклы — этап B: пеки G83/G73, feed-out G85/G89, лимит развёртки
+// ===========================================================================
+
+#[test]
+fn unit_cycle_g83_peck_order_full_retract() {
+    // R=2, Z=−4, Q=1.5 → 4 пека вниз шагами Q: 0.5, −1.0, −2.5, −4.0;
+    // полный отвод на R + подход (clr=0.5 над последней глубиной, ≤ R)
+    // после каждого промежуточного пека; порядок пиков точный (SPEC §7.4).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G83 X10.0000 Y0.0000 Z-4.0000 R2.0000 Q1.5000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // subs: 1 traverse, 2 rapid-R, затем 4×(feed, retract-R, approach) = 12,
+    // финальный retract (G99 → R) sub=13; всего 13 + initial + PEND = 15.
+    assert_eq!(p.ops.len(), 15);
+    let mut depths: Vec<f64> = Vec::new();
+    let mut retract_after_last_feed = f64::NAN;
+    for o in &p.ops[1..14] {
+        match o {
+            Op::Linear { end, sub, .. } => {
+                depths.push(to_f64(end)[2]);
+                let _ = sub;
+            }
+            Op::Rapid { end, sub: Some(s), .. } if *s == 4 || *s == 7 || *s == 10 || *s == 13 => {
+                retract_after_last_feed = to_f64(end)[2];
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(depths, vec![0.5, -1.0, -2.5, -4.0], "пеки вниз шагами Q (порядок §7.4)");
+    assert_eq!(retract_after_last_feed, 2.0, "G99: финальный отвод на R");
+}
+
+#[test]
+fn unit_cycle_g73_chipbreak_retract_q() {
+    // G73: отвод на Q над последней глубиной (не полный на R);
+    // подход clr=0.5 над последней глубиной. R=2, Z=−4, Q=2 → 3 пека:
+    // 0.0, −2.0, −4.0.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G73 X10.0000 Y0.0000 Z-4.0000 R2.0000 Q2.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    let mut depths: Vec<f64> = Vec::new();
+    let mut ups: Vec<f64> = Vec::new();
+    let mut cur = 5.0f64;
+    for o in &p.ops[1..] {
+        match o {
+            Op::Linear { end, .. } => {
+                depths.push(to_f64(end)[2]);
+                cur = to_f64(end)[2];
+            }
+            Op::Rapid { end, .. } => {
+                let z = to_f64(end)[2];
+                if z > cur {
+                    ups.push(z); // upward rapid = de-retract (или финальный отвод)
+                }
+                cur = z;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(depths, vec![0.0, -2.0, -4.0], "G73 пеки");
+    // De-retract на Q над последней глубиной: 2.0 (над 0.0, clamp на R),
+    // 0.0 (над −2.0); финальный отвод (G99) на R=2.0.
+    assert_eq!(ups, vec![2.0, 0.0, 2.0], "G73 de-retract + финальный отвод на R");
+}
+
+#[test]
+fn unit_cycle_g85_bore_feed_out() {
+    // G85: отвод на ПОДАЧЕ (linear), не rapid; G99 → отвод до R.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S8000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G85 X10.0000 Y0.0000 Z-3.0000 R2.0000 F60.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    match &p.ops[4] {
+        Op::Linear { start: StartPoint::Known(s), end, .. } => {
+            assert_eq!(to_f64(s)[2], -3.0, "feed-out со дна");
+            assert_eq!(to_f64(end)[2], 2.0, "G99: feed-out до R");
+        }
+        other => panic!("retract G85 — linear (feed-out), got {other:?}"),
+    }
+}
+
+#[test]
+fn unit_cycle_g89_bore_dwell_feed_out() {
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G89 X1.0000 Y1.0000 Z-3.0000 R1.0000 P0.2500 F50.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    assert!(matches!(&p.ops[4], Op::Dwell { seconds, .. } if seconds.value == 0.25));
+    assert!(matches!(&p.ops[5], Op::Linear { .. }), "G89: feed-out");
+}
+
+#[test]
+fn unit_cycle_peck_guard_limit_exceeded() {
+    // Guard blowup: Q=0.001, глубина 12 → 12000 пеков > 10000 →
+    // E_LIMIT_EXCEEDED (COVERAGE §1.2; N4-класс по Q).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G83 X1.0000 Y1.0000 Z-10.0000 R2.0000 Q0.0010 F100.0\n",
+        "M2\n",
+    );
+    let err = parse_str(src).expect_err("пек-лимит");
+    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+}
+
+// ===========================================================================
+// Циклы — этап C: G86 рестарт шпинделя, G98/G99 отвод
+// ===========================================================================
+
+#[test]
+fn unit_cycle_g86_spindle_off_restart() {
+    // SPEC §7 (Q9): feed на дно → dwell P? → шпиндель off → rapid out →
+    // рестарт в прежнем направлении (resolved-state: следующие опа несут
+    // восстановленный spindle).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S8000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G86 X10.0000 Y0.0000 Z-3.0000 R2.0000 P0.3000 F60.0\n",
+        "G1 X20.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // subs: 1 traverse, 2 rapid-R, 3 feed, 4 dwell, 5 rapid-out (spindle=Off).
+    assert!(matches!(&p.ops[4], Op::Dwell { seconds, .. } if seconds.value == 0.3));
+    match &p.ops[5] {
+        Op::Rapid { end, state, sub, .. } => {
+            assert_eq!(to_f64(end)[2], 2.0, "rapid out на R");
+            assert_eq!(state.spindle, eid_core::ast::Spindle::Off, "шпиндель off на отводе");
+            assert_eq!(*sub, Some(5));
+        }
+        other => panic!("op 5 must be Rapid: {other:?}"),
+    }
+    // Рестарт: следующий ход несёт прежнее направление и обороты.
+    match &p.ops[6] {
+        Op::Linear { state, .. } => {
+            assert_eq!(state.spindle, eid_core::ast::Spindle::Cw(eid_core::ast::Num::new("8000".into(), 8000.0)));
+            assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
+        }
+        other => panic!("op 6 must be Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn unit_cycle_g98_vs_g99_retract_target() {
+    // §7.1: G99 → отвод на R-плоскость; G98 → initial Z (позиция до цикла,
+    // вычислимая из предшествующих опов).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X10.0000 Y0.0000 Z-3.0000 R2.0000 F100.0\n",
+        "G0 Z6.0000\n",
+        "G98 G81 X20.0000 Y0.0000 Z-3.0000 R4.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // Цикл 1 (G99): retract → R=2.
+    assert_eq!(to_f64(match &p.ops[4] {
+        Op::Rapid { end, .. } => end,
+        other => panic!("op 4: {other:?}"),
+    })[2], 2.0);
+    // G0 Z6.
+    assert_eq!(to_f64(match &p.ops[5] {
+        Op::Rapid { end, .. } => end,
+        other => panic!("op 5: {other:?}"),
+    })[2], 6.0);
+    // Цикл 2 (G98): retract → initial Z = 6 (не R=4).
+    assert_eq!(to_f64(match &p.ops[9] {
+        Op::Rapid { end, .. } => end,
+        other => panic!("op 9: {other:?}"),
+    })[2], 6.0, "G98: отвод на initial Z (6), не на R (4)");
 }

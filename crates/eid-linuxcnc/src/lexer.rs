@@ -21,6 +21,8 @@ use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 pub const MAX_WORD_CHARS: usize = 32;
 pub const MAX_SOURCE_LINES: usize = 1_000_000;
 pub const MAX_OPS_PER_PROGRAM: usize = 200_000;
+/// Сумма L/K на блок цикла + guard на число производных опов развёртки.
+pub const MAX_UNROLL_ITERATIONS: usize = 10_000;
 // max_unroll_iterations в итерации 2 не применяется (развёртывание циклов —
 // итерация 3, см. отчёт).
 

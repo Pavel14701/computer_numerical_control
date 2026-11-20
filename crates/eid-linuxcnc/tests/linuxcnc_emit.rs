@@ -402,3 +402,50 @@ fn unit_validate_rejects_zero_length_before_emit() {
     let err = adapter().emit(&p).expect_err("zero-length в каноническом AST — Err");
     assert!(err.iter().all(|d| d.code == eid_core::diag::ErrorCode::InvalidInput));
 }
+
+// ===========================================================================
+// Циклы — развёртка и эмиссия (SPEC §7; итерация 3-4)
+// ===========================================================================
+
+#[test]
+fn cycle_g81_round_trip_and_text() {
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S10000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X10.0000 Y10.0000 Z-5.0000 R2.0000 F100.0\n",
+        "M2\n",
+    );
+    let text = assert_rt(src, "cycle G81");
+    // Развёрнутые ходы в тексте: traverse, rapid R, feed, retract; R/Z
+    // координаты вербатимом; M2 последним.
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"G0 X10.0000 Y10.0000 Z5.0000 F100.0000"), "traverse XY:\n{text}");
+    assert!(lines.contains(&"G0 X10.0000 Y10.0000 Z2.0000"), "rapid на R");
+    assert!(lines.contains(&"G1 X10.0000 Y10.0000 Z-5.0000"), "feed на дно (F модальный)");
+    assert!(lines.contains(&"G0 X10.0000 Y10.0000 Z2.0000"));
+    assert_eq!(lines.last(), Some(&"M2"));
+    // Детерминизм: двойной emit байт-в-байт (через assert_rt выше — тот же
+    // text сравнивается с повторным emit в r1_round_trip; здесь — явный).
+}
+
+#[test]
+fn cycle_g86_restart_emits_m5_then_m3() {
+    // G86: шпиндель off на rapid-out, рестарт в state последующего опа —
+    // эмиссия: M5 перед отводом, M3 S8000 перед следующим ходом (Q9).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S8000\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G86 X10.0000 Y0.0000 Z-3.0000 R2.0000 P0.3000 F60.0\n",
+        "G1 X20.0000 Y0.0000 Z2.0000 F100.0\n",
+        "M2\n",
+    );
+    let text = assert_rt(src, "cycle G86");
+    let lines: Vec<&str> = text.lines().collect();
+    let m5 = lines.iter().position(|l| *l == "M5").expect("M5 (шпиндель off)");
+    let rapid_out = lines.iter().rposition(|l| *l == "G0 X10.0000 Y0.0000 Z2.0000").expect("rapid out");
+    let m3 = lines.iter().rposition(|l| *l == "M3 S8000.0000").expect("M3 рестарт (последний из M3)");
+    let g1 = lines.iter().position(|l| l.starts_with("G1 X20.0000")).expect("следующий ход");
+    assert!(m5 < rapid_out && rapid_out < m3 && m3 < g1, "порядок M5 → rapid-out → M3 → ход:\n{text}");
+}
