@@ -43,6 +43,41 @@ impl LinuxCncAdapter {
         Self { diagnostics: RefCell::new(Vec::new()), notices: RefCell::new(Vec::new()) }
     }
 
+    /// Таблица легальности эмиссии LinuxCNC (COVERAGE §5, LinuxCNC-колонка;
+    /// ConversionTarget-паттерн, зеркально eid-grbl). Словарь полный:
+    /// все 10 видов опов легальны; path_mode/WCS вне словаря невозможны
+    /// (G54–G59.3, G61/G61.1/G64 — весь словарь целевого).
+    pub fn emission_legality(&self) -> emit::EmissionLegality {
+        use eid_core::diag::ErrorCode::{
+            InvalidInput as INVAL, RuntimeState as RT, UnsupportedSemantics as SEM,
+        };
+        emit::EmissionLegality {
+            legal: vec![
+                "rapid",
+                "linear",
+                "arc",
+                "dwell",
+                "tool_change",
+                "wcs_define",
+                "wcs_set_here",
+                "frame_preset",
+                "program_stop",
+                "program_end",
+                "raw",
+            ],
+            illegal: vec![
+                ("arc_unknown_start", RT),          // SPEC §2 Q11
+                ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
+                ("machine_frame_arc", SEM),          // G53 требует G0/G1
+                ("motion_feed_none", INVAL),         // канон-форма §3/§4
+                ("raw_payload_not_hex", INVAL),      // grammar D9 v0.3
+                ("program_end_missing", INVAL),      // структура (CORPUS n14)
+                ("program_end_duplicate", INVAL),    // n13
+                ("program_end_not_last", INVAL),     // n12
+            ],
+        }
+    }
+
     /// Line-level диагностики последнего `parse` (Ok-путь: RAW-узлы, warnings);
     /// опустошает буфер.
     pub fn take_diagnostics(&self) -> Vec<Diagnostic> {

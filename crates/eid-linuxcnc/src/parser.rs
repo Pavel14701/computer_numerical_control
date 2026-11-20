@@ -42,7 +42,7 @@ use eid_core::parser::{Notice, NoticeKind};
 use eid_core::ast::{Coolant, Spindle};
 
 /// eid_version = версия grammar.ebnf (SPEC §10.4).
-const EID_VERSION: &str = "EID/L1 v0.3";  // grammar v0.3 (magic bump)
+pub const EID_VERSION: &str = "EID/L1 v0.3";  // grammar v0.3 (magic bump)
 
 /// Публичный результат parse: Program + line-level диагностики + notices.
 #[derive(Debug, Clone)]

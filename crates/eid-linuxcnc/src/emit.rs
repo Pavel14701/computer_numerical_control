@@ -44,6 +44,7 @@
 //! раз и последний, геометрия §6, связывание Q11) — отказ пробрасывается
 //! как Err(Vec<Diagnostic>).
 
+use crate::LinuxCncAdapter;
 use crate::canonicalize::{plane_def, to_f64, Plane};
 use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Program, Spindle, StartPoint, Units, Wcs};
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
@@ -56,10 +57,209 @@ pub struct EmitOut {
     pub warnings: Vec<Diagnostic>,
 }
 
-/// Точка входа. `Err` — нарушена каноническая форма (SPEC §3) или неосевой
-/// normal дуги; warnings возвращаются отдельно.
+// ===========================================================================
+// EmissionLegality — ConversionTarget-паттерн (MLIR), зеркально eid-grbl
+// (COVERAGE §5, LinuxCNC-колонка): легальность эмиссии — ДАННЫЕ, не
+// размазанные проверки; валидатор берёт ErrorCode ТОЛЬКО из таблицы
+// (единый путь отказа). E_RAW_UNTRANSLATABLE в таблицу НЕ входит —
+// translate-путь (Агент E, SPEC §8.2), не same-dialect эмиссия.
+// LinuxCNC-специфика: словарь полный — ВСЕ 10 видов опов легальны;
+// path_mode/WCS вне словаря невозможны (G54–G59.3, G61/G61.1/G64 — весь
+// словарь целевого; «wcs вне enum» — закрытый тип, недостижимо).
+// ===========================================================================
+
+/// Статическая таблица легальности эмиссии LinuxCNC.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmissionLegality {
+    /// Виды опов, представимые ходами LinuxCNC (имена = op_kind()).
+    pub legal: Vec<&'static str>,
+    /// Условия отказа: (имя условия, код класса легальности).
+    pub illegal: Vec<(&'static str, ErrorCode)>,
+}
+
+impl EmissionLegality {
+    /// Код отказа по имени условия; None = условие не объявлено.
+    pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
+        self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+    }
+
+    /// Все коды отказа таблицы (без дубликатов).
+    pub fn codes(&self) -> Vec<ErrorCode> {
+        let mut v: Vec<ErrorCode> = self.illegal.iter().map(|(_, c)| *c).collect();
+        v.sort_by_key(|c| c.as_str());
+        v.dedup();
+        v
+    }
+
+    /// Вид опа легален?
+    pub fn is_legal_kind(&self, kind: &str) -> bool {
+        self.legal.contains(&kind)
+    }
+}
+
+/// Имя вида опа — ключ таблицы легальности (и словарь manifest r4_expect).
+pub fn op_kind(op: &Op) -> &'static str {
+    match op {
+        Op::Rapid { .. } => "rapid",
+        Op::Linear { .. } => "linear",
+        Op::Arc { .. } => "arc",
+        Op::Dwell { .. } => "dwell",
+        Op::ToolChange { .. } => "tool_change",
+        Op::ProgramStop { .. } => "program_stop",
+        Op::ProgramEnd { .. } => "program_end",
+        Op::WcsDefine { .. } => "wcs_define",
+        Op::WcsSetHere { .. } => "wcs_set_here",
+        Op::Raw { .. } => "raw",
+    }
+}
+
+/// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5).
+/// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
+fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic> {
+    // Условие обязано быть объявлено в таблице — иначе баг объявления,
+    // не паника пути.
+    let code = |cond: &'static str| {
+        table.code_of(cond).unwrap_or_else(|| {
+            panic!("emission-legality: условие `{cond}` не объявлено в таблице")
+        })
+    };
+    let mut v = Vec::new();
+    let mut last_is_end = false;
+    for op in &program.ops {
+        last_is_end = matches!(op, Op::ProgramEnd { .. });
+        // Недостижимо: все 10 видов опов легальны для LinuxCNC (COVERAGE §5);
+        // ветка — защита полноты таблицы (новый вид опа ⇒ дополнить таблицу).
+        if !table.is_legal_kind(op_kind(op)) {
+            v.push(diag(
+                table.code_of("op_kind_not_legal").unwrap_or(ErrorCode::UnsupportedSyntax),
+                format!(
+                    "op_kind_not_legal: `{}` не легален для цели LinuxCNC",
+                    op_kind(op)
+                ),
+            ));
+        }
+        match op {
+            Op::Arc { start: StartPoint::Unknown, src, .. } => v.push(diag_src(
+                code("arc_unknown_start"),
+                "arc_unknown_start: дуга требует числового старта (SPEC §2 Q11)",
+                Some(src.clone()),
+            )),
+            Op::Arc { normal, src, state, .. } => {
+                // Не-каноническая нормаль (не единичная +ось) — §6.
+                let c = [normal.x.value, normal.y.value, normal.z.value];
+                let (mut best, mut bi) = (0.0f64, 0usize);
+                for (i, &x) in c.iter().enumerate() {
+                    if x.abs() > best {
+                        best = x.abs();
+                        bi = i;
+                    }
+                }
+                let axial = (best - 1.0).abs() <= 0.001
+                    && c[(bi + 1) % 3].abs() <= 0.001
+                    && c[(bi + 2) % 3].abs() <= 0.001;
+                if !axial || c[bi] < 0.0 {
+                    v.push(diag_src(
+                        code("arc_normal_non_canonical"),
+                        format!(
+                            "arc_normal_non_canonical: normal = ({:.4},{:.4},{:.4}) — не единичная +ось (SPEC §6)",
+                            c[0], c[1], c[2]
+                        ),
+                        Some(src.clone()),
+                    ));
+                }
+                // G53 + дуга: machine-frame ходы — прямые (LinuxCNC G53
+                // требует G0/G1).
+                if state.frame == Frame::Machine {
+                    v.push(diag_src(
+                        code("machine_frame_arc"),
+                        "machine_frame_arc: G53 с дугой не эмитится (ходы machine-frame прямые)",
+                        Some(src.clone()),
+                    ));
+                }
+                // Канон-форма §3: arc требует модального feed.
+                if state.feed.is_none() {
+                    v.push(diag_src(
+                        code("motion_feed_none"),
+                        "motion_feed_none: arc без модального feed (SPEC §3/§4)",
+                        Some(src.clone()),
+                    ));
+                }
+            }
+            Op::Linear { state, src, .. } => {
+                if state.feed.is_none() {
+                    v.push(diag_src(
+                        code("motion_feed_none"),
+                        "motion_feed_none: linear без модального feed (SPEC §3/§4)",
+                        Some(src.clone()),
+                    ));
+                }
+            }
+            Op::Raw { payload_hex, src, .. } => {
+                if payload_hex.len() % 2 != 0
+                    || !payload_hex
+                        .bytes()
+                        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
+                {
+                    v.push(diag_src(
+                        code("raw_payload_not_hex"),
+                        "raw_payload_not_hex: payload не чётный hex (grammar D9 v0.3)",
+                        Some(src.clone()),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    // Инварианты §3 (енды): отсутствует / дубликат / не последний.
+    let end_count = program
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::ProgramEnd { .. }))
+        .count();
+    if end_count == 0 {
+        v.push(diag(
+            code("program_end_missing"),
+            "program_end_missing: PEND обязателен ровно один раз, последним (SPEC §3)",
+        ));
+    }
+    if end_count > 1 {
+        v.push(diag(
+            code("program_end_duplicate"),
+            format!("program_end_duplicate: {end_count} × PEND (SPEC §3)"),
+        ));
+    }
+    if !last_is_end && end_count > 0 {
+        v.push(diag(
+            code("program_end_not_last"),
+            "program_end_not_last: опы после PEND запрещены (SPEC §3)",
+        ));
+    }
+    v
+}
+
+/// Точка входа. `Err` — нарушена каноническая форма (SPEC §3), нелегальность
+/// эмиссии (COVERAGE §5, через таблицу) или неосевой normal дуги; warnings
+/// возвращаются отдельно.
 pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
+    // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
     parser::validate(program)?;
+    // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
+    if program.eid_version != crate::parser::EID_VERSION {
+        return Err(vec![diag(
+            ErrorCode::InvalidInput,
+            format!(
+                "eid_version `{}` не поддерживается (ожидается {})",
+                program.eid_version,
+                crate::parser::EID_VERSION
+            ),
+        )]);
+    }
+    // Легальность эмиссии — против таблицы (COVERAGE §5), fail-fast до прохода.
+    let table = LinuxCncAdapter::default().emission_legality();
+    let problems = validate_linuxcnc(&table, program);
+    if !problems.is_empty() {
+        return Err(problems);
+    }
     let mut w = Writer::new(program);
     w.run()?;
     Ok(EmitOut { text: w.text, warnings: w.warnings })
@@ -79,6 +279,14 @@ fn num_text(n: &Num) -> String {
 
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
     Diagnostic { code, stage: Stage::Emit, message: msg.into(), src: None, options: Vec::new(), limit: None }
+}
+
+fn diag_src(
+    code: ErrorCode,
+    msg: impl Into<String>,
+    src: Option<eid_core::ast::SrcSpan>,
+) -> Diagnostic {
+    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src, options: Vec::new(), limit: None }
 }
 
 fn finite3(a: &Num, b: &Num, c: &Num, what: &'static str) -> Result<(), Vec<Diagnostic>> {
