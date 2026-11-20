@@ -6,3 +6,5 @@
 pub mod adapter;
 pub mod ast;
 pub mod diag;
+pub mod emitter;
+pub mod parser;

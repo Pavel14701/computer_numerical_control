@@ -1,7 +1,9 @@
 (* ==================================================================
    EID/L1 — канонический текстовый формат. АВТОРИТЕТНОЕ ОПРЕДЕЛЕНИЕ.
-   Версия: v0.1 (привязан к SPEC-EID-L1 v0.8, EQUIVALENCE v0.1,
-   CORPUS-CONTRACT v0.3). Ревизии — через CHANGELOG.md.
+   Версия: v0.2 (привязан к SPEC-EID-L1 v0.10, EQUIVALENCE v0.2,
+   CORPUS-CONTRACT v0.4). Ревизии — через CHANGELOG.md.
+   v0.2: PATH_MODE blend принимает t= (G64 P; вопрос A1 отчёта A) —
+   без t= легален (bare G64); magic-строка = "EID/L1 v0.2".
    THIS FILE — единственный авторитет формата; SPEC §12 — ссылка.
    SPEC §12 — иллюстрация; этот файл — норма.
 
@@ -51,7 +53,9 @@ version          = "v" , digit , { digit } , "." , digit , { digit } ;
 
 units_line       = "UNITS" , SP , ( "mm" | "in" ) ;
 
-path_mode_line   = "PATH_MODE" , SP , ( "exact_path" | "exact_stop" | "blend" ) ;
+path_mode_line   = "PATH_MODE" , SP ,
+                   ( "exact_path" | "exact_stop" | ( "blend" , [ SP , "t=" , number ] ) ) ;
+                                                (* t — G64 P-; v0.2, A1 *)
 
 frame_preset_line = "FRAME_PRESET" , SP , ( "none" | g92_block ) ;
 g92_block        = "G92" , SP , axis_word , SP , axis_word , SP , axis_word ,

@@ -1,6 +1,6 @@
 # EQUIVALENCE — контракт L2-эквивалентности
 
-**Версия:** v0.2 (unknown vs known), привязан к SPEC-EID-L1 **v0.9**, COVERAGE **v0.5**, CORPUS-CONTRACT **v0.4**, grammar.ebnf **v0.1**
+**Версия:** v0.2 (unknown vs known), привязан к SPEC-EID-L1 **v0.10**, COVERAGE **v0.6**, CORPUS-CONTRACT **v0.4**, grammar.ebnf **v0.2**
 **Статус:** freeze после зелёного этапа 6; ревизии через `CHANGELOG.md`.
 **Принцип порядка разделов: сначала слова, потом числа.** Пока §1 не закрыт,
 формулы §4 не имеют смысла.
