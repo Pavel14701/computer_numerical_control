@@ -446,11 +446,15 @@ fn diff_src_and_sub_are_provenance() {
 
 #[test]
 fn manifest_loads_40_vectors_20_goldens() {
+    // Динамические счётчики + sanity-минимумы: добавление векторов не ломает
+    // фикстуру (инвариант — позитив с golden, негатив без; минимумы v0: >= 37
+    // golden, >= 20 негативов).
     let m = load_manifest();
     let goldens = m.vectors.iter().filter(|v| v.golden.is_some()).count();
-    assert_eq!(m.vectors.len(), 57, "37 позитивов + 20 негативов (после материализации 17)");
-    assert_eq!(goldens, 37, "37 позитивных векторов с golden AST");
-    assert_eq!(m.vectors.iter().filter(|v| v.golden.is_none()).count(), 20, "20 негативов");
+    let negatives = m.vectors.iter().filter(|v| v.golden.is_none()).count();
+    assert!(goldens >= 37, "sanity: золотых минимум 37, сейчас {goldens}");
+    assert!(negatives >= 20, "sanity: негативов минимум 20, сейчас {negatives}");
+    assert_eq!(m.vectors.len(), goldens + negatives);
     // все пути файлов существуют (load также валидирует — двойная проверка)
     for v in &m.vectors {
         assert!(v.files.iter().all(|f| f.path.is_file()), "vector {}: file missing", v.id);
@@ -579,21 +583,25 @@ fn runner_r1_r2_green_on_all_20_goldens() {
     assert!(rep.is_green(), "Fail'ы: {:?}", rep.vectors.iter()
         .flat_map(|v| v.checks.iter().filter(|c| matches!(c.status, Status::Fail(_))))
         .collect::<Vec<_>>());
-    assert_eq!(rep.checks("R1").len(), 37, "37 golden-проверок R1");
+    let golden_count = m.vectors.iter().filter(|v| v.golden.is_some()).count();
+    assert!(golden_count >= 37, "sanity: golden минимум 37, сейчас {golden_count}");
+    assert_eq!(rep.checks("R1").len(), golden_count, "R1 по одному на golden (динамически)");
     assert!(rep.checks("R1").iter().all(|c| c.status == Status::Pass), "R1 все Pass");
-    assert_eq!(rep.checks("R2").len(), 37);
+    assert_eq!(rep.checks("R2").len(), golden_count);
     assert!(rep.checks("R2").iter().all(|c| c.status == Status::Pass), "R2 все Pass");
     // диалектные проверки без адаптеров — Pending, не crash
     assert!(!rep.checks("parse").is_empty());
     assert!(rep.checks("parse").iter().all(|c| matches!(c.status, Status::Pending(_))));
     assert!(rep.checks("R3-golden").iter().all(|c| matches!(c.status, Status::Pending(_))));
-    // R4: r4_expect есть у #47 (2 цели), #27 (grbl) и N3 (2 цели, без golden → Skipped)
+    // R4 — динамически: по одной проверке на каждую цель из r4_expect манифеста
+    let r4_expected_total: usize =
+        m.vectors.iter().map(|v| v.r4_expect.len()).sum();
     let r4: Vec<_> = rep.checks("R4");
-    assert_eq!(r4.len(), 8, "#47×2 + #27 + N3×2 + #40 + #41 + #45");
-    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Pending(_))).count(), 8,
-        "нет адаптеров: #47×2, #27, N3×2, #40, #41, #45");
-    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Skipped(_))).count(), 0,
-        "Skipped — только при наличии адаптера без golden AST (см. runner_r4_emission_expectations)");
+    assert_eq!(r4.len(), r4_expected_total, "R4 = сумма целей r4_expect (динамически)");
+    assert!(r4_expected_total >= 5, "sanity: r4-целей минимум 5, сейчас {r4_expected_total}");
+    // Пустой registry: все R4 — Pending (нет адаптеров), не crash.
+    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Pending(_))).count(), r4.len(),
+        "без адаптеров все R4 Pending");
 }
 
 #[test]

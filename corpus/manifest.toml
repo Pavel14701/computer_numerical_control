@@ -78,6 +78,136 @@ dialect = "linuxcnc"
 expect = "ok"
 
 [[vectors]]
+id = "17"
+name = "drill_G81"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/17_drill_G81/golden.eid"
+note = "G81: rapid->R, feed->Z_bottom, rapid->retract (SPEC §7 v0.14); G99-дефолт при отсутствии G98/G99 (§7 5a); source только linuxcnc (циклы вне словаря GRBL), эмиссия в GRBL — развёрнутые ходы (r4_expect {})"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/17_drill_G81/drill_G81.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "18"
+name = "drill_G82_dwell"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/18_drill_G82_dwell/golden.eid"
+note = "G82: как G81 + dwell P на дне (SPEC §7); P в секундах — подтверждено LinuxCNC-doc"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/18_drill_G82_dwell/drill_G82_dwell.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "19"
+name = "peck_G83_retract"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/19_peck_G83_retract/golden.eid"
+note = "G83 полный отвод: d_k = max(z_bottom, r - k·q) = 0/-2/-4/-6; полный отвод на R после каждого пика; rapid-подход 0.5mm над последней глубиной (§7 4a); порядок пиков сохранён (§7.4)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/19_peck_G83_retract/peck_G83_retract.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "20"
+name = "chipbreak_G73"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/20_chipbreak_G73/golden.eid"
+note = "G73 chip-break: de-retract min(R, d+Q): после -2 -> 0 (=R), после -4 -> -2 (< R); подход 0.5mm над последней глубиной (§7 4a); R0/Q2/Z-5 чтобы de-retract отличался от R"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/20_chipbreak_G73/chipbreak_G73.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "21"
+name = "bore_G86_restart"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/21_bore_G86_restart/golden.eid"
+note = "G86: feed-in, spindle off в state rapid-out, рестарт шпинделя в state следующего хода (Q9/SPEC §7); ход после цикла в source — рестарт видим в AST"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/21_bore_G86_restart/bore_G86_restart.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "22"
+name = "bore_G89_dwell"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/22_bore_G89_dwell/golden.eid"
+note = "G89: bore-in, dwell P, отвод на ПОДАЧЕ до retract-цели (v0.14, LinuxCNC-doc; прежний shorthand «как G81+dwell» — ошибка)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/22_bore_G89_dwell/bore_G89_dwell.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "23"
+name = "cycle_G99"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/23_cycle_G99/golden.eid"
+note = "G99 явно: отвод в R-плоскость (SPEC §7.1)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/23_cycle_G99/cycle_G99.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "24"
+name = "cycle_G98"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/24_cycle_G98/golden.eid"
+note = "G98: отвод в initial Z — Z до цикла (5.0) определён предшествующим G0 (SPEC §7.6)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/24_cycle_G98/cycle_G98.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "25"
+name = "cycle_repeat_distinct_RZ"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/25_cycle_repeat_distinct_RZ/golden.eid"
+note = "две G81 с разными R/Z: state(R, depth) не течёт между циклами — тихое место развёртывания; G80 между циклами (IGNORED_SAFE)"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/25_cycle_repeat_distinct_RZ/cycle_repeat_distinct_RZ.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
+id = "26"
+name = "cycle_cancel_G80"
+tier = "A"
+kind = "positive"
+golden = "tier_a/v0/26_cycle_cancel_G80/golden.eid"
+note = "G81 -> G80 (IGNORED_SAFE) -> явный G1 полным XYZ: после G80 следующий ход — linear, не продолжение цикла"
+notice = false
+[[vectors.files]]
+path = "tier_a/v0/26_cycle_cancel_G80/cycle_cancel_G80.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
+
+[[vectors]]
 id = "27"
 name = "tool_change"
 tier = "A"

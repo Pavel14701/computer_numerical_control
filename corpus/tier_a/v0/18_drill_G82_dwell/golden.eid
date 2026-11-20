@@ -1,0 +1,11 @@
+EID/L1 v0.3
+UNITS mm
+PATH_MODE exact_path
+FRAME_PRESET none
+OP 001 RAPID start=unknown end=0.0000,0.0000,5.0000 src=0.1-0.0 feed=none spindle=cw,8000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 002 RAPID start=0.0000,0.0000,5.0000 end=10.0000,5.0000,2.0000 src=0.1-0.0 feed=none spindle=cw,8000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 003 LINEAR start=10.0000,5.0000,2.0000 end=10.0000,5.0000,-10.0000 src=0.1-0.0 feed=120.0000 spindle=cw,8000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 004 DWELL seconds=1.5000 src=0.1-0.0 feed=120.0000 spindle=cw,8000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 005 RAPID start=10.0000,5.0000,-10.0000 end=10.0000,5.0000,2.0000 src=0.1-0.0 feed=120.0000 spindle=cw,8000.0000 coolant=none tool=none frame=wcs wcs=G54
+OP 006 PEND
+END

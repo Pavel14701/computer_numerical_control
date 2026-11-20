@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 /// Позитивные векторы CORPUS-CONTRACT §1.1 (47): (id, name, причина-отсутствия
 /// в манифесте итераций 2–3). Причина None = материализован.
-const CORPUS_POSITIVE_47: &[(&str, &str, Option<&str>)] = &[
+const CORPUS_POSITIVE_CANON: &[(&str, &str, Option<&str>)] = &[
     ("01", "linear_box", None),
     ("02", "rapid_reposition", None),
     ("03", "feed_survives_rapid", None),
@@ -67,6 +67,7 @@ const CORPUS_POSITIVE_47: &[(&str, &str, Option<&str>)] = &[
     ("45", "path_exact_stop", Some("не материализован — след-задача Агента B (после отчёта)")),
     ("46", "arc_R_helix", None),
     ("47", "raw_crlf_fidelity", None),
+    ("48", "arc_centers_mode_distinct", None),
 ];
 
 const RELATIONS: [&str; 7] =
@@ -116,11 +117,12 @@ fn full_run_generates_report_iter23() {
         .map(|v| v.id.as_str())
         .collect();
     let missing: Vec<&(&str, &str, Option<&str>)> =
-        CORPUS_POSITIVE_47.iter().filter(|(id, _, _)| !present_positive.contains(id)).collect();
+        CORPUS_POSITIVE_CANON.iter().filter(|(id, _, _)| !present_positive.contains(id)).collect();
     let mut coverage = String::new();
     coverage.push_str(&format!(
-        "R3 (any-to-any) доказывается ТОЛЬКО на материализованном подмножестве: **R3 на {} из 47 позитивных** CORPUS §1.1.\n\nОтсутствующие {} векторов:\n\n",
+        "R3 (any-to-any) доказывается ТОЛЬКО на материализованном подмножестве: **R3 на {} из {} позитивных** CORPUS §1.1.\n\nОтсутствующие {} векторов:\n\n",
         present_positive.len(),
+        CORPUS_POSITIVE_CANON.len(),
         missing.len()
     ));
     for (id, name, reason) in &missing {
