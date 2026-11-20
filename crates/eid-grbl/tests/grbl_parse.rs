@@ -535,16 +535,25 @@ fn spec_cov_arc_r_negative_and_pitch() {
 }
 
 #[test]
-fn spec_cov_cycles_raw_syntax() {
-    // COVERAGE §2.5: циклы в словаре GRBL N/A → Raw{SYNTAX} line-level
-    // (в т.ч. с L-словом; G84 «refuse-класс» тоже N/A в GRBL — матрица
-    // старше буквы брифа, см. отчёт). Разворот/L-лимит — D-зона.
-    for g in ["G81 X1.0 Y2.0 Z-3.0 R1.0", "G83 X1.0 Y2.0 Z-5.0 Q1.0 L3", "G84 X1.0 Y2.0 Z-5.0"] {
+fn spec_cov_cycles_raw_classes() {
+    // COVERAGE §2.5 + рулинг оркестратора: G81/G83 — N/A словаря GRBL как
+    // источника → Raw{SYNTAX}; G74/G84/G87/G88 — refuse-класс конструкции-
+    // источника (LinuxCNC-словарь валиден, «не представимо ходами») →
+    // Raw{SEMANTICS}. Разворот/L-лимит — D-зона.
+    let cases = [
+        ("G81 X1.0 Y2.0 Z-3.0 R1.0", ErrorCode::UnsupportedSyntax),
+        ("G83 X1.0 Y2.0 Z-5.0 Q1.0 L3", ErrorCode::UnsupportedSyntax),
+        ("G84 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
+        ("G74 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
+        ("G87 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
+        ("G88 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
+    ];
+    for (g, code) in cases {
         let out = canonicalize_with_notices(&format!("G21 G90 G94 G17\n{g}\nF100.0\nM2\n"), "c.ngc")
             .expect("Ok + Raw");
         assert!(
-            matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }),
-            "{g}: не Raw{{SYNTAX}}"
+            matches!(&out.program.ops[0], Op::Raw { code: expected, .. } if *expected == code),
+            "{g}: ожидался {code:?}"
         );
     }
 }

@@ -400,11 +400,24 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     }
 
     // (3) Слова вне словаря → Raw line-level. Оси A/B/C/U/V/W → SEMANTICS
-    // (COVERAGE §4); прочие (M6, G64, G90.1, H, ...) → SYNTAX (вне словаря GRBL).
+    // (COVERAGE §4); G74/G84/G87/G88 → SEMANTICS (refuse-класс COVERAGE §2.5:
+    // рулинг — класс определяется конструкцией-ИСТОЧНИКОМ, LinuxCNC-словарь
+    // валиден, «синхронизация/реверс не представимы ходами»); прочие
+    // (M6, G64, G90.1, H, ...) → SYNTAX (вне словаря GRBL).
     if !b.unsupported_words.is_empty() {
-        let axes_sem =
-            b.unsupported_words.iter().all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
-        let (code, reason) = if axes_sem {
+        let cycle_sem = b.unsupported_words.iter().any(|w| {
+            w.letter == 'G'
+                && w.value.value().fract() == 0.0
+                && matches!(w.value.value() as i64, 74 | 84 | 87 | 88)
+        });
+        let axes_sem = !cycle_sem
+            && b.unsupported_words.iter().all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
+        let (code, reason) = if cycle_sem {
+            (
+                ErrorCode::UnsupportedSemantics,
+                "G74/G84/G87/G88: spindle-sync/reverse cycles not representable as moves (COVERAGE §2.5 refusal; ruling: class by SOURCE construct)",
+            )
+        } else if axes_sem {
             (
                 ErrorCode::UnsupportedSemantics,
                 "rotary/4th-axis words A/B/C/U/V/W — outside L1 (COVERAGE §4)",
