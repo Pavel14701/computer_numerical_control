@@ -8,3 +8,4 @@ eid-core = { path = "../eid-core" }
 
 [dev-dependencies]
 eid-harness = { path = "../eid-harness" }
+eid-grbl = { path = "../eid-grbl" }

@@ -349,7 +349,7 @@ kind = "positive"
 golden = "tier_a/v0/08_arc_full_circle/golden.eid"
 note = "IJK, start == end → sweep=360° (SPEC §6: полный круг только IJK-формой)"
 notice = false
-regression_files = [{ path = "tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v1/08_arc_full_circle/arc_full_circle.linuxcnc.ngc", dialect = "linuxcnc" }]
+regression_files = [{ path = "tier_a/v0/08_arc_full_circle/arc_full_circle.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/08_arc_full_circle/arc_full_circle.linuxcnc.ngc", dialect = "linuxcnc" }]
 regen = "v1"
 [[vectors.files]]
 path = "tier_a/v1/08_arc_full_circle/arc_full_circle.grbl.ngc"
@@ -508,6 +508,10 @@ regen = "v1"
 path = "tier_a/v1/47_raw_crlf_fidelity/raw_crlf_fidelity.grbl.ngc"
 dialect = "grbl-1.1"
 expect = "ok"
+[[vectors.files]]
+path = "tier_a/v1/47_raw_crlf_fidelity/raw_crlf_fidelity.linuxcnc.ngc"
+dialect = "linuxcnc"
+expect = "ok"
 
 [[vectors]]
 id = "28"
@@ -536,7 +540,7 @@ kind = "positive"
 golden = "tier_a/v0/29_coolant_mist_flood/golden.eid"
 note = "M7/M8/M9: none→flood→flood+mist→none — булевы поля coolant (EQUIVALENCE §2, точные)"
 notice = false
-regression_files = [{ path = "tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc", dialect = "linuxcnc" }]
+regression_files = [{ path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/29_coolant_mist_flood/coolant_mist_flood.linuxcnc.ngc", dialect = "linuxcnc" }]
 regen = "v1"
 [[vectors.files]]
 path = "tier_a/v1/29_coolant_mist_flood/coolant_mist_flood.grbl.ngc"
@@ -1146,4 +1150,843 @@ expect = "ok"
 path = "tier_a/v1/48_arc_centers_mode_distinct/arc_centers_mode_distinct.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
+
+
+# =====================================================================
+# Tier B — admission (CORPUS §7 v0.6.4, итерация 3-4, Агент D).
+# expect = parse-or-diagnose: Ok ИЛИ любой Err из таксономии §8
+# (конкретика по файлам — отчёт итерации 3-4 + _sweep_results.txt).
+# tier: published — публикуется с корпусом; local-dev — GPL/неясные,
+# тестируются, никогда не публикуются (ruling оркестратора).
+# Секция НЕ читается loader'ом eid-harness (данные приёмки; проводка
+# loader'а — итерация 5, Агент B).
+# =====================================================================
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_Circle_Diamond_Square_Calibration.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (Circle_Diamond_Square_Calibration.gcode)"
+sha256 = "5865813fdc225b6b13bd61084ed8433f6e2a0af7f7bbbed0cd1f80be88bb0bdb"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_arc-ijk.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-ijk.gcode)"
+sha256 = "422d02b22305c50b889fbe8dfab3dfa97780f544416b85af119ecde7fdad9e02"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_arc-xz-plane.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-xz-plane.gcode)"
+sha256 = "91c48b24aeb19af307ed6e43e416575f2e7faee52eb0a4f2f19c4c8db4a50610"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_arc-yz-plane.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-yz-plane.gcode)"
+sha256 = "95b4c1a00abe9feece32af1a971ae0b509ba3ae5a74c00819d86242fda652b96"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_circle-inch.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (circle-inch.gcode)"
+sha256 = "1e24bdf0955f550bbbad8377e05f0011a3b6a1ca04ce85ef476bf4d4741d0c19"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_circle.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (circle.gcode)"
+sha256 = "510f79ab4f4fa406b27c23fe7cd35124c178fef66d0b19b72c84356956154425"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_full-circle-without-xyz.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (full-circle-without-xyz.gcode)"
+sha256 = "23c903f1202f21344a99bb7c497dc748c94af91a7dcf158a1ee4359d0df73892"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_g2-arc.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (g2-arc.gcode)"
+sha256 = "087814e847174be097090748f853d71ff2a6d10ea1ec9ecc0a5fbcad3b558aef"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_helical-thread-milling.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (helical-thread-milling.gcode)"
+sha256 = "a3fce3c71673e04d15a0671ef501499b19dec66ee1fd652f872db529ee6587a7"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_jsdc-laser.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (jsdc-laser.gcode)"
+sha256 = "402b4808b6b608b4fb22c41d9dd44dbd25c0d996f30a073302fdcb39f6c452e1"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_jsdc.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (jsdc.gcode)"
+sha256 = "7256e886ccc22d0b06653e0a4a3bc1d1391a74b16f7156ac4ff8dd2ea5578749"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/grbljs_sample.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (sample.gcode)"
+sha256 = "46e39d814408a3bd25eb1f6295a953c6eec8117c8f19134dff8538a0b9c79bc7"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_cws_fresa.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/filipecaixeta/cncwebsim/gcode (fresa.gcode)"
+sha256 = "bee648eddcb7dc6ee0a5e2f570ab006ab2866451907104b89f671b9922feddb1"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_cws_torno.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/filipecaixeta/cncwebsim/gcode (torno.gcode)"
+sha256 = "29fb9df4965c03d7e8e4557347a7b537c0436b45742a187a5d4da4d14cd0c1fa"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_buchse.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (buchse.gcode)"
+sha256 = "4bb2ca85e6cf95519a6f2cb535a41a609094f6f5cf3265ec839993bdb08f495d"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_dwell.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (dwell.gcode)"
+sha256 = "4c7be72c2ec68d072fe5ddb5cb5000bb5da1582a6fa650a58ae3f7d1ac73252e"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_eck3.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (eck3.gcode)"
+sha256 = "f639ce6728a07016ec41a9eb71ab5e64a55e00474a96492bebc09845ba4a381b"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_ltr.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (ltr.gcode)"
+sha256 = "1d71ddd66e138b7921f512acc7c2ca8e628aa6f29c2887a92802d876bcc9d83e"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_m_retract.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (m_retract.gcode)"
+sha256 = "e85e8ad15b2fd1c87134d518872f7310ecea5e9e220d90d27b37679efcfeb805"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_ddp_simple_square.gcode"
+dialect = "marlin-3dp"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/ErwinRieger/ddprint-test-gcode/test_files (simple_square.gcode)"
+sha256 = "07271ef17d444b8edb9e28213df4dabb94f72665e6c22b92adbf6ea004a0fc12"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_hilbert_test.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/sliptonic/hilbert_cnc (test.ngc)"
+sha256 = "c3b75f3e724aacf5f11c0d99ff5748c46953989fd1f961d8350337674531e705"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_pycnc_circles.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/Nikolay-Kha/PyCNC/tests (circles.gcode)"
+sha256 = "ca3ec1943c6e3b48d5b53f0133d0dda33dd7c82bb46412b496283e2a50afd66a"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_pycnc_rects.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/Nikolay-Kha/PyCNC/tests (rects.gcode)"
+sha256 = "ff82c147066fb50c750109d62c69ea2680541624aa51b30917f274b4288a26af"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_pycnc_test_parser.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/Nikolay-Kha/PyCNC/tests (test_parser.gcode)"
+sha256 = "4e940c76cf86ed0ce0b4625f000e8ee523cda197fb967738793a63cbc73d3b9a"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_shpk_MIT_EC_Logo.nc"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/TheSaturdayThing/shapeoko_arduino (MIT_EC_Logo.nc)"
+sha256 = "3f40f9e0382da49fdb6c4fadc442df73bd7b208d87a6d194f80e771077f76e86"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_shpk_ncdrill1.tap"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/TheSaturdayThing/shapeoko_arduino (ncdrill1.tap)"
+sha256 = "0a21ab855f24627068601bd1b20775503a2bd00b55d09de3958060c8646f0a1e"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_svg2g_circular_interpolation.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/sameer/svg2gcode/g_code/tests (circular_interpolation.gcode)"
+sha256 = "1505503d12818cf7461bffe32f4c647f00250523eb2add2250745d35beb8c500"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_svg2g_shapes.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/sameer/svg2gcode/g_code/tests (shapes.gcode)"
+sha256 = "865c6a7200b1979cba160f7847da9fe49220a7562d7fd9dc925d309aeff5e9e5"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_svg2g_square.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/sameer/svg2gcode/g_code/tests (square.gcode)"
+sha256 = "260ae3aea04b70cb3a0963b199aff6a802ac7dd14bf4a4e61a20f25909b0ec21"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_tball_tball-engrave-laser.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball-engrave-laser.gcode)"
+sha256 = "d8a8fdd133a8a252a07fa7f63833f9ee5b96f718e62d38df92a43e0ec532fa56"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_tball_tball-engrave.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball-engrave.gcode)"
+sha256 = "46b42bba579d0c7008d0bb9c7b3a8feafd819bb3fb50ede905de0d16f98473e2"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/inbox/mit_tball_tball.gcode"
+dialect = "grbl"
+expect = "parse-or-diagnose"
+license = "MIT"
+source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball.gcode)"
+sha256 = "61dfc201991fb876e940b3105a90e058f18276ef33e9da8f65bc1a93cb3c5ea6"
+tier = "published"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_configs_sim_gmoccapy_macros_change.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/configs_sim_gmoccapy_macros_change.ngc (см. PROVENANCE §1)"
+sha256 = "3d4d204d2164dcbdcaa6fe859154842c8939fd0bbe1b2f7e8a3eda4d7a0c6cde"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_configs_sim_gmoccapy_macros_change_g43.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/configs_sim_gmoccapy_macros_change_g43.ngc (см. PROVENANCE §1)"
+sha256 = "6059250a68074840f22331c68541f9656b787e57b7d84af22a9eeed029b3acc0"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/configs_sim_gmoccapy_macros_go_to_position.ngc (см. PROVENANCE §1)"
+sha256 = "d6796e350d93972e29327d544e8750ae6fc5d609503ab5793abfcfc37a32c77a"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_3D_Chips.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_3D_Chips.ngc (см. PROVENANCE §1)"
+sha256 = "b0d584021e7ad7b1c94f53167641323dd695f67b032cd0e8810ae470abd5c108"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_3dtest.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_3dtest.ngc (см. PROVENANCE §1)"
+sha256 = "fdd71703dc7658711b67de12c89379e3a9340cacb16382dbd655dab2103bf566"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_arcspiral.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_arcspiral.ngc (см. PROVENANCE §1)"
+sha256 = "f0d6cb86835cbd390aff4b0a6ffb867d4ce017ab01efdbdda4949db6deebb626"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_b-index.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_b-index.ngc (см. PROVENANCE §1)"
+sha256 = "a4718bb4e60638766d5daa683874a01c4bb7223773e88a0adfd814745e3b87a2"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_cds.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_cds.ngc (см. PROVENANCE §1)"
+sha256 = "a667b1283bd39cf9f275409aae1a7f757f1473aa45baa2774e65a225aa62645d"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_comp-g1.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_comp-g1.ngc (см. PROVENANCE §1)"
+sha256 = "f9fca8b2a5b0344135a5f4b584b843baeb92401c1716f4c40eecb68174b6d1c1"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_comp.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_comp.ngc (см. PROVENANCE §1)"
+sha256 = "3d2d89ef729c195082f05da67c1a9e99d935df8511797b0be6ee38663323b2d5"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_comp311.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_comp311.ngc (см. PROVENANCE §1)"
+sha256 = "97c5b16dcaa39308ab900fcda6a589a089896357c3269a6bf505ebe122dfd02e"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_comp311_2.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_comp311_2.ngc (см. PROVENANCE §1)"
+sha256 = "9c4b3527316774c2954e2ffe0ee344290d95ca2d9e2355a0fa6f707866391864"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_cone.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_cone.ngc (см. PROVENANCE §1)"
+sha256 = "d210c191f1cb2fd604d98468536b6821dbdce484e6d383ba4b0fc7b18806f3f2"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_daisy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_daisy.ngc (см. PROVENANCE §1)"
+sha256 = "b01a80491fefa6f6bca01b661b129b228d701d7c1fd196533808912676a5365a"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_factorial.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_factorial.ngc (см. PROVENANCE §1)"
+sha256 = "eb59f71655b6e63da6d2e1d07d119bd6c940fcea1b25bc33b635599ff60df03c"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_flowsnake.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_flowsnake.ngc (см. PROVENANCE §1)"
+sha256 = "a4d1dfb199ef56ce62a18da68a4f4004b3fda606da6402cbf7e13a87745a48a6"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_g20sub.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_g20sub.ngc (см. PROVENANCE §1)"
+sha256 = "8ad9c730fe5fa8261dfdb5ddbeac936349f5a4ef4a67a16ab35eea67d9e9f64f"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_g76.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_g76.ngc (см. PROVENANCE §1)"
+sha256 = "6dce99b51d2da0ffab28fae8d2da29a988ed47ceba5b6703eb8b9bb62e36f0de"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_g881.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_g881.ngc (см. PROVENANCE §1)"
+sha256 = "c0d29ff37af569635028084f893a53f8d86ef22fa5f34edefc3b43fd84df927b"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_g881min.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_g881min.ngc (см. PROVENANCE §1)"
+sha256 = "f40cc65a5438d0a2012685439bb06a8312c0bb7ef2cd730416b05c3824c3ce6f"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_g882.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_g882.ngc (см. PROVENANCE §1)"
+sha256 = "5e7a8d106c1c6c5c2c12cff277cac84217f90f5db4eaf9e560782ba2befa2688"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc (см. PROVENANCE §1)"
+sha256 = "3bf0812c7c1eed3b93243a8a605d2e3b28903b3318acb78be86173e46968bd92"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_gridprobe.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_gridprobe.ngc (см. PROVENANCE §1)"
+sha256 = "789b1d45e30dc7b9b1acacbe0abdb3cc2bf31dd7f82e06f13e733706bfdc5fa0"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_hole-circle.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_hole-circle.ngc (см. PROVENANCE §1)"
+sha256 = "58a9165353973e5050810d6a91d66b1ddef5bbbd29baafd901bc3d7c53720c2d"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_increment.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_increment.ngc (см. PROVENANCE §1)"
+sha256 = "8c40c65933e05addaf462dea4f19ab959980cdeda30dcda7d9be9590e91ff4c3"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_arc1.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_arc1.ngc (см. PROVENANCE §1)"
+sha256 = "1dbe6f30b34caddd3c1cf33e32b55e556fdaad3e2be113a45f173418d0e56311"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_arc2.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_arc2.ngc (см. PROVENANCE §1)"
+sha256 = "68d3dcacb1a9ac2da80e947e52c3d0cd23829f7377ffaaedfcaa390418375094"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_backlash.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_backlash.ngc (см. PROVENANCE §1)"
+sha256 = "8a809a17061c10a764891d77bdd6f39d1547d6242b5cd8d68f3d20f8063961a5"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_db25.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_db25.ngc (см. PROVENANCE §1)"
+sha256 = "b93d01afa08643e50cf32584f0291da710881db82a514851f048f45de4fac7b2"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_gosper.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_gosper.ngc (см. PROVENANCE §1)"
+sha256 = "86701f90bae94b9e396710b0d20443e5004782ae2db903a852b980f507f4a986"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_lathe_g76base.ngc (см. PROVENANCE §1)"
+sha256 = "6412b0cedd541e91e64ea2aa9e91279e8141093182dfc9742a475c5f13894dfc"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files.ngcgui_lib_lathe_g76diam.ngc (см. PROVENANCE §1)"
+sha256 = "73316b9828cf13c6411295d6d8355e8e07b46fdc3028d70e691b4996318b2cc8"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_Curva_Chitarra/1_3_G5.ngc (см. PROVENANCE §1)"
+sha256 = "5b7d43c8cede171b720d944f6a1f3c6c42cb9aaa341380f57f0f3eda4ca70411"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_Curva_Delfino/1_1_G5.ngc (см. PROVENANCE §1)"
+sha256 = "3f63ae03627e5d4bbb2cf98b3285c43132ec0b28f2fbd3f91c69d6a778fdac0f"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_Curva_Mazatrol/1_1_G5.ngc (см. PROVENANCE §1)"
+sha256 = "db35c7359714faa53cd6c0e42d32e75bff34ce5b8dd41b99abf0b1bd146bdf53"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_Curva_Stella/1_1_G5.ngc (см. PROVENANCE §1)"
+sha256 = "8dee97d28185d8569305e984efe1cf1dc82f7a4f36fef3583debc29e0b1b4df6"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_butterfly-xy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_butterfly-xy.ngc (см. PROVENANCE §1)"
+sha256 = "a9b028fd729eccba71275543dcaeae26705801d869c680c691bed46f92f5f8a6"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_butterfly-yz.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_butterfly-yz.ngc (см. PROVENANCE §1)"
+sha256 = "324da3186dd6f7e6985becade128efe3aff75edfbdedb5650afeb6ad6b78dec7"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_butterfly-zx.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_butterfly-zx.ngc (см. PROVENANCE §1)"
+sha256 = "e9b16731414f571a2569f2f7267b10cf039cab571295f0917a3d83369cc470e6"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_leto-xy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_leto-xy.ngc (см. PROVENANCE §1)"
+sha256 = "2a6a6a56e5c8a7ba51f558edde4f73095204f5b907fcdd5cb701f29800979636"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_nurbs-xy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_nurbs-xy.ngc (см. PROVENANCE §1)"
+sha256 = "96627567ad93f51a8c137fca18c07322f9a6bee13458c89f6bb62529434301a5"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_nurbs-yz.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_nurbs-yz.ngc (см. PROVENANCE §1)"
+sha256 = "7de88bad9da49d9448ed9133899b45f0dca130adf3139865e213d5a0ad96bcda"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_nurbs-zx.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_nurbs-zx.ngc (см. PROVENANCE §1)"
+sha256 = "993238ac94d9cf0a3e26df6801cfabddad63c60f95fde9abf9dfbd4e295376ac"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_trident-xy-yz-zx.ngc (см. PROVENANCE §1)"
+sha256 = "6f9ded45b11dc8a7b7bd167e2ed4a2221165d5bda544957b3df93b71d221f8e6"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_trident-xy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_trident-xy.ngc (см. PROVENANCE §1)"
+sha256 = "452d2b77ee4b67075246fa24a82c18bf50bb7f1522a15a72a690ff62bd83dfa9"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_trident-yz.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_trident-yz.ngc (см. PROVENANCE §1)"
+sha256 = "12132cdeeb4630dce5552a400f5d57910d975e36d5763ceb9a61538038446810"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_nurbs_G5_trident-zx.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_nurbs_G5_trident-zx.ngc (см. PROVENANCE §1)"
+sha256 = "dbe4f8804b210aa6cd8a397832f8bb751db70d7224b6aeedddd6f74605643493"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc (см. PROVENANCE §1)"
+sha256 = "3ef5b160179e72ecef7ff4500012b583a37a9655f3593171d1bac0b33a4d119b"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc (см. PROVENANCE §1)"
+sha256 = "754e2c17a3e19d658e0c8d7fb1c3de052bd658cda8023b4d3cf8e64777985f06"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc (см. PROVENANCE §1)"
+sha256 = "8224d131996a366395354ee6ae07f98a9b6600a6423c3513c7248975f16d533f"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_remap-subroutines_change.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_remap-subroutines_change.ngc (см. PROVENANCE §1)"
+sha256 = "b9e23a37c276a9d394d8993a28278ccf8ef88d2e013800fa2ba2771c25c2f82d"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_nc_files_remap-subroutines_on_abort.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/nc_files_remap-subroutines_on_abort.ngc (см. PROVENANCE §1)"
+sha256 = "7b6810836a3756b4d729549352a79bd4894c538834873bf1019f89dce7443eec"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_interp_good_good-arc.big.imperial.center-format.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_interp_good_good-arc.big.imperial.center-format.ngc (см. PROVENANCE §1)"
+sha256 = "6c10c0966bc5095554020ff4f0f600c794a406f7d91f49c830b5689b3fbd648e"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_interp_good_good-arc.big.metric.center-format.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_interp_good_good-arc.big.metric.center-format.ngc (см. PROVENANCE §1)"
+sha256 = "8790523ccf6fcf471359cc4db01e56287d34a4fa5e0c536a8f9b0a6a55d608f5"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_maxvel_xy.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_maxvel_xy.ngc (см. PROVENANCE §1)"
+sha256 = "99f2166ab52f0f075d72c63517e61c52c816e6a008ac05d3fe273519b2d6a423"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_time.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_time.ngc (см. PROVENANCE §1)"
+sha256 = "43c283c919263d936eb964ff01098aaa584e4f3a727b3d1c33e4ab8d3fdd2f4a"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc (см. PROVENANCE §1)"
+sha256 = "414a0fcc61d7e3bf36176b00023eda9632b213033e46e4640e6d15e25c4ab3c8"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc (см. PROVENANCE §1)"
+sha256 = "9099745c1a0ca579b4656d7cdc52fa15809c9092e6198e3e992c134140069592"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc (см. PROVENANCE §1)"
+sha256 = "59e8babc373b2587c47f495a8d420c35496a7cc68e434fd86f4338eb6e3d89ff"
+tier = "local-dev"
+
+[[tier_b_files]]
+path = "tier_b/local/lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc"
+dialect = "linuxcnc"
+expect = "parse-or-diagnose"
+license = "GPL-2.0"
+source = "https://github.com/LinuxCNC/linuxcnc/tree/master/nc_files/tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc (см. PROVENANCE §1)"
+sha256 = "7e8b086bbab8087313b365d7dd25fbdce9b5d02e7bc76ace5b3838fc10345430"
+tier = "local-dev"
 

@@ -1,0 +1,139 @@
+== OK (15):
+  [published] grbl: grbljs_jsdc-laser.gcode
+  [published] grbl-подобный: mit_tball_tball-engrave.gcode
+  [published] grbl-подобный: mit_tball_tball.gcode
+  [local-dev] linuxcnc: lcnc_nc_files_3dtest.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_arcspiral.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_b-index.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_cds.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_comp-g1.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_comp.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_comp311_2.ngc
+  [local-dev] linuxcnc: lcnc_nc_files_hole-circle.ngc
+  [local-dev] linuxcnc: lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc
+  [local-dev] linuxcnc: lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc
+  [local-dev] linuxcnc: lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc
+  [local-dev] linuxcnc: lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc
+
+== Классы по tier:
+  local-dev: E_INVALID_INPUT = 17
+  local-dev: E_RUNTIME_STATE = 6
+  local-dev: E_UNSUPPORTED_SYNTAX = 25
+  published: E_INVALID_INPUT = 26
+  published: E_RUNTIME_STATE = 3
+
+== Классы по диалекту (первое слово):
+  grbl: E_INVALID_INPUT = 11
+  grbl-подобный: E_INVALID_INPUT = 14
+  grbl-подобный: E_RUNTIME_STATE = 3
+  linuxcnc: E_INVALID_INPUT = 17
+  linuxcnc: E_RUNTIME_STATE = 6
+  linuxcnc: E_UNSUPPORTED_SYNTAX = 25
+  linuxcnc-универсальный: E_INVALID_INPUT = 1
+
+== ТОП-14 паттернов:
+   25  O-code (подпрограммы/макро) — вне грамматики LN (SPEC §N, QN)
+   18  program end missing: no MN/MN as the last block (CORPUS nN)
+   13  P-слово без потребителя в кадре (GN/GN/GN/цикл с dwell)
+    6  `X`-параметр/переменная — значение зависит от состояния исполнения (SPEC §N)
+    3  partial GN: unspecified axes keep unknown startup position reading (SPEC §N)
+    3  word `X` без числа
+    2  arc radius mismatch: ρ_start N vs ρ_end N (SPEC §N; CORPUS nNa)
+    2  linear move before any F word (SPEC §N)
+    1  lexical error: UnexpectedChar('\u{N}') at col N
+    1  program_end не последний (опы после MN/MN запрещены, SPEC §N; NN)
+    1  naked coordinate words: no active motion mode after GN (COVERAGE §N; CORPUS nN)
+    1  duplicate program end: more than one MN/MN (CORPUS nN)
+    1  несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §N; NNa)
+
+== Файлы по паттернам (кто именно):
+---  25  O-code (подпрограммы/макро) — вне грамматики LN (SPEC §N, QN)
+     [local-dev] lcnc_configs_sim_gmoccapy_macros_change.ngc
+     [local-dev] lcnc_configs_sim_gmoccapy_macros_change_g43.ngc
+     [local-dev] lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc
+     [local-dev] lcnc_nc_files_cone.ngc
+     [local-dev] lcnc_nc_files_daisy.ngc
+     [local-dev] lcnc_nc_files_factorial.ngc
+     [local-dev] lcnc_nc_files_flowsnake.ngc
+     [local-dev] lcnc_nc_files_g20sub.ngc
+     [local-dev] lcnc_nc_files_g76.ngc
+     [local-dev] lcnc_nc_files_g881.ngc
+     [local-dev] lcnc_nc_files_g881min.ngc
+     [local-dev] lcnc_nc_files_g882.ngc
+     [local-dev] lcnc_nc_files_increment.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_arc1.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_arc2.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_backlash.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_db25.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_gosper.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc
+     [local-dev] lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc
+     [local-dev] lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc
+     [local-dev] lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc
+     [local-dev] lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc
+     [local-dev] lcnc_nc_files_remap-subroutines_change.ngc
+     [local-dev] lcnc_nc_files_remap-subroutines_on_abort.ngc
+---  18  program end missing: no MN/MN as the last block (CORPUS nN)
+     [published] grbljs_arc-ijk.gcode
+     [published] grbljs_arc-xz-plane.gcode
+     [published] grbljs_arc-yz-plane.gcode
+     [published] grbljs_circle-inch.gcode
+     [published] grbljs_circle.gcode
+     [published] grbljs_g2-arc.gcode
+     [published] grbljs_helical-thread-milling.gcode
+     [published] grbljs_jsdc.gcode
+     [published] grbljs_sample.gcode
+     [published] mit_ddp_buchse.gcode
+     [published] mit_ddp_dwell.gcode
+     [published] mit_ddp_ltr.gcode
+     [published] mit_ddp_simple_square.gcode
+     [published] mit_pycnc_rects.gcode
+     [published] mit_shpk_MIT_EC_Logo.nc
+     [published] mit_svg2g_circular_interpolation.gcode
+     [published] mit_svg2g_shapes.gcode
+     [published] mit_svg2g_square.gcode
+---  13  P-слово без потребителя в кадре (GN/GN/GN/цикл с dwell)
+     [local-dev] lcnc_nc_files_nurbs_G5_butterfly-xy.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_butterfly-yz.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_butterfly-zx.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_leto-xy.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_nurbs-xy.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_nurbs-yz.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_nurbs-zx.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_trident-xy.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_trident-yz.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_trident-zx.ngc
+     [local-dev] lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_maxvel_xy.ngc
+     [local-dev] lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_time.ngc
+---   6  `X`-параметр/переменная — значение зависит от состояния исполнения (SPEC §N)
+     [local-dev] lcnc_nc_files_3D_Chips.ngc
+     [local-dev] lcnc_nc_files_gridprobe.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc
+     [local-dev] lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc
+---   3  partial GN: unspecified axes keep unknown startup position reading (SPEC §N)
+     [published] mit_cws_torno.gcode
+     [published] mit_ddp_eck3.gcode
+     [published] mit_ddp_m_retract.gcode
+---   3  word `X` без числа
+     [local-dev] lcnc_nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc
+     [local-dev] lcnc_tests_interp_good_good-arc.big.imperial.center-format.ngc
+     [local-dev] lcnc_tests_interp_good_good-arc.big.metric.center-format.ngc
+---   2  arc radius mismatch: ρ_start N vs ρ_end N (SPEC §N; CORPUS nNa)
+     [published] grbljs_Circle_Diamond_Square_Calibration.gcode
+     [published] grbljs_full-circle-without-xyz.gcode
+---   2  linear move before any F word (SPEC §N)
+     [published] mit_pycnc_circles.gcode
+     [published] mit_pycnc_test_parser.gcode
+---   1  lexical error: UnexpectedChar('\u{N}') at col N
+     [published] mit_cws_fresa.gcode
+---   1  program_end не последний (опы после MN/MN запрещены, SPEC §N; NN)
+     [published] mit_hilbert_test.ngc
+---   1  naked coordinate words: no active motion mode after GN (COVERAGE §N; CORPUS nN)
+     [published] mit_shpk_ncdrill1.tap
+---   1  duplicate program end: more than one MN/MN (CORPUS nN)
+     [published] mit_tball_tball-engrave-laser.gcode
+---   1  несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §N; NNa)
+     [local-dev] lcnc_nc_files_comp311.ngc

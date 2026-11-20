@@ -1,0 +1,98 @@
+# Tier B parse-or-diagnose sweep (92 файлов)
+# формат: RESULT | tier | dialect | файл | код/ops
+ERR | published | grbl | grbljs_Circle_Diamond_Square_Calibration.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 29.0000 vs ρ_end 27.5862 (SPEC §6; CORPUS n5a)
+ERR | published | grbl | grbljs_arc-ijk.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_arc-xz-plane.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_arc-yz-plane.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_circle-inch.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_circle.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
+ERR | published | grbl | grbljs_g2-arc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_helical-thread-milling.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 18ms
+ERR | published | grbl | grbljs_jsdc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl | grbljs_sample.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
+ERR | published | grbl-подобный | mit_cws_torno.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
+ERR | published | grbl-подобный | mit_ddp_buchse.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_ddp_dwell.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_ddp_eck3.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
+ERR | published | grbl-подобный | mit_ddp_ltr.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_ddp_m_retract.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
+ERR | published | grbl-подобный | mit_ddp_simple_square.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | linuxcnc-универсальный | mit_hilbert_test.ngc | E_INVALID_INPUT | program_end не последний (опы после M2/M30 запрещены, SPEC §3; N12)
+ERR | published | grbl-подобный | mit_pycnc_circles.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
+ERR | published | grbl-подобный | mit_pycnc_rects.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_pycnc_test_parser.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
+ERR | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_shpk_ncdrill1.tap | E_INVALID_INPUT | naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)
+ERR | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_svg2g_shapes.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_svg2g_square.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
+ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 25ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 22ms
+ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change_g43.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 16ms
+OK | local-dev | linuxcnc | lcnc_nc_files_b-index.ngc | 11 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 3ms
+OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_comp.ngc | 54 ops | 0ms
+ERR | local-dev | linuxcnc | lcnc_nc_files_comp311.ngc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
+OK | local-dev | linuxcnc | lcnc_nc_files_comp311_2.ngc | 26 ops | 0ms
+ERR | local-dev | linuxcnc | lcnc_nc_files_cone.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_daisy.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_factorial.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_flowsnake.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_g20sub.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_g76.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_g881.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_g881min.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_g882.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc | E_INVALID_INPUT | word `I` без числа
+ERR | local-dev | linuxcnc | lcnc_nc_files_gridprobe.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_hole-circle.ngc | 3 ops | 0ms
+ERR | local-dev | linuxcnc | lcnc_nc_files_increment.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc1.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc2.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_backlash.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_db25.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_gosper.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-yz.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-zx.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_leto-xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_nurbs-xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_nurbs-yz.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_nurbs-zx.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-yz.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-zx.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_change.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_on_abort.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
+ERR | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.imperial.center-format.ngc | E_INVALID_INPUT | word `I` без числа
+ERR | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.metric.center-format.ngc | E_INVALID_INPUT | word `I` без числа
+ERR | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_maxvel_xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+ERR | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_time.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
+OK | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc | 9 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc | 9 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc | 6 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc | 6 ops | 0ms
+# SUM: ok=15 err=77
+# ERR-CLASS E_INVALID_INPUT: 43
+# ERR-CLASS E_RUNTIME_STATE: 9
+# ERR-CLASS E_UNSUPPORTED_SYNTAX: 25
