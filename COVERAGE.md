@@ -191,10 +191,10 @@
 6. **grblHAL/FluidNC G43.2** — семантика (табличная vs динамическая): классификация REQUIRES vs USEMANTICS (B3).
 7. **LinuxCNC G50/G51** — подтвердить отсутствие в стабильном словаре (legacy 2.4–2.5 содержал scaling).
 8. **grblHAL / FluidNC: одиночное T без M6** — является ли предвыбором (как в LinuxCNC) при наличии M6-семейства; в GRBL 1.1 M6 нет вовсе, наследование `=` не обосновано.
-9. **R + вне-плоскостное слово (GRBL)** — LinuxCNC: **решено ✔** — helical arc в R-форме документирован («G17 G2 X10 Y15 R20 Z5 — radius format with arc», g-code.html; там же предупреждение о nearly-semicircle в R-форме — независимо подтверждает амплификацию EQUIVALENCE §4). GRBL: R+off-plane явно не подтверждён по source — `?`, этап 3 (до закрытия GRBL-файл вектора #46 не пишется).
+9. **R + вне-плоскостное слово — решено ✔ (оба диалекта).** LinuxCNC: helical arc в R-форме документирован («G17 G2 X10 Y15 R20 Z5», g-code.html). GRBL: **source-check gcode.c/master, 2026-11-20** — R-математика вычисляет центр только в плоскости (`ijk[axis_0/1]`), вне-плоскостное слово проходит в `mc_arc` нетронутым → helix; error-path для R+off-plane отсутствует. Следствие: вектор #46 — GRBL-файл материализован.
 10. **Повторный tool_change с тем же номером** — legal no-op vs переустановка: зависит от контроллера; отложено (обсуждение CORPUS v0.2).
 11. **GRBL G17/G18/G19 — решено ✔** (source-check gcode.c/master, 2026-11-20): `case 17: case 18: case 19:` — все три плоскости парсятся; assignment `PLANE_SELECT_XY/ZX/YZ` даёт полные тройки `axis_0/axis_1/axis_linear`; error-path для G18/G19 отсутствует. I/J/K — буквально X/Y/Z в GRBL и LinuxCNC (пару in-plane осей выбирает плоскость, ремапа нет). **Следствие: гипотеза ревью «GRBL = G17 only» опровергнута source'ом; векторы #14/#15/#16 — R4-отказов для GRBL не имеют; эмиссионное правило in-plane пар — §5.**
-12. **grblHAL G17/G18/G19 + IJK mapping** — наследование от GRBL 1.1 (§6.11) — не assumption, а гипотеза: сверить source grblHAL на этапе 3 (колонки `=` в §2.1 стоят без проверки).
+12. **grblHAL G17/G18/G19 + IJK mapping — решено ✔** (source-check grblHAL/core gcode.c/master, 2026-11-20): `gc_get_plane_data()` — все три плоскости, отказа нет; `#define I_VALUE X_AXIS` — I/J/K literal, ремапа нет. **Наследование GRBL 1.1 (§6.11) подтверждено source'ом** — колонки `=` в §2.1 теперь обоснованы.
 
 ## 7. Спорные строки для ревью (первым делом)
 

@@ -81,9 +81,10 @@ vectors:
     kind: positive
     golden: tier_a/v0/46_arc_R_helix/golden.eid
     files:
+      - { path: tier_a/v0/46_arc_R_helix/arc_R_helix.grbl.ngc,     dialect: grbl-1.1, expect: ok, sha256: null }
       - { path: tier_a/v0/46_arc_R_helix/arc_R_helix.linuxcnc.ngc, dialect: linuxcnc, expect: ok, sha256: null }
     r4_expect: {}
-    note: "GRBL-файл-источник отложен до COVERAGE §6.9 (R+off-plane по GRBL source не подтверждён); golden достаточно для stage-4 эмиссии (IJK+Z)"
+    note: "GRBL R+off-plane подтверждён source-чеком (COVERAGE §6.9, 2026-11-20) — файл материализован"
     notice: false
 
   - id: "N1"

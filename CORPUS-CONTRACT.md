@@ -92,7 +92,7 @@ per-file AST несут реальные спаны, эквивалентнос�
 | 43 | `linear_zero_length_dropped` *(v0.1)* | linear с start == end → отброшен **с notice, не ошибка** (SPEC §3 v0.6); R1-AST only (правило §4 v0.2) |
 | 44 | `wcs_set_here_preset` *(v0.2)* | G10 L20 до первого motion-опа (SPEC §5.3): узел парсится/эмитится, R3; r4_expect: **{} — G10 L20 в словаре GRBL 1.1** (README: Non-Modal), отказа нет |
 | 45 | `path_exact_stop` *(v0.2)* | PATH_MODE exact_stop (G61.1) — третье значение enum; r4_expect: grbl=**warning** (Q3/COVERAGE §5 — потеря exact_stop записывается, не отказ; если бы был отказ — класс SYNTAX по правилу §5, не SEMANTICS) |
-| 46 | `arc_R_helix` *(v0.2)* | R-форма + pitch≠0 — **валидна** (решение (ii), SPEC §6 v0.7: плоскость→normal, центр из R, pitch вне плоскости); LinuxCNC R+helical документирован ✔ (COVERAGE §6.9); GRBL-файл отсутствует до §6.9 |
+| 46 | `arc_R_helix` *(v0.2)* | R-форма + pitch≠0 — **валидна** (решение (ii), SPEC §6 v0.7: плоскость→normal, центр из R, pitch вне плоскости); LinuxCNC и GRBL — оба подтверждены ✔ (COVERAGE §6.9, source-чек); GRBL-файл материализован |
 | 47 | `raw_crlf_fidelity` *(v0.4)* | RAW-блок с CRLF: payload hex сохраняет байты как есть; same-dialect R1-text байт-в-байт (grammar D9 — эмиссия не нормализует); r4_expect: grbl/linuxcnc = `E_RAW_UNTRANSLATABLE` (кросс-диалект RAW запрещён, SPEC §8) |
 
 **r4_expect — сводка non-empty (v0.4; каждое значение явное, не из общего правила):**
