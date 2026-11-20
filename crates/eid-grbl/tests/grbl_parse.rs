@@ -1,5 +1,30 @@
 //! Интеграционные тесты канонизатора GRBL → EID/L1 (этап 2, Агент C).
 //! Пилоты и негативы — corpus/tier_a/v0; допуски — EQUIVALENCE §4 (eps 0.001).
+//!
+//! ЧЕК-ЛИСТ покрытия GRBL-колонки COVERAGE (spec_cov_*; правило → тест):
+//! LEXICAL: UnexpectedChar→errors(lexer), unclosed-paren→errors(lexer),
+//!   word-without-number→errors(lexer), exponent→spec_cov_lex_exponent,
+//!   word>32→errors(lexer), $$/$110=/$garbage→corpus_47+spec_cov_lex_dollar,
+//!   N-word→lexer, %→markers, block-delete→lexer+markers.
+//! MODAL-CONFLICT (→INVALID): motion→modal_violation_detected,
+//!   plane/distance/feed/units/wcs/path→spec_cov_modal_conflicts; solo —
+//!   spec_cov_modal_solo.
+//! ARC §6: IJK G17/18/19×cw/ccw→spec_cov_arc_planes_ijk, helix±→pilot_46(+)/
+//!   spec_cov_arc_planes_ijk(−), R±→pilot_11+spec_cov_arc_r_negative,
+//!   R+pitch→spec_cov_arc_r_pitch, radius-miss→n5a, chord>2R→n5b,
+//!   R-full-circle→n19, rotation-eq→позитивы всех дуг (проходят §6.3).
+//! CYCLES §7 (GRBL: циклы N/A словаря): G81/G83+L→spec_cov_cycles_raw_syntax,
+//!   G84 → spec_cov_cycles_raw_syntax (матрица N/A→SYNTAX; SEMANTICS —
+//!   LinuxCNC-диспозиция, расхождение с буквой брифа — отчёт), G80-naked→
+//!   unit_g80_naked_coords_invalid; разворот/L-лимит — D-зона.
+//! FRAME/WCS §5.3: G10L2/L20→g10_l20_and_l2+pilot_36, L20-mid→n15,
+//!   double-preset→n17, G92-mid→n2, G92-partial→spec_cov_frame_g92_partial,
+//!   G92.1→spec_cov_frame_g92_1_raw, G53-conditions→#37+n1+n16,
+//!   G53-without-motion→spec_cov_frame_g53_no_motion, wcs-solo→spec_cov_frame_wcs_solo.
+//! STATE-EMIT: coolant-переходы→coolant_29(#29)+grbl_emit spec_cov_emit_coolant,
+//!   spindle→grbl_emit spec_cov_emit_spindle, feed-переживает-G0→pilot_03,
+//!   partial-end-default-0→unit_partial_end_at_start.
+//! EMIT-LEGALITY (8 условий)→grbl_emit spec_cov_emit_legality_*; tool_change→#27.
 
 use eid_core::ast::{Op, Point3, Program, Spindle, StartPoint, Units, Wcs};
 use eid_core::diag::ErrorCode;
@@ -353,7 +378,413 @@ fn corpus_37_g53_known_origins_breakpoint_c() {
 }
 
 // ---------------------------------------------------------------------------
-// Юнит: модальные режимы и связывание (SPEC §2/§4)
+// ПОКРЫТИЕ spec_cov_* — GRBL-колонка COVERAGE (см. чек-лист в шапке)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn spec_cov_lex_exponent_is_bad_number() {
+    // Экспонента: read_number читает "1", 'e' → буква E (вне словаря слов) →
+    // whole-line Raw{SYNTAX} (E не в A/B/C/U/V/W — правило unsupported_words).
+    let out = canonicalize_with_notices("G21\nG0 X1e5\nM2\n", "e.ngc").expect("Ok + Raw");
+    assert!(matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }));
+}
+
+#[test]
+fn spec_cov_lex_stage_parse_vs_canonical_verify() {
+    // interface v0.1.2: lexical-диагностика → Stage::Parse;
+    // канонизационный инвариант (unit-switch §2.5) → Stage::Verify.
+    use eid_core::diag::Stage;
+    let d = parse("G21 G90 G94 G17\nG0 X1 Y1 Z1\nG1 &\nM2\n").unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
+    assert_eq!(d[0].stage, Stage::Parse, "lexical должен быть Parse");
+    let d = parse(&corpus("n7_unit_switch_mid/unit_switch_mid.grbl.ngc")).unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::UnsupportedSemantics);
+    assert_eq!(d[0].stage, Stage::Verify, "канон-инвариант должен быть Verify");
+}
+
+#[test]
+fn spec_cov_frame_l20_then_g92_double_preset() {
+    // Смешанные пресетки: G10 L20 → G92 — второй пресет → Err SEMANTICS
+    // (count-гейт ветки G10 L20; CORPUS n17-класс).
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17
+G10 L20 P1 X1.0 Y2.0 Z3.0
+G92 X0.0 Y0.0 Z5.0
+G0 X1 Y1 Z1
+M2
+")),
+        ErrorCode::UnsupportedSemantics
+    );
+}
+
+#[test]
+fn spec_cov_lex_dollar_variants() {
+    // Любая $-строка — конфигурация станка → Raw{SYNTAX}: $$, $110=, $-мусор.
+    for src in ["$$", "$garbage", "$-5=1"] {
+        let out = canonicalize_with_notices(&format!("{src}\nG21 G90 G94 G17\nG0 X1 Y1 Z1\nM2\n"), "d.ngc")
+            .expect("Ok + Raw");
+        assert!(
+            matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }),
+            "{src}: ops[0] не Raw{{SYNTAX}}"
+        );
+    }
+}
+
+#[test]
+fn spec_cov_modal_conflicts() {
+    // Конфликт двух кодов одной группы в кадре → Err INVALID (grbl group violation).
+    // motion покрыт modal_violation_detected; здесь остальные 6 групп.
+    let cases = [
+        "G17 G18",            // plane
+        "G90 G91",            // distance
+        "G93 G94",            // feed
+        "G20 G21",            // units (G20 устанавливает, G21 в том же кадре — смена)
+        "G54 G55",            // wcs
+        "G61 G61",            // path
+    ];
+    for c in cases {
+        assert_eq!(
+            parse(&format!("G0 X1 Y1 Z1\n{c}\nM2\n")).unwrap_err()[0].code,
+            ErrorCode::InvalidInput,
+            "конфликт `{c}` не отловлен"
+        );
+    }
+}
+
+#[test]
+fn spec_cov_modal_solo() {
+    // Каждый код каждой группы легален solo (семь групп). G20/G21-соло-набор
+    // ограничен одной системой единиц (SPEC §2.5) — смена проверена отдельно.
+    let src = "G21 G90 G94 G17 G54 G61\nG0 X1 Y1 Z1\nG55\nG0 X2 Y1 Z1\nG91\nG93\nG1 X1.0 Y1.0 Z1.0 F2.0\nG94\nG56\nG18\nG19\nM2\n";
+    let p = parse(src).expect("solo-коды легальны");
+    assert!(!p.ops.is_empty());
+}
+
+#[test]
+fn spec_cov_arc_planes_ijk() {
+    // IJK: 3 плоскости × cw/ccw × винтовая ±. Центр = старт + пара осей
+    // (I/J/K literal X/Y/Z); направление и 90°-сектор согласованы по геометрии.
+    // G17 cw (+винт): из (0,0,0) в (−5,5,2), центр (0,5,0).
+    let p = parse("G21 G90 G94 G17\nG0 X0 Y0 Z0\nG2 X-5.0 Y5.0 Z2.0 I0.0 J5.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, pitch, dir, sweep_deg, normal, .. } => {
+            assert_pt(center, 0.0, 5.0, 0.0);
+            assert!((pitch.value() - 2.0).abs() <= EPS);
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+            assert!((sweep_deg.value() - 90.0).abs() <= EPS);
+            assert_pt(normal, 0.0, 0.0, 1.0);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // G17 ccw (−винт): центр (5,0,0), e=(5,−5,−2).
+    let p = parse("G21 G90 G94 G17\nG0 X0 Y0 Z0\nG3 X5.0 Y-5.0 Z-2.0 I5.0 J0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, pitch, dir, sweep_deg, normal, .. } => {
+            assert_pt(center, 5.0, 0.0, 0.0);
+            assert!((pitch.value() + 2.0).abs() <= EPS);
+            assert_eq!(*dir, eid_core::ast::Dir::Ccw);
+            assert!((sweep_deg.value() - 90.0).abs() <= EPS);
+            assert_pt(normal, 0.0, 0.0, 1.0);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // G18 cw: пара I(X)+K(Z), нормаль +Y, linear=Y (pitch 2); 90° CW сектор.
+    let p = parse("G21 G90 G94 G18\nG0 X0 Y0 Z0\nG2 X5.0 Y2.0 Z-5.0 I5.0 K0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, normal, sweep_deg, pitch, .. } => {
+            assert_pt(center, 5.0, 0.0, 0.0);
+            assert_pt(normal, 0.0, 1.0, 0.0);
+            assert!((sweep_deg.value() - 90.0).abs() <= EPS, "sweep {}", sweep_deg.value());
+            assert!((pitch.value() - 2.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // G19 ccw: пара J(Y)+K(Z), нормаль +X, linear=X; 90° CCW сектор.
+    let p = parse("G21 G90 G94 G19\nG0 X0 Y0 Z0\nG3 X2.0 Y5.0 Z-5.0 J5.0 K0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, normal, sweep_deg, .. } => {
+            assert_pt(center, 0.0, 5.0, 0.0);
+            assert_pt(normal, 1.0, 0.0, 0.0);
+            assert!((sweep_deg.value() - 90.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn spec_cov_arc_r_negative_and_pitch() {
+    // R<0 → большая дуга (>180°), центр на другой стороне хорды.
+    let p = parse("G21 G90 G94 G17\nG0 X0 Y10 Z0\nG2 X10.0 Y0.0 R-10.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, sweep_deg, .. } => {
+            assert_pt(center, 10.0, 10.0, 0.0);
+            assert!((sweep_deg.value() - 270.0).abs() <= EPS, "sweep {}", sweep_deg.value());
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // R + pitch: винтовая R-форма (SPEC §6.1) — Z-слово вне плоскости = pitch.
+    let p = parse("G21 G90 G94 G17\nG0 X0 Y0 Z0\nG2 X8.0 Y0.0 Z2.0 R5.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, pitch, sweep_deg, .. } => {
+            assert_pt(center, 4.0, -3.0, 0.0);
+            assert!((pitch.value() - 2.0).abs() <= EPS);
+            assert!((sweep_deg.value() - 106.26).abs() <= 0.01, "sweep {}", sweep_deg.value());
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn spec_cov_cycles_raw_syntax() {
+    // COVERAGE §2.5: циклы в словаре GRBL N/A → Raw{SYNTAX} line-level
+    // (в т.ч. с L-словом; G84 «refuse-класс» тоже N/A в GRBL — матрица
+    // старше буквы брифа, см. отчёт). Разворот/L-лимит — D-зона.
+    for g in ["G81 X1.0 Y2.0 Z-3.0 R1.0", "G83 X1.0 Y2.0 Z-5.0 Q1.0 L3", "G84 X1.0 Y2.0 Z-5.0"] {
+        let out = canonicalize_with_notices(&format!("G21 G90 G94 G17\n{g}\nF100.0\nM2\n"), "c.ngc")
+            .expect("Ok + Raw");
+        assert!(
+            matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }),
+            "{g}: не Raw{{SYNTAX}}"
+        );
+    }
+}
+
+#[test]
+fn spec_cov_frame_g92_partial_and_g92_1() {
+    // Частичный G92 → RUNTIME (незаданные оси — неизвестное чтение, §5.3).
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17\nG92 X0.0 Y0.0\nG0 X1 Y1 Z1\nM2\n")),
+        ErrorCode::RuntimeState
+    );
+    // G92.1 → Raw{SEMANTICS} (COVERAGE §2.3, Q4).
+    let out = canonicalize_with_notices("G21 G90 G94 G17\nG92.1\nG0 X1 Y1 Z1\nM2\n", "g.ngc").expect("Ok");
+    assert!(matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+}
+
+#[test]
+fn spec_cov_frame_g53_no_motion() {
+    // G53 без G0/G1 в кадре → INVALID (grbl gcode.c).
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17\nG53\nG0 X1 Y1 Z1\nM2\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn spec_cov_frame_wcs_solo() {
+    // G54..G59 соло — легальный выбор, state.wcs переключается по опам.
+    let src = "G21 G90 G94 G17\nG54\nG0 X1 Y1 Z1\nG55\nG0 X2 Y1 Z1\nG56\nG0 X3 Y1 Z1\nG57\nG0 X4 Y1 Z1\nG58\nG0 X5 Y1 Z1\nG59\nG0 X6 Y1 Z1\nM2\n";
+    let p = parse(src).expect("ok");
+    let wcs_of = |i: usize| match &p.ops[i] {
+        Op::Rapid { state, .. } => state.wcs,
+        _ => unreachable!(),
+    };
+    let expected = [Wcs::G54, Wcs::G55, Wcs::G56, Wcs::G57, Wcs::G58, Wcs::G59];
+    for (i, w) in expected.iter().enumerate() {
+        assert_eq!(wcs_of(i), *w, "оп {i}");
+    }
+}
+
+#[test]
+fn spec_cov_arc_nonzero_start_exact() {
+    // Ненулевой старт на любых осях: арифметика центров/ρ/pitch не вырождается
+    // (± -мутанты arc_block ловятся точными ассертами).
+    // G17 cw 120°: s=(3,7,1), c=(3,2,1), e = c + Rot_cw120(0,5) = (7.33,−0.5,1).
+    let p = parse("G21 G90 G94 G17\nG0 X3.0 Y7.0 Z1.0\nG2 X7.3300 Y-0.5000 I0.0 J-5.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, sweep_deg, pitch, .. } => {
+            assert_pt(center, 3.0, 2.0, 1.0);
+            assert!((sweep_deg.value() - 120.0).abs() <= 0.01, "sweep {}", sweep_deg.value());
+            assert!(pitch.value().abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn spec_cov_arc_r_nonzero_start() {
+    // R-форма с ненулевым d0/d1 и pitch: p̂/sgn/h арифметика не вырождается.
+    // s=(3,7,1), e=(−1,10,4), R5 cw: центр (3.598, 11.964), sweep 60°, pitch 3.
+    let p = parse("G21 G90 G94 G17\nG0 X3.0 Y7.0 Z1.0\nG2 X-1.0 Y10.0 Z4.0 R5.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, sweep_deg, pitch, .. } => {
+            assert_pt(center, 3.598, 11.964, 1.0);
+            assert!((sweep_deg.value() - 60.0).abs() <= 0.01, "sweep {}", sweep_deg.value());
+            assert!((pitch.value() - 3.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn spec_cov_arc_g93_arc_len_and_linear_diagonal() {
+    // G93: arc_len = ρ·sweep (дуга) и len = √(x²+y²+z²) (диагональ) —
+    // формулы длины ловятся точными значениями feed.
+    let p = parse("G21 G90 G93 G17\nG92 X0 Y0 Z0\nG2 X-5.0 Y5.0 Z0.0 I0.0 J5.0 F2.0\nM2\n").expect("ok");
+    match &p.ops[0] {
+        Op::Arc { state, .. } => {
+            let f = state.feed.as_ref().expect("feed").value();
+            // quarter circle ρ=5: len = 5·π/2 ≈ 7.854; feed = 2·len ≈ 15.708.
+            assert!((f - 15.708).abs() <= 0.01, "G93 arc feed {f}");
+        }
+        _ => panic!("op0 не Arc"),
+    }
+    let p = parse("G21 G90 G93 G17\nG92 X0 Y0 Z0\nG1 X10.0 Y20.0 F2.0\nM2\n").expect("ok");
+    match &p.ops[0] {
+        Op::Linear { state, .. } => {
+            let f = state.feed.as_ref().expect("feed").value();
+            assert!((f - 2.0 * 500.0f64.sqrt()).abs() <= 0.01, "G93 diagonal feed {f}");
+        }
+        _ => panic!("op0 не Linear"),
+    }
+}
+
+#[test]
+fn spec_cov_frame_g28_g38_raw() {
+    // COVERAGE §2.1/§2.3: G28 → Raw{MACHINE_TABLE}; G38.2 → Raw{SEMANTICS}.
+    let out = canonicalize_with_notices("G21 G90 G94 G17\nG28\nG0 X1 Y1 Z1\nM2\n", "a.ngc").expect("Ok");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw { code: ErrorCode::RequiresMachineTable, .. }
+    ));
+    let out = canonicalize_with_notices("G21 G90 G94 G17\nG38.2 X1.0\nF50.0\nM2\n", "b.ngc").expect("Ok");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }
+    ));
+}
+
+#[test]
+fn spec_cov_frame_g10_p_variants() {
+    // P вне 1..=6 / нецелое → Err INVALID (guard process_g10);
+    // частичный origin L2 → Raw{MACHINE_TABLE} (таблица хранит старое).
+    for p_word in ["P0", "P7", "P2.5", "P-1"] {
+        assert_eq!(
+            err_code(parse(&format!(
+                "G21 G90 G94 G17\nG10 L2 {p_word} X1.0 Y2.0 Z3.0\nG0 X1 Y1 Z1\nM2\n"
+            ))),
+            ErrorCode::InvalidInput,
+            "{p_word}"
+        );
+    }
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG10 L2 P1 X1.0 Y2.0\nG0 X1 Y1 Z1\nM2\n",
+        "p.ngc",
+    )
+    .expect("Ok + Raw");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw { code: ErrorCode::RequiresMachineTable, .. }
+    ));
+}
+
+#[test]
+fn spec_cov_frame_g91_at_start_and_breakpoint() {
+    // G91 на старте: база = дефолт 0 (SPEC §2 v0.11); G91 в точке разрыва (b)
+    // → RUNTIME (инкремент от неизвестного чтения).
+    let p = parse("G21 G91 G17\nG1 X1.0 Y2.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[0] {
+        Op::Linear { end, .. } => assert_pt(end, 1.0, 2.0, 0.0),
+        _ => panic!("op0 не Linear"),
+    }
+    let src = "G21 G90 G17\nG0 X5.0 Y0 Z0\nG55\nG91\nG1 X1.0 Y1.0 Z1.0\nM2\n";
+    assert_eq!(err_code(parse(src)), ErrorCode::RuntimeState);
+}
+
+#[test]
+fn spec_cov_frame_dist_feed_resets() {
+    // DistAbs/FeedPerMin соло-сброс мод: G91→G90 абсолют; G93→G94 — F как есть.
+    let src = "G21 G90 G94 G17\nG92 X10 Y10 Z10\nG91\nG1 X1.0 Y0 Z0 F100.0\nG90\nG94\nG1 X20.0 Y10.0 Z10.0 F200.0\nM2\n";
+    let p = parse(src).expect("ok");
+    match &p.ops[0] {
+        Op::Linear { end, .. } => assert_pt(end, 11.0, 10.0, 10.0),
+        _ => panic!("op0 не Linear"),
+    }
+    match &p.ops[1] {
+        Op::Linear { state, end, .. } => {
+            // G90: абсолют X20 (не 21 инкрементально); G94: F как есть (не len×F).
+            assert_pt(end, 20.0, 10.0, 10.0);
+            assert_eq!(state.feed.as_ref().map(|n| n.value()), Some(200.0));
+        }
+        _ => panic!("op1 не Linear"),
+    }
+}
+
+#[test]
+fn spec_cov_coolant_ops_state() {
+    // MistOn/CoolantOff соло-руки: M7 → mist в state; M9 → none.
+    let p = parse("G21 G90 G94 G17\nM7\nG0 X1 Y1 Z1\nM9\nG0 X2 Y1 Z1\nM2\n").expect("ok");
+    let cool_of = |i: usize| match &p.ops[i] {
+        Op::Rapid { state, .. } => (state.coolant.flood, state.coolant.mist),
+        _ => unreachable!(),
+    };
+    assert_eq!(cool_of(0), (false, true));
+    assert_eq!(cool_of(1), (false, false));
+}
+
+#[test]
+fn spec_cov_limit_max_source_lines() {
+    // COVERAGE §1.2: ровно 1_000_000 строк — Ok; 1_000_001 — Err LIMIT.
+    let ok_src = format!("{}M2\n", "G21\n".repeat(999_999));
+    assert_eq!(ok_src.lines().count(), 1_000_000);
+    parse(&ok_src).expect("1M строк легальны");
+    let over = format!("{}M2\n", "G21\n".repeat(1_000_000));
+    let d = parse(&over).unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::LimitExceeded);
+    assert_eq!(d[0].limit.as_ref().map(|l| l.threshold), Some("max_source_lines"));
+}
+
+#[test]
+fn spec_cov_limit_max_ops_boundary() {
+    // COVERAGE §1.2: сумма ops+notices; граница 200_000: снизу Ok, +1 → Err.
+    // Ходы различны (нулевые rapid'ы давали бы лишние notices); финальный
+    // zero-length linear даёт notice без опа — проверяет ±-мутант суммы.
+    let base = "G21 G90 G94 G17\nG92 X0 Y0 Z0\n";
+    let ok_moves: String = (0..199_998).map(|i| format!("G0 X{i} Y0 Z0\n")).collect();
+    let ok_src = format!("{base}{ok_moves}G1 X199997 Y0 Z0 F100.0\nM2\n");
+    // ops: 199_998 rapid + 1 ProgramEnd = 199_999; notices: 1 → сумма 200_000.
+    parse(&ok_src).expect("граница снизу легальна");
+    let over_moves: String = (0..199_999).map(|i| format!("G0 X{i} Y0 Z0\n")).collect();
+    let over_src = format!("{base}{over_moves}G1 X199998 Y0 Z0 F100.0\nM2\n");
+    let d = parse(&over_src).unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::LimitExceeded);
+    assert_eq!(d[0].limit.as_ref().map(|l| l.threshold), Some("max_ops_per_program"));
+}
+
+#[test]
+fn spec_cov_arc_near_degenerate_r_notice() {
+    // EQUIVALENCE §4: |cos(sweep/2)| < 1e-3 (±0.12° около 180°) → notice
+    // NearDegenerateRArc, дуга ОСТАЁТСЯ (не отказ, не drop).
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG92 X0 Y10 Z0\nG2 X0.0175 Y-9.99999 R10.0 F100.0\nM2\n",
+        "nd.ngc",
+    )
+    .expect("ok");
+    assert_eq!(out.notices.len(), 1);
+    assert_eq!(
+        out.notices[0].kind,
+        eid_grbl::canonicalize::NoticeKind::NearDegenerateRArc
+    );
+    assert!(matches!(&out.program.ops[0], Op::Arc { .. }));
+}
+
+#[test]
+fn spec_cov_lex_whitespace_and_word_boundary() {
+    // Ведущие/множественные/хвостовые пробелы и табы; граница max_word_chars
+    // (31 цифра Ok / 32 WordTooLong); col в ошибке (мутанты col-арифметики).
+    let toks = eid_grbl::lexer::lex_line("  G1  X5\tY6  ", 1).expect("ok");
+    assert_eq!(toks.len(), 3);
+    let toks = eid_grbl::lexer::lex_line("G 1 X 5", 2).expect("ok");
+    assert_eq!(toks.len(), 2); // G1 + X5
+    let ok = eid_grbl::lexer::lex_line(&format!("X{}", "1".repeat(31)), 3).expect("31 цифра легальна");
+    assert_eq!(ok.len(), 1);
+    let e = eid_grbl::lexer::lex_line(&format!("X{}", "1".repeat(32)), 4).unwrap_err();
+    assert_eq!(e.kind, eid_grbl::lexer::LexErrorKind::WordTooLong);
+    assert_eq!(e.line, 4);
+    let e = eid_grbl::lexer::lex_line("G1 &", 5).unwrap_err();
+    assert_eq!(e.col, 4, "col ошибки: позиция &");
+}
+
 // ---------------------------------------------------------------------------
 
 #[test]

@@ -91,30 +91,26 @@ impl Ectx {
         if st.coolant != self.coolant {
             // Дельта coolant (CORPUS #29): ЛЮБОЕ изменение поля даёт M-коды.
             // Переход к none (из flood / mist / flood+mist) → M9; включения —
-            // M7/M8; частичное выключение при живом втором — единственный
-            // путь M9 (гасит обе) + повторное включение оставшейся.
+            // M7/M8; ЛЮБОЕ выключение оси при живой второй (частичное) —
+            // M9 (гасит обе) + повтор оставшейся (GRBL не умеет точечно).
             let prev = self.coolant;
             let new = st.coolant;
             if !new.flood && !new.mist {
                 self.out.push_str("M9\n");
+            } else if (prev.flood && !new.flood) || (prev.mist && !new.mist) {
+                self.out.push_str("M9\n");
+                if new.mist {
+                    self.out.push_str("M7\n");
+                }
+                if new.flood {
+                    self.out.push_str("M8\n");
+                }
             } else {
-                let mut turned = String::new();
                 if new.mist && !prev.mist {
-                    turned.push_str("M7\n");
+                    self.out.push_str("M7\n");
                 }
                 if new.flood && !prev.flood {
-                    turned.push_str("M8\n");
-                }
-                if turned.is_empty() {
-                    self.out.push_str("M9\n");
-                    if new.mist {
-                        self.out.push_str("M7\n");
-                    }
-                    if new.flood {
-                        self.out.push_str("M8\n");
-                    }
-                } else {
-                    self.out.push_str(&turned);
+                    self.out.push_str("M8\n");
                 }
             }
             self.coolant = new;

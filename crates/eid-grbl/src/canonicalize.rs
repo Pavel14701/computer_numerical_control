@@ -72,8 +72,21 @@ fn span(file: &str, line: u32, len: usize) -> SrcSpan {
     SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }
 }
 
+/// Диагностика с явным этапом: Parse — лексические пути GRBL, Verify —
+/// канонизационные инварианты (§6-геометрия, позиционные правила).
+fn err_staged(
+    stage: eid_core::diag::Stage,
+    code: ErrorCode,
+    msg: impl Into<String>,
+    file: &str,
+    line: u32,
+    len: usize,
+) -> Diagnostic {
+    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage }
+}
+
 fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage: eid_core::diag::Stage::Verify }
+    err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
 }
 
 fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file: &str, line: u32) -> Diagnostic {
@@ -205,10 +218,6 @@ impl Ctx {
         self.notices.push(Notice { kind, message, op_index: idx, op });
     }
 
-    fn line(&self, b: &Block) -> u32 {
-        b.line_no
-    }
-
     fn raw_op(&self, b: &Block, raw_line: &str, code: ErrorCode, reason: &str) -> Op {
         Op::Raw {
             payload_hex: payload_hex(raw_line),
@@ -249,7 +258,8 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
                     "max_word_chars", 32.0, 32.0,
                     "word value exceeds max_word_chars (32)".into(), file, e.line,
                 ),
-                kind => err(
+                kind => err_staged(
+                    eid_core::diag::Stage::Parse,
                     ErrorCode::InvalidInput,
                     format!("lexical error: {:?} at col {}", kind, e.col),
                     file, e.line, e.col as usize,
