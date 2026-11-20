@@ -127,10 +127,11 @@ fn wcs_to_p(w: &Wcs) -> u8 {
     }
 }
 
-/// hex-кодировка байтов строки (grammar D9: чётная длина, A–F uppercase).
+/// hex-кодировка байтов строки (grammar D9: чётная длина, A–F uppercase);
+/// байты verbatim включая \r (CRLF fidelity).
 fn payload_hex(line: &str) -> String {
     let mut s = String::new();
-    for b in line.trim_end_matches('\r').as_bytes() {
+    for b in line.as_bytes() {
         s.push_str(&format!("{:02X}", b));
     }
     s

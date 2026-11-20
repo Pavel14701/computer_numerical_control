@@ -185,7 +185,8 @@ pub fn parse_file(src: &str) -> ParsedFile {
         match lexer::lex_line(line, line_no) {
             Err(e) => out.lex_errors.push(e),
             Ok(toks) if !toks.is_empty() => {
-                out.blocks.push(Block::from_toks(toks, line_no, line.trim_end_matches('\r').to_string()))
+                // raw без \n, но С \r — payload_hex байт-в-байт (grammar D9).
+                out.blocks.push(Block::from_toks(toks, line_no, line.to_string()))
             }
             Ok(_) => {}
         }

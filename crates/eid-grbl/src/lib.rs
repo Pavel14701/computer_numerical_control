@@ -11,6 +11,7 @@ use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
 
 pub mod block;
+pub mod emit;
 pub mod canonicalize;
 pub mod gcode;
 pub mod lexer;
@@ -47,7 +48,7 @@ impl Adapter for GrblAdapter {
         Ok(out.program)
     }
 
-    fn emit(&self, _program: &Program) -> Result<String, Vec<Diagnostic>> {
-        todo!("Агент C, итерация 3: emitter v0")
+    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+        emit::emit(program)
     }
 }

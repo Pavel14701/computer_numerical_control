@@ -3,5 +3,8 @@ name = "eid-grbl"
 version = "0.1.0"
 edition = "2021"
 
+[dev-dependencies]
+eid-harness = { path = "../eid-harness" }
+
 [dependencies]
 eid-core = { path = "../eid-core" }
