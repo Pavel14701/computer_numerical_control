@@ -46,7 +46,7 @@
 
 use crate::canonicalize::{plane_def, to_f64, Plane};
 use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Program, Spindle, StartPoint, Units, Wcs};
-use eid_core::diag::{Diagnostic, ErrorCode};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_core::emitter::fmt_num;
 use eid_core::parser;
 
@@ -78,7 +78,7 @@ fn num_text(n: &Num) -> String {
 }
 
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: None, options: Vec::new(), limit: None }
+    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src: None, options: Vec::new(), limit: None }
 }
 
 fn finite3(a: &Num, b: &Num, c: &Num, what: &'static str) -> Result<(), Vec<Diagnostic>> {

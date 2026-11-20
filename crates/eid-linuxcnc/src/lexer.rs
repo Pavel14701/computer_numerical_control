@@ -15,7 +15,7 @@
 //!  * прочий лексический мусор → E_INVALID_INPUT.
 
 use eid_core::ast::SrcSpan;
-use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
+use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo, Stage};
 
 /// Пороги E_LIMIT_EXCEEDED (COVERAGE §1.2, v0.0 фиксированные).
 pub const MAX_WORD_CHARS: usize = 32;
@@ -73,6 +73,7 @@ pub fn limit_diag(
 ) -> Diagnostic {
     Diagnostic {
         code: ErrorCode::LimitExceeded,
+        stage: Stage::Parse,
         message: format!("limit exceeded: {threshold} = {threshold_value}, actual = {actual}"),
         src: Some(SrcSpan {
             file: file.to_string(),
@@ -114,6 +115,7 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
     let fail = |code: ErrorCode, msg: String, col: usize| -> Vec<Diagnostic> {
         vec![Diagnostic {
             code,
+            stage: Stage::Parse,
             message: msg,
             src: Some(SrcSpan {
                 file: file.to_string(),

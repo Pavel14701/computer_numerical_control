@@ -37,7 +37,7 @@ use crate::lexer::{code_num, lex_program, word_num, LineData, LineTok, Word, MAX
 use eid_core::ast::{
     Dir, Frame, Num, Op, PathMode, Program, SrcSpan, StartPoint, State, Units, Wcs,
 };
-use eid_core::diag::{Diagnostic, ErrorCode};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_core::parser::{Notice, NoticeKind};
 use eid_core::ast::{Coolant, Spindle};
 
@@ -163,6 +163,7 @@ impl St {
 
     fn push_diag(&mut self, code: ErrorCode, msg: impl Into<String>, line_no: usize, line: &str) {
         self.diags.push(Diagnostic {
+            stage: Stage::Parse,
             code,
             message: msg.into(),
             src: Some(self.src(line_no, line)),
@@ -190,6 +191,7 @@ impl St {
 
 fn fatal(file: &str, code: ErrorCode, msg: impl Into<String>, line_no: usize, line: &str) -> Vec<Diagnostic> {
     vec![Diagnostic {
+        stage: Stage::Parse,
         code,
         message: msg.into(),
         src: Some(SrcSpan {
@@ -1643,6 +1645,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     let end_count = st.ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })).count();
     if end_count == 0 {
         errors.push(Diagnostic {
+            stage: Stage::Verify,
             code: ErrorCode::InvalidInput,
             message: "program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)".into(),
             src: None,
@@ -1652,6 +1655,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     }
     if end_count > 1 {
         errors.push(Diagnostic {
+            stage: Stage::Verify,
             code: ErrorCode::InvalidInput,
             message: format!("дубликат program_end: {end_count} × M2/M30 (SPEC §3; N13)"),
             src: None,
@@ -1663,6 +1667,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         Some(last) if !matches!(last, Op::ProgramEnd { .. }) => {
             let src = op_src(last);
             errors.push(Diagnostic {
+                stage: Stage::Verify,
                 code: ErrorCode::InvalidInput,
                 message: "program_end не последний (опы после M2/M30 запрещены, SPEC §3; N12)".into(),
                 src: Some(src),
@@ -1672,6 +1677,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         }
         None => {
             errors.push(Diagnostic {
+                stage: Stage::Verify,
                 code: ErrorCode::InvalidInput,
                 message: "пустая программа: program_end обязателен (SPEC §3)".to_string(),
                 src: None,
@@ -1729,6 +1735,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         match o {
             Op::Arc { start: StartPoint::Unknown, src, .. } => {
                 errors.push(Diagnostic {
+                    stage: Stage::Verify,
                     code: ErrorCode::RuntimeState,
                     message: "arc с start=unknown (защита, SPEC §2 Q11)".into(),
                     src: Some(src.clone()),
@@ -1739,6 +1746,7 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
             Op::Linear { state, src, .. } | Op::Arc { state, src, .. } => {
                 if state.feed.is_none() {
                     errors.push(Diagnostic {
+                        stage: Stage::Verify,
                         code: ErrorCode::InvalidInput,
                         message: "linear/arc без F до первого содержательного хода — E_INVALID_INPUT (SPEC §3)".into(),
                         src: Some(src.clone()),
