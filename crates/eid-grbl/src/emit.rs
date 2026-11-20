@@ -122,7 +122,7 @@ impl Ectx {
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>, src: Option<eid_core::ast::SrcSpan>) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src, options: Vec::new(), limit: None }
+    Diagnostic { code, message: msg.into(), src, options: Vec::new(), limit: None, stage: eid_core::diag::Stage::Emit }
 }
 
 // ---------------------------------------------------------------------------

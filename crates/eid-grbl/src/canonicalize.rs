@@ -73,7 +73,7 @@ fn span(file: &str, line: u32, len: usize) -> SrcSpan {
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None }
+    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage: eid_core::diag::Stage::Verify }
 }
 
 fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file: &str, line: u32) -> Diagnostic {
@@ -83,6 +83,7 @@ fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file
         src: Some(span(file, line, 0)),
         options: Vec::new(),
         limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+        stage: eid_core::diag::Stage::Verify,
     }
 }
 

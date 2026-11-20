@@ -9,7 +9,7 @@
 
 use eid_core::adapter::Adapter;
 use eid_core::ast::{Op, Program, SrcSpan};
-use eid_core::diag::{Diagnostic, ErrorCode};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 
 /// Кросс-диалектная трансляция с проверкой RAW-правила:
 /// 1) `parse` от источника;
@@ -63,6 +63,7 @@ fn checked_emit(
 /// перечислены (`options` + первый в `src`), количество — в message.
 fn raw_refusal(raw_spans: &[&SrcSpan]) -> Diagnostic {
     Diagnostic {
+        stage: Stage::Emit,
         code: ErrorCode::RawUntranslatable,
         message: format!(
             "cross-dialect translation of a program containing {} RAW op(s) is forbidden (SPEC §8.2: same-dialect only)",
@@ -71,6 +72,8 @@ fn raw_refusal(raw_spans: &[&SrcSpan]) -> Diagnostic {
         src: raw_spans.first().map(|s| (*s).clone()),
         options: raw_spans.iter().map(|s| format_span(s)).collect(),
         limit: None,
+        // Translate (EID → целевой диалект) — emit-сторона потока
+        // parse → canonicalize → verify → emit (diag.rs, итерация 4).
     }
 }
 
@@ -134,6 +137,7 @@ mod tests {
             let raw = p.ops.iter().any(|o| matches!(o, Op::Raw { .. }));
             if raw && self.refuse_raw_cross {
                 return Err(vec![Diagnostic {
+                    stage: Stage::Emit,
                     code: ErrorCode::RawUntranslatable,
                     message: "stub refuses raw".into(),
                     src: None,
@@ -224,6 +228,7 @@ mod tests {
             }
             fn emit(&self, _p: &Program) -> Result<String, Vec<Diagnostic>> {
                 Err(vec![Diagnostic {
+                    stage: Stage::Emit,
                     code: ErrorCode::UnsupportedSyntax,
                     message: "op вне словаря цели".into(),
                     src: None,

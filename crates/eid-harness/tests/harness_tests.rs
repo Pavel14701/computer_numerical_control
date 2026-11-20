@@ -13,7 +13,7 @@ use eid_core::ast::{
     Coolant, Dir, Frame, Num, Op, PathMode, Point3, Program, SrcSpan, StartPoint, State, Units,
     Wcs,
 };
-use eid_core::diag::{Diagnostic, ErrorCode};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
 use eid_harness::manifest::{self, FileEntry, Kind, Manifest, Outcome, Tier, Vector};
 use eid_harness::runner::{self, Registry, Status};
@@ -696,7 +696,7 @@ impl MockAdapter {
 }
 
 fn diag(code: ErrorCode) -> Diagnostic {
-    Diagnostic { code, message: "mock refusal".into(), src: None, options: vec![], limit: None }
+    Diagnostic { code, stage: Stage::Parse, message: "mock refusal".into(), src: None, options: vec![], limit: None }
 }
 
 fn mock_program(raw: Option<ErrorCode>) -> Program {
