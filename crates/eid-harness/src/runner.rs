@@ -132,8 +132,9 @@ pub fn run(manifest: &Manifest, adapters: &Registry) -> Report {
 
 fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffConfig) -> VectorReport {
     let mut checks = Vec::new();
-    // Ok-распарсенные AST файлов (для R3 и R4-негативов, CORPUS v0.5.1).
-    let mut parsed_ok: Vec<(String, eid_core::ast::Program)> = Vec::new();
+    // Ok-распарсенные AST файлов (для R3 и R4-негативов, CORPUS v0.5.1):
+    // (метка-цель, диалект источника, AST).
+    let mut parsed_ok: Vec<(String, String, eid_core::ast::Program)> = Vec::new();
 
     // --- Golden: R1-AST (parse→emit==файл байт-в-байт→parse→diff=0) + R2 -----
     let golden_ast = match &v.golden {
@@ -276,7 +277,7 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
                 if v.kind == crate::manifest::Kind::Negative
                     && matches!(f.expect, Outcome::Ok | Outcome::Warning)
                 {
-                    parsed_ok.push((target.clone(), program.clone()));
+                    parsed_ok.push((target.clone(), f.dialect.clone(), program.clone()));
                 }
 
                 // R1-text: same-dialect RAW round-trip, payload байт-в-байт
@@ -300,11 +301,13 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
         }
     }
 
-    // --- R4: ожидания эмиссии (r4_expect; CORPUS §6, правка v0.5.1) ----------
-    // Источник AST: golden (позитивы) либо Ok-распарсенные файлы (негативы:
-    // parse(файл) → Ok → эмиссия AST в каждую цель из r4_expect → ожидаемый
-    // код; единственный тест E_RAW_UNTRANSLATABLE на N3/#47-диспозицию — RAW
-    // в AST отказывает цели трансляции, SPEC §8.2). Нет адаптера цели →
+    // --- R4: ожидания эмиссии (r4_expect; CORPUS §6, v0.5.1 + v0.5.3) --------
+    // Источник AST: golden (позитивы — все цели отказывают: golden диалектно-
+    // нейтрален) либо Ok-распарсенные файлы (негативы). v0.5.3: у негативов
+    // r4_expect = ТОЛЬКО кросс-пары (цель ≠ диалект источника файла);
+    // same-dialect RAW-эмиссия легальна (verbatim) — пара фиксируется как
+    // Skipped/not-applicable, R1-text через Adapter::emit не ломается
+    // (замороженный trait остаётся без source-dialect). Нет адаптера цели →
     // Pending; нет Ok-источника (структурный негатив) → Skipped.
     for (dialect, expect) in &v.r4_expect {
         let adapter = match adapters.get(dialect) {
@@ -318,9 +321,12 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
                 continue;
             }
         };
-        let sources: Vec<(String, &eid_core::ast::Program)> = match &golden_ast {
-            Some(g) => vec![("golden".to_string(), g)],
-            None => parsed_ok.iter().map(|(t, p)| (t.clone(), p)).collect(),
+        let sources: Vec<(String, Option<&str>, &eid_core::ast::Program)> = match &golden_ast {
+            Some(g) => vec![("golden".to_string(), None, g)],
+            None => parsed_ok
+                .iter()
+                .map(|(t, d, p)| (t.clone(), Some(d.as_str()), p))
+                .collect(),
         };
         if sources.is_empty() {
             checks.push(Check {
@@ -333,8 +339,22 @@ fn run_vector(v: &Vector, eid: &EidTextAdapter, adapters: &Registry, cfg: &DiffC
             });
             continue;
         }
-        for (label, program) in &sources {
+        for (label, src_dialect, program) in &sources {
             let target = format!("{label}→{dialect}");
+            // v0.5.3: same-dialect пара у негатива — not-applicable.
+            if let Some(sd) = src_dialect {
+                if *sd == dialect {
+                    checks.push(Check {
+                        relation: "R4",
+                        target,
+                        status: Status::Skipped(
+                            "same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3) — r4-проверка неприменима"
+                                .into(),
+                        ),
+                    });
+                    continue;
+                }
+            }
             let status = match adapter.emit(program) {
                 Err(diags) => match expect {
                     Outcome::Code(c) if diags.iter().any(|dg| dg.code == *c) => Status::Pass,

@@ -989,20 +989,25 @@ fn runner_r4_negative_file_as_source() {
         notice: false,
     };
 
-    // Line-level негатив (Ok + RAW в AST): эмиссия отказывает ожидаемым кодом → Pass.
-    let m1 = Manifest {
-        corpus_version: "t".into(),
-        vectors: vec![mk_neg("mock-raw-sem", Outcome::Ok, vec![ErrorCode::UnsupportedSemantics])],
-    };
+    // Line-level негатив (Ok + RAW в AST), v0.5.3: same-dialect цель → Skipped
+    // (RAW-эмиссия легальна, verbatim), кросс-цель → ожидаемый код отказа.
+    let mut neg = mk_neg("mock-raw-sem", Outcome::Ok, vec![ErrorCode::UnsupportedSemantics]);
+    neg.r4_expect.insert("mock-raw-sem".to_string(), Outcome::Code(ErrorCode::RawUntranslatable));
+    let m1 = Manifest { corpus_version: "t".into(), vectors: vec![neg] };
     let rep1 = runner::run(&m1, &reg);
     let r4 = rep1.checks("R4");
-    assert_eq!(r4.len(), 1, "{:?}", rep1.vectors);
-    assert!(matches!(r4[0].status, Status::Pass), "{:?}", r4[0]);
-    // Цель в target — источник файл, не golden.
+    assert_eq!(r4.len(), 2, "{:?}", rep1.vectors);
+    // same-dialect (source mock-raw-sem → цель mock-raw-sem): Skipped/not-applicable.
+    let same = r4.iter().find(|c| c.target.ends_with("→mock-raw-sem")).expect("same-dialect check");
+    assert!(matches!(same.status, Status::Skipped(_)), "{:?}", same);
+    // кросс (source mock-raw-sem → цель mock-rawrefuse): Pass — E_RAW_UNTRANSLATABLE.
+    let cross = r4.iter().find(|c| c.target.ends_with("→mock-rawrefuse")).expect("cross check");
+    assert!(matches!(cross.status, Status::Pass), "{:?}", cross);
+    // Источник — файл, не golden.
     assert!(
-        r4[0].target.ends_with("→mock-rawrefuse") && !r4[0].target.starts_with("golden"),
+        !cross.target.starts_with("golden"),
         "{}",
-        r4[0].target
+        cross.target
     );
 
     // Тот же негатив, но эмиссия успешна (AST без RAW) → Fail.
