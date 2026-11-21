@@ -1004,6 +1004,7 @@ notice = true
 path = "tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SYNTAX"]
 
 [[vectors]]
 id = "N12"

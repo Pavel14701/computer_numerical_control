@@ -698,22 +698,28 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
         n3.files[0].expected_diags,
         vec![ErrorCode::UnsupportedSyntax]
     );
-    // N11 — Err-класс с CORPUS v0.5.2 (подпрограмма структурна: после M98
-    // поток управления расходится): expect = код отказа, expected_diags пуст.
+    // N11 — РЕВИЗИЯ v0.16 (классификация §9 2026-11-22; CORPUS v0.5.2
+    // «структурный Err» устарел): M98 → line-level Raw, Ok + SYNTAX-диаг.
     let n11 = v("N11");
+    assert!(matches!(n11.files[0].expect, Outcome::Ok));
     assert_eq!(
-        n11.files[0].expect,
-        Outcome::Code(ErrorCode::UnsupportedSyntax)
+        n11.files[0].expected_diags,
+        vec![ErrorCode::UnsupportedSyntax]
     );
-    assert!(n11.files[0].expected_diags.is_empty());
-    // Класс-списки CORPUS §1.2 v0.5.2: Err = {N1,N2,N4,N5a,N5b,N6,N7,N11,N12,
-    // N13,N14,N15,N16,N17,N19}; line-level = {N3,N8,N9,N10,N18} — сверка
-    // манифеста со списком (loader не знает о классах — проверяем форму).
+    // N14 — РЕВИЗИЯ v0.16: auto-PEND → Ok + notice (Notice, не E-код —
+    // expected_diags пуст); вектор пиннит auto-PEND, не отказ.
+    let n14 = v("N14");
+    for f in &n14.files {
+        assert!(matches!(f.expect, Outcome::Ok), "N14 auto-PEND Ok");
+        assert!(f.expected_diags.is_empty(), "N14: notice — не E-код");
+    }
+    // Класс-списки CORPUS §1.2 (ревизия v0.6.7): Err = {N1,N2,N4,N5a,N5b,N6,
+    // N7,N12,N13,N15,N16,N17,N19}; line-level = {N3,N8,N9,N10,N11,N14,N18}
+    // (N11/N14 переехали по SPEC v0.16).
     let err_class = [
-        "N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N11", "N12", "N13", "N14", "N15", "N16",
-        "N17", "N19",
+        "N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N12", "N13", "N15", "N16", "N17", "N19",
     ];
-    let line_class = ["N3", "N8", "N9", "N10", "N18"];
+    let line_class = ["N3", "N8", "N9", "N10", "N11", "N14", "N18"];
     for id in err_class {
         let vv = v(id);
         for f in &vv.files {
