@@ -89,7 +89,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
     let mut p = p.clone();
     let expect = match id {
         "M1" => {
-            // sweep→0+ε при start==end → drop+notice (SPEC §3/§6, #13)
+            // sweep→0+ε при start==end: level-gated Ok/VerifyErr (SPEC §3 v0.17: center≠start → 360°; #13)
             let a = first_arc(&mut p)?;
             if let Op::Arc {
                 end,
