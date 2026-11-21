@@ -33,7 +33,7 @@
 | 5 | R3 (any-to-any) 48/48 | ✅ | v7: R3-golden 83/0 (48 поз. + cycle-семья), R3-consistency 35/0 |
 | 6 | R4 — правильные коды отказов | ✅ | legality-таблицы (ConversionTarget) ↔ manifest r4_expect: **0 расхождений** (тест C); негативы 20/20 two-class |
 | 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | 92/92, crash=0: Ok 15 / SYNTAX 25 / INVALID 43 / RUNTIME 9 (D-прогон, `corpus/tier_b/_sweep_analysis.txt`) |
-| 8 | Симуляция | ⚠️ mock | mock-sim (обратный parse + structural + axis_limits) — e2e зелёный; **real LinuxCNC не установлен**, запуск — post-MVP решение |
+| 8 | Симуляция | ✅ **real + mock** | **Real LinuxCNC 2.9 rs274 в Docker** (`eid-linuxcnc-sim`): 38/38 LinuxCNC v1 файлов интерпретированы (37 Pass + #27 с tool.tbl); mock-sim (обратный parse + structural + axis_limits) — также зелёный; real sim использует headless rs274 без GUI (Dockerfile: `docker/linuxcnc-sim.Dockerfile`) |
 | 9 | Demo: translate grbl→linuxcnc | ✅ | e2e: pilot #01 → файл создан → parse(output) ≡ parse(input) |
 | 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5 demo-цикл) |
 | 11 | REPORT.md | ✅ | этот документ |
