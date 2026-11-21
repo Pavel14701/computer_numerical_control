@@ -1,0 +1,132 @@
+RS274-SOLO-ERR | published | gcb_ContourHolesOnGrid_4x2y_A30_B20_22.5deg.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_ContourHolesOnGrid_90deg.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_ContourRect_G40.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_ContourRect_G41.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_TEST_MillPocketCircle_SO30.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_TEST_MillPocketCircle_SO50.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_contourMillHolesGrid_001.gcode.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gcb_spiral.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | grbljs_Circle_Diamond_Square_Calibration.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | grbljs_arc-ijk.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_arc-ijk.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G2 X20Y0 I0 J-20.0
+ 
+RS274-SOLO-ERR | published | grbljs_arc-xz-plane.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_arc-xz-plane.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G2 X20Z0 I0 K-20.0
+ 
+RS274-SOLO-ERR | published | grbljs_arc-yz-plane.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_arc-yz-plane.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G2 Y20Z0 J0 K-20.0
+ 
+RS274-SOLO-ERR | published | grbljs_circle-inch.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_circle-inch.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G00 X0. Y0. Z0.25
+ 
+RS274-SOLO-ERR | published | grbljs_circle.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_circle.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G00 X0 Y0 Z5
+ 
+RS274-SOLO-ERR | published | grbljs_full-circle-without-xyz.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | grbljs_g2-arc.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_g2-arc.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G01 X10
+ 
+RS274-SOLO-ERR | published | grbljs_helical-thread-milling.gcode | rs274 exit exit code: 1: executing
+CANON-DIV | published | grbljs_jsdc-laser.gcode | 4108 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 2391 vs 2387" })
+RS274-SOLO-ERR | published | grbljs_jsdc.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | grbljs_jsdc.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G0 X0 Y0 F2540
+ 
+RS274-SOLO-ERR | published | grbljs_sample.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_cws_fresa.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_cws_torno.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_buchse.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_dwell.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_eck3.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_ltr.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_m_retract.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_ddp_simple_square.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_pycnc_circles.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_pycnc_rects.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_pycnc_test_parser.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_shpk_MIT_EC_Logo.nc | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | mit_shpk_MIT_EC_Logo.nc | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G4 P0.1
+ 
+RS274-SOLO-ERR | published | mit_shpk_ncdrill1.tap | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mit_svg2g_circular_interpolation.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | mit_svg2g_circular_interpolation.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G3 X7 Y2 R1.703 F300
+ 
+RS274-SOLO-ERR | published | mit_svg2g_shapes.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | mit_svg2g_shapes.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G1 X105.925 Y108.499 F300
+ 
+RS274-SOLO-ERR | published | mit_svg2g_square.gcode | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | mit_svg2g_square.gcode | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+G1 X8 Y2.5 F300
+ 
+CANON-DIV | published | mit_tball_tball-engrave.gcode | 4474 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 3449 vs 3445" })
+CANON-DIV | published | mit_tball_tball.gcode | 3575 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 2699 vs 2696" })
+RS274-SOLO-ERR | published | olle_top_cont.tap | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | olle_top_trace_finish.tap | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | vince_BewareOfDog_v10.nc | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | vince_BewareOfDog_v10.nc | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+(Load tool number 4 and subprogram BewareOfDog v10_3_T4)
+ 
+RS274-SOLO-ERR | published | vince_BewareOfDog_v10_2_T2.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | vince_BewareOfDog_v10_3_T4.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | vince_BrushRabbitv4.nc | rs274 exit exit code: 1: executing
+RS274-PAIR-ERR | published | vince_BrushRabbitv4.nc | rs274 failed (exit code: 1): executing
+File ended with no percent sign or program end
+(Load tool number 7 and subprogram BrushRabbitv4_3_Engrave3_T7)
+ 
+CANON-DIV | published | vince_tictactoe1.nc | 1504 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 1804 vs 980" })
+RS274-SOLO-ERR | published | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_configs_sim_gmoccapy_macros_change.ngc | rs274 exit exit code: 1: executing
+CANON-DIV | local-dev | lcnc_nc_files_3dtest.ngc | 1 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 5 vs 61" })
+CANON-DIV | local-dev | lcnc_nc_files_arcspiral.ngc | 3907 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 1015 vs 1014" })
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_comp-g1.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_comp311.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_comp311_2.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_cone.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_g76.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_increment.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_arc1.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_arc2.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_backlash.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_db25.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_gosper.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_butterfly-yz.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_butterfly-zx.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_nurbs-yz.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_nurbs-zx.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_trident-yz.ngc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | lcnc_nc_files_nurbs_G5_trident-zx.ngc | rs274 exit exit code: 1: executing
+CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc | 3 div | первый: Some(CanonDivergence { index: 5, detail: "op mismatch: USE_LENGTH_UNITS vs SET_FEED_RATE" })
+CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc | 3 div | первый: Some(CanonDivergence { index: 5, detail: "op mismatch: USE_LENGTH_UNITS vs SET_FEED_RATE" })
+CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc | 7 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 17 vs 16" })
+CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc | 7 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 17 vs 16" })
