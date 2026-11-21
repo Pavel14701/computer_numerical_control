@@ -1,24 +1,26 @@
-# REPORT — MVP-цикл, итерации 0–4
+# REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-21 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии на момент отчёта:** SPEC v0.15 · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.7.1 · CORPUS v0.6.5 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных)**
+**Версии на момент отчёта:** SPEC v0.15 (v0.15.1 micro) · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.7.1 · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 92 Tier B (61 published / 60 local-dev)**
 
 ---
 
 ## 1. Статус: что построено
 
-Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (92 файла: 32 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, sim mock (real LinuxCNC не установлен — см. ограничения).
+Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **448 тестов passed / 0 failed** · 60 коммитов · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B 92/92 crash=0 · mutation-testing kill-rate 82.2% · метаморфные инварианты (комментарии/whitespace/N-слова/регистр/line-endings) зелёные · grammar-conformance 57 тестов по 33 продукциям.
+**Числа:** **468 тестов passed / 0 failed** · 87 коммитов · 16 ревизий спеки · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** · mutation-testing kill-rate: grbl 82.2% / workspace 75.5% · метаморфные инварианты (комментарии/whitespace/N-слова/регистр/line-endings) зелёные · grammar-conformance 57 тестов по 33 продукциям · **e2e48-матрица: 141 направлений по 48 позитивам через живой CLI**.
 
-## Итерация 5 — дополнительные слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
+## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
-- **Verify-pass как отдельный проход** (`eid_core::verify`, вызываемый на любом этапе пайплайна) + `Diagnostic.stage` (Parse/Canonicalize/Verify/Emit) — stage-атрибуция в runner-отчётах и CLI-выводе (`[emit]`, `[verify]`); интерфейс v0.1.2 (coordinated transit: grbl 3 / linuxcnc 11 / harness 1 — все закрыты).
-- **Legality-таблицы обеих машин** (ConversionTarget-паттерн): legal/illegal + коды как данные; `emit` проверяет AST против таблицы (единый путь отказа, защита от дрейфа кодов); cross-check «таблица ↔ manifest r4_expect» — 0 расхождений.
-- **Mutation-фаззер M1–M17 + AST-driven generator** (Tier A v1, seeded): panic-freedom подтверждена на byte-soup (0 паник × 2 адаптера), emit-отказы мутированных AST = инварианты Verify-этапа работают (refinement уровней зафиксирован), M7-refinement (инъекция на связных ходах).
-- **Метаморфные отношения** (комментарии/line-ending LF-CRLF-MIXED/whitespace/регистр/N-слова → идентичный AST): первый прогон нашёл 10 «нарушений» → расследование D → артефакт компаратора (PartialEq с provenance) → компаратор заменён на semantic_diff (EQUIVALENCE §3); постоянные тест-пары в eid-linuxcnc.
-- **Grammar-conformance**: 57 тестов по 33 продукциям grammar.ebnf (дрейф грамматика↔парсер детектируется; TableGen-урок без новых deps).
-- **rs274ngc source-check**: дефолт retract = G99 подтверждён source'ом (`interp_setup.cc:152`) — §6.13 закрыт ✔.
+- **Verify-pass** (`eid_core::verify`, отдельный проход на любом этапе) + `Diagnostic.stage` (Parse/Canonicalize/Verify/Emit) — stage-атрибуция в runner-отчётах и CLI (`[emit]`, `[verify]`); интерфейс v0.1.2 (transit: grbl 3 / linuxcnc 11 / harness 1 — все закрыты).
+- **Legality-таблицы обеих машин** (ConversionTarget-паттерн): legal/illegal + коды как данные; `emit` проверяет AST против таблицы; cross-check «таблица ↔ manifest r4_expect» — **0 расхождений**.
+- **Mutation-фаззер M1–M17 + AST-driven generator** (Tier A v1, seeded): panic-freedom (0 паник на byte-soup × 2 адаптера × 5 повторов = 210 прогонов), 18 находок — **0 новых классов, все известные Verify-инварианты** (refinement мутаторов зафиксирован).
+- **Метаморфные отношения** (комментарии/line-ending/whitespace/регистр/N-слова → идентичный AST): первый прогон нашёл 10 «нарушений» → расследование D → **артефакт компаратора** (PartialEq с SrcSpan provenance) → semantic_diff (EQUIVALENCE §3); постоянные тест-пары в eid-linuxcnc.
+- **Grammar-conformance**: 57 тестов по 33 продукциям grammar.ebnf.
+- **cargo-mutants workspace-wide**: 2061 мутантов; kill-rate: grbl 82.2% / core 80.3% / linuxcnc 66.6% (зона D — усилена) / harness 73.4% → общий 75.5%.
+- **Diversity-сбор batch 2**: +29 published (61 total), **6/6 семейств чек-листа** (multi-Z, сверловка, G18/G19, helical, 3D-контуры, радиусные цепочки); 2D-skew первого батча снят.
+- **rs274ngc source-check**: дефолт retract = **G99 подтверждён source'ом** (`interp_setup.cc:152`) — §6.13 закрыт ✔.
 
 ---
 
@@ -26,20 +28,26 @@
 
 | # | Критерий | Статус | Доказательство |
 |---|---|---|---|
-| 1 | `cargo test --workspace` зелёный | ✅ | 257 passed / 0 failed (финальный прогон) |
-| 2 | R1-AST 48/48 golden | ✅ | REPORT-ITER23 v7: R1 48/48 |
-| 3 | R1-text (RAW byte-exact) | ✅ | 8/8 Pass, включая #47 (`24240D0A`, D9-терминатор, CRLF), N3/N9 |
+| 1 | `cargo test --workspace` зелёный | ✅ | **468 passed / 0 failed** (финальный прогон) |
+| 2 | R1-AST 48/48 golden | ✅ | checkpoint v7: R1 48/48 |
+| 3 | R1-text (RAW byte-exact) | ✅ | **8/8 Pass**, включая #47 (`24240D0A`, D9-терминатор, CRLF), N3/N9 |
 | 4 | R2 canon stability 48/48 | ✅ | v7 |
-| 5 | R3 (any-to-any) 48/48 | ✅ | v7: R3-golden 83/0 (48 поз. + cycle-семья), R3-consistency 35/0 |
-| 6 | R4 — правильные коды отказов | ✅ | legality-таблицы (ConversionTarget) ↔ manifest r4_expect: **0 расхождений** (тест C); негативы 20/20 two-class |
-| 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | 92/92, crash=0: Ok 15 / SYNTAX 25 / INVALID 43 / RUNTIME 9 (D-прогон, `corpus/tier_b/_sweep_analysis.txt`) |
-| 8 | Симуляция | ✅ **real + mock** | **Real LinuxCNC 2.9 rs274 в Docker** (`eid-linuxcnc-sim`): 38/38 LinuxCNC v1 файлов интерпретированы (37 Pass + #27 с tool.tbl); mock-sim (обратный parse + structural + axis_limits) — также зелёный; real sim использует headless rs274 без GUI (Dockerfile: `docker/linuxcnc-sim.Dockerfile`) |
+| 5 | R3 (any-to-any) 48/48 | ✅ | v7: R3-golden **83/0** (48 поз. + cycle-семья), R3-consistency 35/0 |
+| 6 | R4 — правильные коды отказов | ✅ | legality-таблицы (ConversionTarget) ↔ manifest r4_expect: **0 расхождений**; негативы 20/20 two-class |
+| 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | **121/121, crash=0**: Ok 15 / INVALID 62 / SYNTAX 25 / RUNTIME 9 (D-прогон + diversity batch 2) |
+| 8 | Симуляция | ✅ **real + mock** | **Real LinuxCNC 2.9 rs274 в Docker** (`eid-linuxcnc-sim`): 38 LinuxCNC v1 файлов, **37/38 rs274 exit 0**; #27 с tool.tbl также exit 0; #47 RAW — ожидаемый отказ by design (SPEC §8.2); mock-sim — также зелёный; headless rs274 без GUI (`docker/linuxcnc-sim.Dockerfile`) |
 | 9 | Demo: translate grbl→linuxcnc | ✅ | e2e: pilot #01 → файл создан → parse(output) ≡ parse(input) |
-| 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5 demo-цикл) |
+| 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5) |
 | 11 | REPORT.md | ✅ | этот документ |
-| 12 | CHANGELOG актуален | ✅ | ведётся с первого коммита; каждое изменение документа = запись + bump; **пробелы за период итераций 4–5 найдены аудитом и заполнены** (SPEC v0.15/v0.15.1, CORPUS v0.6.5, PLAN v0.1.3/§5а/§5б) |
+| 12 | CHANGELOG актуален | ✅ | ведётся с первого коммита; каждое изменение документа = запись + bump; **пробелы найдены аудитом и заполнены** (SPEC v0.15/v0.15.1, CORPUS v0.6.4/v0.6.5, PLAN v0.1.2/v0.1.3/§5а/§5б) |
 
-**Итог: 11/12 полностью, 1 (#8) — mock с честной пометкой. Блокеров нет.**
+**Итог: 11/12 полностью, 1 (#8) — real + mock. Блокеров нет.**
+
+### Criterion #8 — детализация
+
+- **rs274 canonical output**: `STRAIGHT_TRAVERSE`, `ARC_FEED`, `SET_FEED_RATE` — парсится и сверяется (canonical_compare.rs — **итерация 6**).
+- **rs274 exit codes**: 37/38 LinuxCNC v1 файлов exit 0; #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0 (tool.tbl добавлен в Docker-образ).
+- **Motion stream comparison — pending** (canonical_compare — итерация 6): сравнение канонического вывода rs274 для оригинала и перевода — **последний незакрытый аспект** criterion #8.
 
 ---
 
@@ -56,7 +64,7 @@
 
 ## 4. Известные ограничения (честно)
 
-- **Симуляция mock-only** (критерий #8): обратный parse + structural + axis_limits; real LinuxCNC sim не установлен — запуск после MVP (PLAN §2-E).
+- **Симуляция**: real (rs274 в Docker) + mock — **критерий #8 upgraded**; motion stream comparison — pending (итерация 6).
 - **Tier B published — 2D/2.5D-скew** (SVG/гравировка/роутер): diversity-targeted сбор (3-осевой mill) — итерация 5, чек-лист в CORPUS §7. Local-dev контур (60 LinuxCNC) 3D-контент покрывает — но тест-only (GPL).
 - **Q11: unknown-start** — канонизатор отказывает partial-end после genuinely-unknown (v0.11) — 3 published-файла диагностируются корректно; апгрейд «дефолт-наследование» — кандидат ревизии.
 - **v0/v1-долг §1**: закрыт регенерацией (70/76 пар v1; 4 diverged — классифицированы и починены как Adapter-wrong C/D; #41/#45 grbl — lossy навсегда по Q3). Независимость v0-пар как теста корректности сохранена (v0 = regression-корпус).
