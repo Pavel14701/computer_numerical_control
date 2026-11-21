@@ -401,7 +401,7 @@ EID **не хранит** G81/G8x как узлы. Разворачивание 
    | 2 | `RAPID (X,Y,R)` | подход к R-плоскости — отдельный оп |
    | 3 | `LINEAR (X,Y,Z_bottom)` | feed на дно |
    | — | `DWELL` | только G82/G89 (P секунды) |
-   | — | пеки G83/G73 | по §7.4a: G83 — feed до d_k, RAPID на R, RAPID на d_(k−1)+0.5; G73 — feed до d_k, RAPID de-retract min(R, d_(k−1)+Q); последний пек — feed до z_bottom |
+   | — | пеки G83/G73 | по §7.4a (v0.18): G83 — feed до d_k, RAPID на R, RAPID на d_(k−1)+0.01in(unit-scaled); G73 — feed до d_k, **один RAPID на d_(k−1)+0.01in** (модели min(R,d+Q) нет); последний пек — feed до z_bottom |
    | — | G86 | `state(spindle=off)` на rapid-out, рестарт в state следующего опа (Q9) |
    | 4 | retract | G99 → `RAPID (X,Y,R)`; G98 → `RAPID (X,Y,initZ)` |
 
