@@ -325,17 +325,28 @@ fn spec_v012_first_units_word_establishes() {
 }
 
 #[test]
-fn spec_v0106_input_quantization_drops_near_zero_arc() {
-    // CORPUS #13: end 0.00004 → 0.0000 (§10.6) → zero-length arc → drop+notice.
+fn spec_v0106_quantized_end_with_center_full_circle_360() {
+    // CORPUS #13 (SPEC §3/§6 v0.17, аудит #15 — зонд rs274 ARC_FEED
+    // rotation=-1): end X0.00004 квантуется к старту (§10.6), но
+    // center ≠ start (I5 J0) → ПОЛНЫЙ КРУГ 360° НЕЗАВИСИМО от явных
+    // end-слов; дуга сохранена, notice снят (CORPUS v0.6.7 golden regen).
     let out = canonicalize_with_notices(
         &corpus("13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc"),
         "13.ngc",
     )
     .expect("ok");
-    // G0, [дуга отброшена], G1 X10, M2 → 3 опа.
-    assert_eq!(out.program.ops.len(), 3);
-    assert_eq!(out.notices.len(), 1);
-    assert_eq!(out.notices[0].kind, eid_grbl::canonicalize::NoticeKind::ZeroLengthArc);
+    assert_eq!(out.notices.len(), 0, "диспозиция drop снята: 360°-дуга жива");
+    // G0, ARC-360, G1 X10, M2 → 4 опа (golden).
+    assert_eq!(out.program.ops.len(), 4);
+    match &out.program.ops[1] {
+        Op::Arc { center, sweep_deg, pitch, dir, .. } => {
+            assert_pt(center, 5.0, 0.0, 0.0);
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "sweep {}", sweep_deg.value());
+            assert!(pitch.value().abs() <= EPS);
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+        }
+        _ => panic!("op1 не Arc"),
+    }
 }
 
 #[test]
@@ -370,6 +381,258 @@ fn corpus_08_full_circle_without_end_words_kept() {
         _ => panic!("op1 не Arc"),
     }
 }
+
+// ===========================================================================
+// SPEC §3 v0.17 (аудит #15): полный круг / вырожденный центр
+// ===========================================================================
+
+#[test]
+fn audit15_full_circle_explicit_end_quantized_cw_ccw_and_helix() {
+    // Зонд rs274: `G2 X10. Y0. I-5. J0` из (10,0) → полный оборот 360°
+    // НЕЗАВИСИМО от явных end-слов (квантовались в старт); G3 — тоже 360°.
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG2 X10.0 Y0.0 I-5.0 J0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, sweep_deg, pitch, dir, .. } => {
+            assert_pt(center, 5.0, 0.0, 0.0);
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "cw sweep {}", sweep_deg.value());
+            assert!(pitch.value().abs() <= EPS);
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG3 X10.0 Y0.0 I-5.0 J0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, dir, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "ccw sweep {}", sweep_deg.value());
+            assert_eq!(*dir, eid_core::ast::Dir::Ccw);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // Частично-явный end: одно Y-слово, квантовавшееся в старт, — тоже 360°
+    // (критерий геометрический: center ≠ start, а не «есть ли end-слова»).
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG2 Y0.0 I-5.0 J0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "partial-end sweep {}", sweep_deg.value());
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // Винтовой полный оборот с явными end-словами: 360° + pitch (Z2) —
+    // не drop (pitch ≠ 0), ход сохранён.
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG2 X10.0 Y0.0 Z2.0 I-5.0 J0.0 F100.0\nM2\n").expect("ok");
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, pitch, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS);
+            assert!((pitch.value() - 2.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+}
+
+#[test]
+fn audit15_degenerate_center_zero_radius_dropped_both_forms() {
+    // Вырожденный центр (I0 J0 → center == start) при end == start (в
+    // плоскости) и pitch == 0 → drop+notice ОБЕ формы end-слов (зонд
+    // rs274: «Zero-radius arc» — отказ на обеих формах, у нас drop+notice).
+    // Форма 1: явные end-слова, совпавшие со стартом.
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG0 X5.0 Y5.0 Z0.0\nG2 X5.0 Y5.0 I0.0 J0.0 F100.0\nM2\n",
+        "dg1.ngc",
+    )
+    .expect("ok");
+    assert_eq!(out.notices.len(), 1);
+    assert_eq!(out.notices[0].kind, eid_grbl::canonicalize::NoticeKind::ZeroLengthArc);
+    assert!(out.notices[0].message.contains("zero-radius arc"), "{}", out.notices[0].message);
+    // Форма 2: наследованный end (нет end-слов) — тоже drop (обе формы).
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG0 X5.0 Y5.0 Z0.0\nG2 I0.0 J0.0 F100.0\nM2\n",
+        "dg2.ngc",
+    )
+    .expect("ok");
+    assert_eq!(out.notices.len(), 1);
+    assert_eq!(out.notices[0].kind, eid_grbl::canonicalize::NoticeKind::ZeroLengthArc);
+    // Вырожденный + pitch ≠ 0 → 360-винтовая r=0 — остаётся (D/fanuc).
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG0 X5.0 Y5.0 Z0.0\nG2 X5.0 Y5.0 Z2.0 I0.0 J0.0 F100.0\nM2\n",
+        "dg3.ngc",
+    )
+    .expect("ok");
+    assert_eq!(out.notices.len(), 0);
+    match &out.program.ops[1] {
+        Op::Arc { center, sweep_deg, pitch, .. } => {
+            assert_pt(center, 5.0, 5.0, 0.0);
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS);
+            assert!((pitch.value() - 2.0).abs() <= EPS);
+        }
+        _ => panic!("op1 не Arc"),
+    }
+    // R-форма при start == end — по-прежнему Err (центр неоднозначен, N19).
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17\nG0 X5.0 Y5.0 Z0.0\nG2 X5.0 Y5.0 R5.0 F100.0\nM2\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+// ===========================================================================
+// Аудит #33 (SPEC §8.6 правило 6, v0.17): модальная абсорбция на RAW-строках
+// ===========================================================================
+
+#[test]
+fn audit33_g91_absorbed_on_raw_line_incremental_continues() {
+    // Пробой: `G91 G28 Z0` — G28 ушёл в Raw, G91 терялся → следующий
+    // `G0 X10 Y10` молча парсился АБСОЛЮТНЫМ. После фикса G91 абсорбирован:
+    // end = стартовая точка + (10,10) инкрементально.
+    let src = "G21 G90 G94 G17\nG0 X5.0 Y5.0 Z2.0\nG91 G28 Z0\nG0 X10.0 Y10.0\nM2\n";
+    let out = canonicalize_with_notices(src, "a33.ngc").expect("parses Ok (G28 — line-level raw)");
+    assert!(
+        out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+        "строка G28 — RAW-оп"
+    );
+    assert!(
+        out.notices.iter().any(|n| matches!(n.kind, eid_grbl::canonicalize::NoticeKind::ModalOnRaw)
+            && n.message.contains("W_MODAL_ON_RAW")),
+        "ожидался W_MODAL_ON_RAW-notice, получено: {:?}",
+        out.notices.iter().map(|n| &n.message).collect::<Vec<_>>()
+    );
+    let ends: Vec<[f64; 3]> = out
+        .program
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Rapid { end, .. } => Some(pt3(end)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends.len(), 2);
+    for (i, want) in [5.0, 5.0, 2.0].into_iter().enumerate() {
+        assert!((ends[0][i] - want).abs() <= EPS, "end0[{}] = {} vs {want}", i, ends[0][i]);
+    }
+    assert_eq!(
+        ends[1],
+        [15.0, 15.0, 2.0],
+        "G91 абсорбирован: end = (5,5,2) + (10,10) инкрементально (было (10,10,0) — тихое искажение)"
+    );
+}
+
+#[test]
+fn audit33_units_absorbed_on_raw_line_g20_g43() {
+    // `G20 G43 H2 X5.` — G43/H вне словаря GRBL → RAW, но G20 абсорбирован:
+    // units = inch, следующая строка читается в inch (до фикса units терялись).
+    let out = canonicalize_with_notices("G20 G43 H2 X5.\nG1 X1.0 F10.0\nM2\n", "a33u.ngc")
+        .expect("parses Ok");
+    assert_eq!(out.program.units, Units::In, "G20 абсорбирован с RAW-строки");
+    assert!(out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+}
+
+#[test]
+fn audit33_feed_spindle_absorbed_on_raw_line() {
+    // F/S/M3 на RAW-строке (`G43 H2 F240.0 M3 S6000`) абсорбируются:
+    // следующий linear несёт feed=240 и шпиндель Cw(6000) без своих слов.
+    let src = "G21 G90 G94 G17\nG43 H2 F240.0 M3 S6000\nG1 X10.0\nM2\n";
+    let out = canonicalize_with_notices(src, "a33fs.ngc").expect("parses Ok");
+    assert!(out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+    match out.program.ops.iter().find(|o| matches!(o, Op::Linear { .. })) {
+        Some(Op::Linear { state, .. }) => {
+            assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(240.0), "F240 абсорбирован");
+            assert!(
+                matches!(&state.spindle, Spindle::Cw(n) if n.value() == 6000.0),
+                "M3 S6000 абсорбирован: {state:?}"
+            );
+        }
+        other => panic!("ожидался Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn audit33_w_modal_on_raw_notice_on_raw_motion_g() {
+    // Raw-motion-G (`G28 X5.0`) — notice W_MODAL_ON_RAW; модальный motion
+    // (G1) НЕ продолжается: следующий голый X-кадр → INVALID (нет активного
+    // motion-режима), не молчаливое продолжение G1.
+    let src = "G21 G90 G94 G17\nG92 X0 Y0 Z0\nG1 X5.0 F100.0\nG28 X5.0\nX8.0\nM2\n";
+    assert_eq!(err_code(canonicalize(src, "a33w.ngc")), ErrorCode::InvalidInput);
+    // Без голого кадра — Ok + notice:
+    let src2 = "G21 G90 G94 G17\nG92 X0 Y0 Z0\nG1 X5.0 F100.0\nG28 X5.0\nM2\n";
+    let out2 = canonicalize_with_notices(src2, "a33w2.ngc").expect("Ok");
+    assert!(
+        out2.notices.iter().any(|n| matches!(n.kind, eid_grbl::canonicalize::NoticeKind::ModalOnRaw)),
+        "{:?}",
+        out2.notices.iter().map(|n| &n.message).collect::<Vec<_>>()
+    );
+    // G28 без осевых слов — notice НЕ эмитится (нет motion-неоднозначности).
+    let src3 = "G21 G90 G94 G17\nG92 X0 Y0 Z0\nG28\nM2\n";
+    let out3 = canonicalize_with_notices(src3, "a33w3.ngc").expect("Ok");
+    assert!(
+        out3.notices.iter().all(|n| !matches!(n.kind, eid_grbl::canonicalize::NoticeKind::ModalOnRaw)),
+        "{:?}",
+        out3.notices.iter().map(|n| &n.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn audit33_g92_preset_absorbed_on_raw_line() {
+    // G92 на RAW-строке абсорбируется: frame_preset задан, следующий ход
+    // связывается с якоря пресетки (start known).
+    let src = "G21 G90 G94 G17\nG92 X0.0 Y0.0 Z5.0 G28\nG0 X1.0 Y1.0 Z6.0\nM2\n";
+    let out = canonicalize_with_notices(src, "a33g92.ngc").expect("parses Ok");
+    let fp = out.program.frame_preset.as_ref().expect("G92 абсорбирован: пресетка задана");
+    assert_pt(&fp.values, 0.0, 0.0, 5.0);
+    assert_eq!(fp.wcs, Wcs::G54);
+    assert!(out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+    match out
+        .program
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Rapid { .. }))
+        .expect("rapid")
+    {
+        Op::Rapid { start: StartPoint::Known(s), end, .. } => {
+            assert_pt(s, 0.0, 0.0, 5.0);
+            assert_pt(end, 1.0, 1.0, 6.0);
+        }
+        other => panic!("{other:?}"),
+    }
+    // Структурные инварианты G92 работают и на raw-кадре: второй пресет → Err.
+    let dup = "G21 G90 G94 G17\nG92 X0.0 Y0.0 Z5.0 G28\nG92 X1.0 Y1.0 Z1.0 G28\nM2\n";
+    assert_eq!(err_code(canonicalize(dup, "a33g92b.ngc")), ErrorCode::UnsupportedSemantics);
+}
+
+#[test]
+fn audit33_g10_l2_absorbed_on_raw_line_origin_table_updated() {
+    // G10 L2 на RAW-строке: состояние origin абсорбировано (оп НЕ строится —
+    // кадр представлен Raw-опом), смена wcs использует абсорбированный
+    // origin при связывании следующего хода.
+    let src = "G21 G90 G94 G17\nG10 L2 P1 X0.0 Y0.0 Z0.0\nG0 X5.0 Y0.0 Z0.0\nG10 L2 P2 X10.0 Y0.0 Z0.0 G28\nG55\nG0 X5.0 Y0.0 Z0.0\nM2\n";
+    let out = canonicalize_with_notices(src, "a33g10.ngc").expect("parses Ok");
+    assert!(
+        out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+        "строка G28 — RAW-оп"
+    );
+    assert!(
+        !out.program.ops.iter().any(|o| matches!(o, Op::WcsDefine { p: 2, .. })),
+        "raw-кадр не эмитит WcsDefine(p=2) (p=2 ушёл в состояние)"
+    );
+    // Легальная строка P1 — по-прежнему WcsDefine-оп.
+    assert!(
+        out.program.ops.iter().any(|o| matches!(o, Op::WcsDefine { p: 1, .. })),
+        "легальная G10 L2 P1 строка — WcsDefine-оп"
+    );
+    // Связывание: start = prev_end(5) + O_P1(0) − O_P2(10) = −5 —
+    // origin P2 ДОСТУПЕН (до фикса G10 с raw-строки терялся → разрыв (b)).
+    match out
+        .program
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Rapid { start: StartPoint::Known(_), .. }))
+        .expect("Known-rapid")
+    {
+        Op::Rapid { start: StartPoint::Known(s), .. } => assert_pt(s, -5.0, 0.0, 0.0),
+        other => panic!("{other:?}"),
+    }
+}
+
+// ===========================================================================
+// (перенесено) CORPUS #37
+// ===========================================================================
 
 #[test]
 fn corpus_37_g53_known_origins_breakpoint_c() {

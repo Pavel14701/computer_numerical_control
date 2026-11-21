@@ -77,8 +77,46 @@ fn roundtrip_10_helix_inch() {
 
 #[test]
 fn roundtrip_13_degenerate_zero_sweep() {
-    // Дуга отброшена с notice на обеих сторонах round-trip → diff 0.
+    // v0.17 (#15): X0.00004 квантуется к старту при center ≠ start →
+    // ПОЛНЫЙ КРУГ 360° на обеих сторонах round-trip (диспозиция drop
+    // снята, CORPUS v0.6.7) → diff 0.
     roundtrip("13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc");
+}
+
+#[test]
+fn regen_v1_13_grbl_from_golden_ast() {
+    // Регенерация corpus/tier_a/v1/13_arc_degenerate_zero_sweep/
+    // arc_degenerate_zero_sweep.grbl.ngc ПРОГРАММНО из нового AST
+    // (golden.eid v0.6.7 — 4-опный полный круг): golden → GrblAdapter.emit →
+    // файл; затем R1 байт-в-байт: emit(parse(файл)) == файл и
+    // parse(файл) ≡ golden (semantic_diff = 0). НЕ редактируется вручную.
+    let golden_text = corpus("13_arc_degenerate_zero_sweep/golden.eid");
+    let golden = EidTextAdapter::new()
+        .parse(&golden_text, "13.golden.eid")
+        .expect("golden parses");
+    let ad = GrblAdapter::new();
+    let text = ad.emit(&golden).expect("emit golden → grbl");
+    let v1_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/tier_a/v1/13_arc_degenerate_zero_sweep");
+    let v1_path = v1_dir.join("arc_degenerate_zero_sweep.grbl.ngc");
+    std::fs::create_dir_all(&v1_dir).expect("v1 dir");
+    std::fs::write(&v1_path, &text).expect("v1 grbl regen write");
+    // R1 байт-в-байт: re-emit от re-parse совпадает с файлом.
+    let reparsed = ad.parse(&text, "13_regen.ngc").expect("regen parses");
+    let text2 = ad.emit(&reparsed).expect("re-emit");
+    assert_eq!(text, text2, "emit(parse(file)) != file — R1 байт-в-байт сломан");
+    // R3-golden: parse(файл) ≡ golden AST (semantic_diff = 0); notice нет.
+    let div = semantic_diff(&golden, &reparsed, &DiffConfig::default());
+    assert!(div.is_empty(), "regen divergences vs golden: {div:?}");
+    assert!(
+        ad.take_notices().is_empty(),
+        "regen-файл не должен давать drop-notice (полный круг — живой оп)"
+    );
+    // Полный круг в тексте: 4-опная программа — G0 + ARC-360 (без end-слов)
+    // + G1 + M2.
+    let arc_line = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
+    assert!(arc_line.contains("I5.0000") && arc_line.contains("J0.0000"), "{arc_line}");
+    assert!(!arc_line.contains('X') && !arc_line.contains('Y') && !arc_line.contains('Z'), "полный круг без end-слов: {arc_line}");
 }
 
 #[test]
@@ -515,8 +553,8 @@ fn spec_cov_emit_planes_exact_text() {
     let text = GrblAdapter::new().emit(&a).expect("emit ok");
     assert!(text.contains("G18\n"), "{text}");
     assert!(text.contains("G19\n"), "{text}");
-    assert!(text.contains("G2 X5.0000 Y2.0000 Z-5.0000  I5.0000 K0.0000"), "{text}");
-    assert!(text.contains("G3 X5.0000 Y7.0000 Z-10.0000  J5.0000 K0.0000"), "{text}");
+    assert!(text.contains("G2 X5.0000 Y2.0000 Z-5.0000 I5.0000 K0.0000"), "{text}");
+    assert!(text.contains("G3 X5.0000 Y7.0000 Z-10.0000 J5.0000 K0.0000"), "{text}");
     let b = parse_grbl(&text);
     assert!(semantic_diff(&a, &b, &DiffConfig::default()).is_empty());
 }

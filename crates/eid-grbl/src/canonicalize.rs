@@ -29,6 +29,10 @@ pub enum NoticeKind {
     /// опом (SPEC §3 v0.16 «отсутствие M2 = неявный конец, не отказ»;
     /// 18/32 Tier B — реальные посты не пишут program-end).
     MissingProgramEnd,
+    /// Raw-motion-G (G28/G30/G28.1/G30.1/G38.x) с осевыми словами: модальное
+    /// состояние абсорбировано, но motion-режим НЕ продолжается
+    /// (SPEC §8.6 правило 6, v0.17 — критический аудит #33).
+    ModalOnRaw,
 }
 
 #[derive(Debug, Clone)]
@@ -418,6 +422,16 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         )]);
     }
 
+    // (2a) Модальная абсорбция ДО любых raw-возвратов (SPEC §8.6 правило 6,
+    // v0.17 — критический аудит #33): строка, уходящая в Raw целиком,
+    // обязана абсорбировать своё frame-level состояние до push_raw — иначе
+    // следующий кадр парсится в потерянной модальности (пробой аудита:
+    // `G91 G28 Z0` терял G91 → следующий `G0 X10 Y10` молча абсолютный).
+    // Единицы — тоже абсорбция (§8.5: смена units — структурный класс,
+    // жёсткий отказ). Для легальных кадров тот же код выполнял шаги
+    // (5)/(8)–(9) прежней нумерации — порядок эффектов не изменился.
+    absorb_frame_state(ctx, b)?;
+
     // (3) Слова вне словаря → Raw line-level. Оси A/B/C/U/V/W → SEMANTICS
     // (COVERAGE §4); G74/G84/G87/G88 → SEMANTICS (refuse-класс COVERAGE §2.5:
     // рулинг — класс определяется конструкцией-ИСТОЧНИКОМ, LinuxCNC-словарь
@@ -448,6 +462,10 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             )
         };
         let op = ctx.raw_op(b, &b.raw, code, reason);
+        // §8.6 правило 6: структурная часть состояния (G92/G10) — тоже до
+        // push_raw (вызов ТОЛЬКО на raw-ветках; легальный путь обрабатывает
+        // G92/G10 в process_tail — двойная обработка недопустима).
+        absorb_frame_structs(ctx, b)?;
         ctx.push(op);
         return Ok(());
     }
@@ -461,25 +479,8 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         )]);
     }
 
-    // (5) Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
-    // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
-    // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12).
-    for g in &b.g_codes {
-        if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
-            let u = if *g == GCode::UnitsIn { Units::In } else { Units::Mm };
-            if u != ctx.units {
-                if ctx.units_established {
-                    return Err(vec![err(
-                        ErrorCode::UnsupportedSemantics,
-                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                        &ctx.file, line, blen,
-                    )]);
-                }
-                ctx.units = u;
-            }
-            ctx.units_established = true;
-        }
-    }
+    // (5)→(2a) Единицы перенесены в absorb_frame_state (SPEC §8.6 правило 6,
+    // аудит #33: units абсорбируются и на RAW-строках).
 
     // (6) Метаданные и IGNORED_SAFE-коды (COVERAGE §2.1/§2.2/§2.4).
     if b.g_codes.contains(&GCode::CycleCancel) {
@@ -494,6 +495,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             ErrorCode::UnsupportedSemantics,
             "G43.1 dynamic TLO — value not representable as motion state (COVERAGE §2.4)",
         );
+        absorb_frame_structs(ctx, b)?;
         ctx.push(op);
         return Ok(());
     }
@@ -504,11 +506,17 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             ErrorCode::UnsupportedSemantics,
             "G49 cancels present G43-family compensation — family rule (COVERAGE §1.3)",
         );
+        absorb_frame_structs(ctx, b)?;
         ctx.push(op);
         return Ok(());
     }
 
-    // (7) RAW line-level по матрице COVERAGE §2.1/§2.3/§2.6.
+    // (7) RAW line-level по матрице COVERAGE §2.1/§2.3/§2.6. SPEC §8.6
+    // (v0.17): raw-motion-G (G28/G30/G28.1/G30.1/G38.x) с осевыми словами —
+    // модальное состояние уже абсорбировано в (2a); motion-режим НЕ
+    // продолжается (ход не представим — «продолжение» молча
+    // интерпретировало бы следующий X/Y-кадр в старом режиме) + notice
+    // W_MODAL_ON_RAW.
     for g in &b.g_codes {
         let (code, reason): (ErrorCode, &str) = match g {
             GCode::Home | GCode::SetHome | GCode::Home2 | GCode::SetHome2 => (
@@ -526,6 +534,18 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             _ => continue,
         };
         let op = ctx.raw_op(b, &b.raw, code, reason);
+        absorb_frame_structs(ctx, b)?;
+        let raw_motion_g = matches!(g, GCode::Home | GCode::SetHome | GCode::Home2 | GCode::SetHome2 | GCode::Probe(_));
+        let has_motion_words = ['X', 'Y', 'Z', 'I', 'J', 'K', 'R'].iter().any(|l| b.word(*l).is_some());
+        if raw_motion_g && has_motion_words {
+            ctx.motion = None;
+            ctx.push_keep(
+                op,
+                NoticeKind::ModalOnRaw,
+                "W_MODAL_ON_RAW: G28/G30/G38.x — raw motion block with axis words; modal motion mode NOT continued (SPEC §8.6 rule 6, audit #33)".into(),
+            );
+            return Ok(());
+        }
         ctx.push(op);
         return Ok(());
     }
@@ -842,14 +862,20 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
         }
     };
 
-    // zero-length arc (SPEC §3/§6, CORPUS #13): end-слова, квантованные до
-    // стартовой точки (§10.6), — нулевой ход, не полное кольцо (§6 ловушка (а)
-    // — 360° только для наследованного end без слов, CORPUS #08). Проверка
-    // ПОСЛЕ квантования входа.
+    // zero-length / full circle (SPEC §3/§6 v0.17, аудит #15 — зонд rs274
+    // «Zero-radius arc» / ARC_FEED rotation=-1): полнота круга — ГЕОМЕТРИЯ
+    // (center ≠ start при start == end в плоскости), НЕЗАВИСИМО от формы
+    // команды: явные end-слова, квантовавшиеся в старт (§10.6), и
+    // наследованный end (нет слов) дают ОДИНАКОВО 360° (CORPUS #13 v0.6.7 —
+    // диспозиция drop → 360°-дуга; CAM-посты пишут end-слова на полных
+    // кругах). Drop — единственный класс center-формы: вырожденный центр
+    // (center == start, радиус 0) при pitch == 0 — ОБЕ формы end-слов
+    // (rs274 отказывает «Zero-radius arc»); pitch ≠ 0 + degenerate —
+    // 360-винтовая r=0, остаётся (как D/fanuc). Проверка ПОСЛЕ квантования
+    // входа.
     let rho_s = ((s[a0] - c[a0]).powi(2) + (s[a1] - c[a1]).powi(2)).sqrt();
     let rho_e = ((e[a0] - c[a0]).powi(2) + (e[a1] - c[a1]).powi(2)).sqrt();
-    let explicit_end = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
-    if explicit_end && chord_plane < 1e-9 && pitch.abs() < 1e-9 {
+    if chord_plane < 1e-9 && pitch.abs() < 1e-9 && rho_s < 1e-9 {
         let f = ctx.feed.clone().unwrap_or_else(|| num_f64(0.0));
         let mut st = ctx.state(Frame::Wcs);
         st.feed = Some(f);
@@ -868,7 +894,7 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
         ctx.push_drop(
             op,
             NoticeKind::ZeroLengthArc,
-            "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6; CORPUS #13)".into(),
+            "zero-radius arc dropped (degenerate center == start, end == start, pitch == 0; SPEC §3/§6 v0.17; CORPUS #13)".into(),
         );
         update_pos(ctx, false, end);
         return Ok(());
@@ -979,11 +1005,42 @@ fn len3(d: &Point3) -> f64 {
     (x * x + y * y + z * z).sqrt()
 }
 
-fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagnostic>> {
+/// Модальная абсорбция кадра (SPEC §8.6 правило 6, v0.17 — аудит #33):
+/// вызывается ДО любых raw-возвратов process_block — строка, уходящая в Raw
+/// целиком, обязана обновить frame-level состояние до push_raw, иначе
+/// следующий кадр парсится в потерянной модальности (пробой: `G91 G28 Z0`
+/// терял G91 → следующий `G0 X10 Y10` молча абсолютный). Для легальных
+/// кадров — тот же код, что прежние шаги (5)/(8)/(9) process_tail: единицы
+/// (одна система на программу, SPEC §2.5), выбор
+/// WCS/плоскости/дистанции/feeder-режима (COVERAGE §2.2/§2.3), затем —
+/// порядок grbl gcode.c: feed → spindle → coolant. Motion-G-коды кадра
+/// здесь НЕ обновляют ctx.motion: raw-motion-G не продолжается
+/// (W_MODAL_ON_RAW на raw-ветке), легальный путь обновляет в motion_block.
+fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
 
-    // (8) Выбор WCS/плоскости/дистанции/feeder-режима — ABSORB (COVERAGE §2.2/§2.3).
+    // Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
+    // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
+    // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12); и на RAW-кадре.
+    for g in &b.g_codes {
+        if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
+            let u = if *g == GCode::UnitsIn { Units::In } else { Units::Mm };
+            if u != ctx.units {
+                if ctx.units_established {
+                    return Err(vec![err(
+                        ErrorCode::UnsupportedSemantics,
+                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
+                        &ctx.file, line, blen,
+                    )]);
+                }
+                ctx.units = u;
+            }
+            ctx.units_established = true;
+        }
+    }
+
+    // Выбор WCS/плоскости/дистанции/feeder-режима — ABSORB (COVERAGE §2.2/§2.3).
     for g in &b.g_codes {
         match g {
             GCode::Wcs(p) => {
@@ -999,7 +1056,7 @@ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagn
         }
     }
 
-    // (9) Порядок grbl gcode.c: feed → spindle → coolant.
+    // Порядок grbl gcode.c: feed → spindle → coolant.
     if let Some(f) = b.word('F') {
         ctx.feed = Some(verbatim(f));
     }
@@ -1030,6 +1087,82 @@ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagn
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Структурная часть абсорбции (SPEC §8.6: G92/G10 в списке абсорбции) —
+/// вызывается ТОЛЬКО перед raw-возвратами process_block. Легальный путь
+/// обрабатывает G92/G10 в process_tail (10) — двойная обработка
+/// недопустима (пресетка «second G92», задвоение wcs_origins). G92 —
+/// метаданные программы (оп не строится): валидации + якорь пресетки,
+/// зеркально process_g92. G10 — только ПОЛНАЯ легальная форма L2
+/// (P 1..=6 целое, XYZ полные) → обновление таблицы origin; RAW-формы
+/// (L20/частичные/сломанные) таблицу не трогают — значение из машины,
+/// вне текста. Опы на raw-кадре НЕ строятся: кадр представлен Raw-опом
+/// (обновление — внутреннее состояние связывания последующих ходов).
+fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
+    let line = b.line_no;
+    let blen = b.raw.len();
+
+    // G92 → пресетка (до первого motion-опа, одна пресетка — инварианты
+    // process_g92; на raw-кадре осевые слова абсорбируются в якорь).
+    if b.g_codes.contains(&GCode::FramePreset) {
+        if ctx.prev_end.is_some() {
+            return Err(vec![err(
+                ErrorCode::UnsupportedSemantics,
+                "G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)",
+                &ctx.file, line, blen,
+            )]);
+        }
+        if ctx.frame_def_count >= 1 {
+            return Err(vec![err(
+                ErrorCode::UnsupportedSemantics,
+                "second frame preset (G92/G10 L20) in one program (CORPUS n17)",
+                &ctx.file, line, blen,
+            )]);
+        }
+        let (x, y, z) = match (b.word('X'), b.word('Y'), b.word('Z')) {
+            (Some(x), Some(y), Some(z)) => (verbatim(x), verbatim(y), verbatim(z)),
+            _ => {
+                return Err(vec![err(
+                    ErrorCode::RuntimeState,
+                    "partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)",
+                    &ctx.file, line, blen,
+                )]);
+            }
+        };
+        let values = Point3 { x, y, z };
+        ctx.g92_values = Some((values.clone(), ctx.wcs));
+        ctx.frame_def_count += 1;
+        ctx.anchor = Some((values, ctx.wcs));
+    }
+
+    // G10 L2 ПОЛНАЯ форма → обновление таблицы origin (§8.6: G10 в списке
+    // абсорбции). G10-обновление idempotent по форме (те же слова), но
+    // вызывается только на raw-ветке — задвоения wcs_origins нет.
+    if b.g_codes.contains(&GCode::SetCoordSystem) && b.g10_kind() == Some(G10Kind::Define) {
+        if let Some(p) = match b.word('P') {
+            Some(n) if n.value() >= 1.0 && n.value() <= 6.0 && n.value().fract() == 0.0 => {
+                Some(n.value() as u8)
+            }
+            _ => None,
+        } {
+            if let (Some(x), Some(y), Some(z)) = (b.word('X'), b.word('Y'), b.word('Z')) {
+                let origin = Point3 { x: verbatim(x), y: verbatim(y), z: verbatim(z) };
+                ctx.wcs_origins.push((p, origin));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagnostic>> {
+    let line = b.line_no;
+    let blen = b.raw.len();
+
+    // (8)/(9) — модальные группы + F/S/M3-5/M7-9 — перенесены в
+    // absorb_frame_state (process_block (2a), SPEC §8.6 правило 6, #33).
 
     // (10) Фреймовые записи (SPEC §5.3) — до motion (порядок grbl #5).
     if b.g_codes.contains(&GCode::SetCoordSystem) {

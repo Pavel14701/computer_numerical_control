@@ -454,7 +454,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
                     fmt_num(end.z.value())
                 )
             };
-            let mut line = format!("{}{} {}", motion_code(op), target, offsets);
+            // target и offsets несут ведущий пробел; полный круг — target
+            // пуст → одинарный пробел после G2/G3 (CORPUS #13 regen v1).
+            let mut line = format!("{}{}{}", motion_code(op), target, offsets);
             let fv = state.feed.as_ref().map(|num| num.value());
             if fv != ctx.feed {
                 line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));
