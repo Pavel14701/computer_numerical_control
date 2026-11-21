@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace + with - in canonicalize_with_notices
+@@ -302,17 +302,17 @@
+         g92_values: None,
+         end_count: 0,
+         end_is_last: true,
+         end_line: 0,
+     };
+ 
+     let n = parsed.blocks.len();
+     for (i, b) in parsed.blocks.iter().enumerate() {
+-        process_block(&mut ctx, b, i + 1 == n)?;
++        process_block(&mut ctx, b, i - /* ~ changed by cargo-mutants ~ */ 1 == n)?;
+     }
+     finalize(&mut ctx, line_count as u32)
+ }
+ 
+ /// Структурная проверка program_end (N12/N13/N14 → Err INVALID) + сборка Program.
+ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>> {
+     // Лимит max_ops_per_program (COVERAGE §1.2).
+     let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;

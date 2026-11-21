@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace || with && in Ectx::state_prefix
+@@ -92,17 +92,17 @@
+             // Дельта coolant (CORPUS #29): ЛЮБОЕ изменение поля даёт M-коды.
+             // Переход к none (из flood / mist / flood+mist) → M9; включения —
+             // M7/M8; ЛЮБОЕ выключение оси при живой второй (частичное) —
+             // M9 (гасит обе) + повтор оставшейся (GRBL не умеет точечно).
+             let prev = self.coolant;
+             let new = st.coolant;
+             if !new.flood && !new.mist {
+                 self.out.push_str("M9\n");
+-            } else if (prev.flood && !new.flood) || (prev.mist && !new.mist) {
++            } else if (prev.flood && !new.flood) && /* ~ changed by cargo-mutants ~ */ (prev.mist && !new.mist) {
+                 self.out.push_str("M9\n");
+                 if new.mist {
+                     self.out.push_str("M7\n");
+                 }
+                 if new.flood {
+                     self.out.push_str("M8\n");
+                 }
+             } else {

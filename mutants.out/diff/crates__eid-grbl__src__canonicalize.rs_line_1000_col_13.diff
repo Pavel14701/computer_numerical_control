@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm MCode::FloodOn in process_tail
+@@ -992,17 +992,17 @@
+                 ctx.spindle = Spindle::Cw(s);
+             }
+             MCode::SpindleCcw => {
+                 let s = s_word.clone().or_else(|| ctx.last_s.clone()).unwrap_or_else(|| num_f64(0.0));
+                 ctx.spindle = Spindle::Ccw(s);
+             }
+             MCode::SpindleOff => ctx.spindle = Spindle::Off,
+             MCode::MistOn => ctx.coolant.mist = true,
+-            MCode::FloodOn => ctx.coolant.flood = true,
++             /* ~ changed by cargo-mutants ~ */
+             MCode::CoolantOff => ctx.coolant = Coolant::default(),
+             _ => {}
+         }
+     }
+ 
+     // (10) Фреймовые записи (SPEC §5.3) — до motion (порядок grbl #5).
+     if b.g_codes.contains(&GCode::SetCoordSystem) {
+         return process_g10(ctx, b);

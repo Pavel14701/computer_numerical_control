@@ -1,0 +1,23 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace sub3 -> Point3 with Default::default()
+@@ -936,19 +936,17 @@
+ 
+ fn add3(a: &Point3, b: &Point3) -> Point3 {
+     let [x, y, z] = e3(a);
+     let [u, v, w] = e3(b);
+     pt(x + u, y + v, z + w)
+ }
+ 
+ fn sub3(a: &Point3, b: &Point3) -> Point3 {
+-    let [x, y, z] = e3(a);
+-    let [u, v, w] = e3(b);
+-    pt(x - u, y - v, z - w)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn len3(d: &Point3) -> f64 {
+     let [x, y, z] = e3(d);
+     (x * x + y * y + z * z).sqrt()
+ }
+ 
+ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagnostic>> {

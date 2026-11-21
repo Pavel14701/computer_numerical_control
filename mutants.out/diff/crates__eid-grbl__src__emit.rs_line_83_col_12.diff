@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete ! in Ectx::state_prefix
+@@ -75,17 +75,17 @@
+     /// Смена состояния перед опом (порядок grbl: wcs → spindle → coolant).
+     fn state_prefix(&mut self, st: &State) {
+         // WCS явно перед первым motion-опом и при смене (COVERAGE §5; бриф п.3).
+         if self.first_motion || st.wcs != self.wcs {
+             self.out.push_str(wcs_code(&st.wcs));
+             self.out.push('\n');
+             self.wcs = st.wcs;
+         }
+-        if !spindle_eq(&st.spindle, &self.spindle) {
++        if  /* ~ changed by cargo-mutants ~ */spindle_eq(&st.spindle, &self.spindle) {
+             match &st.spindle {
+                 Spindle::Off => self.out.push_str("M5\n"),
+                 Spindle::Cw(n) => self.out.push_str(&format!("M3 S{}\n", fmt_num(n.value()))),
+                 Spindle::Ccw(n) => self.out.push_str(&format!("M4 S{}\n", fmt_num(n.value()))),
+             }
+             self.spindle = st.spindle.clone();
+         }
+         if st.coolant != self.coolant {

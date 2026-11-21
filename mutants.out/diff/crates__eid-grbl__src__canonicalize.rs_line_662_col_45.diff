@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace && with || in resolve_end
+@@ -654,17 +654,17 @@
+ /// end → E_RUNTIME_STATE.
+ fn resolve_end(
+     ctx: &Ctx,
+     b: &Block,
+     reading: &Option<Point3>,
+     allow_controller_default: bool,
+ ) -> Result<Option<Point3>, Vec<Diagnostic>> {
+     let rv = reading.as_ref().map(|p| e3(p));
+-    let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
++    let at_start = allow_controller_default || /* ~ changed by cargo-mutants ~ */ reading.is_none() && ctx.prev_end.is_none();
+     let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
+     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
+         v[i] = match b.word(w) {
+             Some(n) => {
+                 if ctx.dist_abs {
+                     Some(verbatim(n))
+                 } else {
+                     let base = match rv {

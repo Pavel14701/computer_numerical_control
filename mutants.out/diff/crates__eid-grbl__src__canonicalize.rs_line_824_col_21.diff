@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace && with || in arc_block
+@@ -816,17 +816,17 @@
+ 
+     // zero-length arc (SPEC §3/§6, CORPUS #13): end-слова, квантованные до
+     // стартовой точки (§10.6), — нулевой ход, не полное кольцо (§6 ловушка (а)
+     // — 360° только для наследованного end без слов, CORPUS #08). Проверка
+     // ПОСЛЕ квантования входа.
+     let rho_s = ((s[a0] - c[a0]).powi(2) + (s[a1] - c[a1]).powi(2)).sqrt();
+     let rho_e = ((e[a0] - c[a0]).powi(2) + (e[a1] - c[a1]).powi(2)).sqrt();
+     let explicit_end = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
+-    if explicit_end && chord_plane < 1e-9 && pitch.abs() < 1e-9 {
++    if explicit_end || /* ~ changed by cargo-mutants ~ */ chord_plane < 1e-9 && pitch.abs() < 1e-9 {
+         let f = ctx.feed.clone().unwrap_or_else(|| num_f64(0.0));
+         let mut st = ctx.state(Frame::Wcs);
+         st.feed = Some(f);
+         let op = Op::Arc {
+             start: StartPoint::Known(start),
+             end: end.clone(),
+             center: pt(c[0], c[1], c[2]),
+             normal: pt(normal[0], normal[1], normal[2]),

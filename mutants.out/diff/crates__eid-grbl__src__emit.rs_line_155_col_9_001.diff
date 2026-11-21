@@ -1,0 +1,24 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace EmissionLegality::codes -> Vec<ErrorCode> with vec![Default::default()]
+@@ -147,20 +147,17 @@
+ impl EmissionLegality {
+     /// Код отказа по имени условия; None = условие не объявлено.
+     pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
+         self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+     }
+ 
+     /// Все коды отказа таблицы (без дубликатов).
+     pub fn codes(&self) -> Vec<ErrorCode> {
+-        let mut v: Vec<ErrorCode> = self.illegal.iter().map(|(_, c)| *c).collect();
+-        v.sort_by_key(|c| c.as_str());
+-        v.dedup();
+-        v
++        vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Вид опа легален?
+     pub fn is_legal_kind(&self, kind: &str) -> bool {
+         self.legal.contains(&kind)
+     }
+ }
+ 

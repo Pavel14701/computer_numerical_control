@@ -7,6 +7,7 @@ name = "eid-cli"
 version = "0.1.0"
 dependencies = [
  "eid-core",
+ "eid-harness",
  "eid-integration",
 ]
 
@@ -50,6 +51,7 @@ name = "eid-linuxcnc"
 version = "0.1.0"
 dependencies = [
  "eid-core",
+ "eid-grbl",
  "eid-harness",
 ]
 

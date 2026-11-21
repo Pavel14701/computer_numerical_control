@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/lexer.rs
++++ replace < with == in lex_line
+@@ -86,17 +86,17 @@
+         } else if c == ';' {
+             let text: String = cs[i + 1..].iter().collect();
+             toks.push(Tok::Comment { style: CommentStyle::Semicolon, text });
+             i = cs.len();
+         } else if c.is_ascii_alphabetic() {
+             let letter = c.to_ascii_uppercase();
+             let word_col = i as u32 + 1;
+             i += 1;
+-            while i < cs.len() && cs[i].is_whitespace() {
++            while i == /* ~ changed by cargo-mutants ~ */ cs.len() && cs[i].is_whitespace() {
+                 i += 1;
+             }
+             let (num_text, next) = read_number(&cs, i);
+             if num_text.is_empty() {
+                 return Err(err(word_col, LexErrorKind::BadNumber));
+             }
+             if num_text.len() > MAX_NUM_TEXT {
+                 return Err(err(word_col, LexErrorKind::WordTooLong));

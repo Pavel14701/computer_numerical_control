@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace != with == in process_block
+@@ -434,17 +434,17 @@
+     }
+ 
+     // (5) Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
+     // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
+     // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12).
+     for g in &b.g_codes {
+         if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
+             let u = if *g == GCode::UnitsIn { Units::In } else { Units::Mm };
+-            if u != ctx.units {
++            if u == /* ~ changed by cargo-mutants ~ */ ctx.units {
+                 if ctx.units_established {
+                     return Err(vec![err(
+                         ErrorCode::UnsupportedSemantics,
+                         "unit switch mid-program: one unit system per program (SPEC §2.5)",
+                         &ctx.file, line, blen,
+                     )]);
+                 }
+                 ctx.units = u;

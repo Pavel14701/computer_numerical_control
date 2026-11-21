@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete ! in motion_block
+@@ -547,17 +547,17 @@
+     let reading = reading_now(ctx, g53)?;
+ 
+     if matches!(mode, GCode::ArcCw | GCode::ArcCcw) {
+         return arc_block(ctx, b, mode, reading);
+     }
+ 
+     // Цель: слова G90/G91 + наследование осей (SPEC §2: частичный end при
+     // неизвестном reading — E_RUNTIME_STATE; дефолт-0 — только для WCS-старта (a)).
+-    let end = resolve_end(ctx, b, &reading, !g53)?
++    let end = resolve_end(ctx, b, &reading,  /* ~ changed by cargo-mutants ~ */g53)?
+         .expect("end known: reading known or full G90 triple");
+ 
+     let frame = if g53 { Frame::Machine } else { Frame::Wcs };
+     let start = reading.clone().map(StartPoint::Known).unwrap_or(StartPoint::Unknown);
+ 
+     // zero-length (start == end) → drop + notice (SPEC §3).
+     if let StartPoint::Known(s) = &start {
+         if len3(&sub3(&end, s)) < 1e-9 {

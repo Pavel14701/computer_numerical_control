@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace / with % in arc_block
+@@ -771,17 +771,17 @@
+             // направления и знака R (проверено на пилоте 46: центр (0,5,0)).
+             let mut sgn = if mode == GCode::ArcCw { -1.0 } else { 1.0 };
+             if r < 0.0 {
+                 sgn = -sgn;
+             }
+             let h = h2.max(0.0).sqrt() / 2.0;
+             let (px, py) = (-d1 / chord_plane, d0 / chord_plane);
+             c[a0] = (e[a0] + s[a0]) / 2.0 + sgn * h * px;
+-            c[a1] = (e[a1] + s[a1]) / 2.0 + sgn * h * py;
++            c[a1] = (e[a1] + s[a1]) % /* ~ changed by cargo-mutants ~ */ 2.0 + sgn * h * py;
+         }
+         None => {
+             // IJK — literal X/Y/Z offsets (COVERAGE §6.11); отсутствующие = 0.
+             let offs = [
+                 b.word('I').map(|n| n.value()).unwrap_or(0.0),
+                 b.word('J').map(|n| n.value()).unwrap_or(0.0),
+                 b.word('K').map(|n| n.value()).unwrap_or(0.0),
+             ];

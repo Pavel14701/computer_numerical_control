@@ -1,0 +1,94 @@
+
+*** crates/eid-grbl/src/canonicalize.rs:93:5: replace limit_err -> Diagnostic with Default::default()
+
+*** mutation diff:
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace limit_err -> Diagnostic with Default::default()
+@@ -85,24 +85,17 @@
+     Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage }
+ }
+ 
+ fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
+     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
+ }
+ 
+ fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file: &str, line: u32) -> Diagnostic {
+-    Diagnostic {
+-        code: ErrorCode::LimitExceeded,
+-        message: msg,
+-        src: Some(span(file, line, 0)),
+-        options: Vec::new(),
+-        limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+-        stage: eid_core::diag::Stage::Verify,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn e3(p: &Point3) -> [f64; 3] {
+     [p.x.value(), p.y.value(), p.z.value()]
+ }
+ 
+ fn pt(x: f64, y: f64, z: f64) -> Point3 {
+     Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+
+
+*** C:\\Users\\Pashtet\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --no-run --verbose --package=eid-grbl@0.1.0
+       Fresh unicode-ident v1.0.27
+       Fresh equivalent v1.0.3
+       Fresh hashbrown v0.17.1
+       Fresh winnow v0.7.15
+       Fresh toml_write v0.1.2
+       Fresh eid-core v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\crates\eid-core)
+       Fresh proc-macro2 v1.0.107
+       Fresh indexmap v2.14.2
+       Dirty eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\crates\eid-grbl): stale, unknown reason
+   Compiling eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\crates\eid-grbl)
+       Fresh quote v1.0.47
+       Fresh serde_core v1.0.229
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f66aa5f1d44b072 -C extra-filename=-22dfc31c079c2eb6 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rmeta'`
+       Fresh syn v3.0.10
+       Fresh serde_derive v1.0.229
+       Fresh serde v1.0.229
+       Fresh toml_datetime v0.6.11
+       Fresh serde_spanned v0.6.9
+       Fresh toml_edit v0.22.27
+       Fresh toml v0.8.23
+       Fresh eid-harness v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\crates\eid-harness)
+warning: unused variable: `roll`
+   --> crates\eid-harness\src\generator.rs:113:13
+    |
+113 |         let roll = rng.below(1000);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_roll`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `eid-harness` (lib) generated 1 warning
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d1483d80dfc8fd5f -C extra-filename=-cd8cd812586b141f --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'`
+warning: unused import: `LimitInfo`
+ --> crates\eid-grbl\src\canonicalize.rs:9:45
+  |
+9 | use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
+  |                                             ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: the trait bound `Diagnostic: Default` is not satisfied
+  --> crates\eid-grbl\src\canonicalize.rs:93:5
+   |
+93 |     Default::default() /* ~ changed by cargo-mutants ~ */
+   |     ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Diagnostic`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `eid-grbl` (lib) generated 1 warning
+error: could not compile `eid-grbl` (lib) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f66aa5f1d44b072 -C extra-filename=-22dfc31c079c2eb6 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rmeta'` (exit code: 1)
+warning: build failed, waiting for other jobs to finish...
+warning: `eid-grbl` (lib test) generated 1 warning (1 duplicate)
+error: could not compile `eid-grbl` (lib test) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d1483d80dfc8fd5f -C extra-filename=-cd8cd812586b141f --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-ErHHTP.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'` (exit code: 1)
+
+*** result: Failure(101)

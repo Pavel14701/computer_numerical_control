@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete match arm Op::Rapid{..} in motion_code
+@@ -341,17 +341,17 @@
+             "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",
+             Some(src.clone()),
+         ));
+     }
+ }
+ 
+ fn motion_code(op: &Op) -> &'static str {
+     match op {
+-        Op::Rapid { .. } => "G0",
++         /* ~ changed by cargo-mutants ~ */
+         Op::Linear { .. } => "G1",
+         Op::Arc { dir, .. } => match dir {
+             eid_core::ast::Dir::Cw => "G2",
+             eid_core::ast::Dir::Ccw => "G3",
+         },
+         _ => "",
+     }
+ }

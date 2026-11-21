@@ -1,0 +1,26 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace machine_start -> Option<Point3> with Some(Default::default())
+@@ -634,22 +634,17 @@
+     Ok(match (ctx.prev_end.clone(), o_prev, o_cur) {
+         (Some(e), Some(a), Some(c)) => Some(sub3(&add3(&e, a), c)),
+         _ => None,
+     })
+ }
+ 
+ /// Старт machine-хода: цепочка с предыдущего machine-хода либо prev_end + O_wcs.
+ fn machine_start(ctx: &Ctx) -> Option<Point3> {
+-    if ctx.prev_is_machine {
+-        return ctx.prev_end.clone();
+-    }
+-    let e = ctx.prev_end.as_ref()?;
+-    let o = ctx.origin_of(wcs_to_p(&ctx.prev_wcs))?;
+-    Some(add3(e, o))
++    Some(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Целевая точка хода: слова (G90 abs / G91 inc) + наследование reading.
+ /// SPEC §2 v0.11: в точке разрыва (a) — старт программы — отсутствующие оси
+ /// end наследуют дефолт контроллера (0) в активном фрейме (allow_controller_default);
+ /// после genuinely-неизвестных позиций ((b)–(d), вкл. machine-ходы) частичный
+ /// end → E_RUNTIME_STATE.
+ fn resolve_end(

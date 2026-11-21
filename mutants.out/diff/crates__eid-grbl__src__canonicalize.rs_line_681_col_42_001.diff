@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace + with * in resolve_end
+@@ -673,17 +673,17 @@
+                         None => {
+                             return Err(vec![err(
+                                 ErrorCode::RuntimeState,
+                                 "incremental move requires known current position (SPEC §2)",
+                                 &ctx.file, b.line_no, b.raw.len(),
+                             )]);
+                         }
+                     };
+-                    Some(num_f64(base[i] + n.value()))
++                    Some(num_f64(base[i] * /* ~ changed by cargo-mutants ~ */ n.value()))
+                 }
+             }
+             None => match rv {
+                 Some(r) => Some(num_f64(r[i])),
+                 None if at_start => Some(num_f64(0.0)), // дефолт контроллера
+                 None => None,
+             },
+         };

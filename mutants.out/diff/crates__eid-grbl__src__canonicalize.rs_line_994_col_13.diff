@@ -1,0 +1,24 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm MCode::SpindleCcw in process_tail
+@@ -986,20 +986,17 @@
+         }
+     }
+     for m in &b.m_codes {
+         match m {
+             MCode::SpindleCw => {
+                 let s = s_word.clone().or_else(|| ctx.last_s.clone()).unwrap_or_else(|| num_f64(0.0));
+                 ctx.spindle = Spindle::Cw(s);
+             }
+-            MCode::SpindleCcw => {
+-                let s = s_word.clone().or_else(|| ctx.last_s.clone()).unwrap_or_else(|| num_f64(0.0));
+-                ctx.spindle = Spindle::Ccw(s);
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             MCode::SpindleOff => ctx.spindle = Spindle::Off,
+             MCode::MistOn => ctx.coolant.mist = true,
+             MCode::FloodOn => ctx.coolant.flood = true,
+             MCode::CoolantOff => ctx.coolant = Coolant::default(),
+             _ => {}
+         }
+     }
+ 

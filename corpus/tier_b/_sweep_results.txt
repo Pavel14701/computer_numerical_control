@@ -9,7 +9,7 @@ ERR | published | grbl | grbljs_circle.gcode | E_INVALID_INPUT | program end mis
 ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
 ERR | published | grbl | grbljs_g2-arc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl | grbljs_helical-thread-milling.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
-OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 18ms
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 23ms
 ERR | published | grbl | grbljs_jsdc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl | grbljs_sample.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
@@ -31,7 +31,7 @@ ERR | published | grbl-подобный | mit_svg2g_shapes.gcode | E_INVALID_INP
 ERR | published | grbl-подобный | mit_svg2g_square.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
 OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 25ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 22ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 20ms
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change_g43.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)

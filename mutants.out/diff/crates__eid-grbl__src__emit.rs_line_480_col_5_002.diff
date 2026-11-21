@@ -1,0 +1,17 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace start_pt -> [f64; 3] with [-1.0; 3]
+@@ -472,13 +472,10 @@
+                 ctx.out.push('\n');
+             }
+         }
+         Op::ToolChange { .. } => unreachable!("tool_change отбракован валидацией"),
+     }
+ }
+ 
+ fn start_pt(s: &StartPoint) -> [f64; 3] {
+-    match s {
+-        StartPoint::Known(p) => [p.x.value(), p.y.value(), p.z.value()],
+-        StartPoint::Unknown => [0.0, 0.0, 0.0],
+-    }
++    [-1.0; 3] /* ~ changed by cargo-mutants ~ */
+ }

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm GCode::DistInc in process_tail
+@@ -959,17 +959,17 @@
+     for g in &b.g_codes {
+         match g {
+             GCode::Wcs(p) => {
+                 ctx.wcs = wcs_from_p(*p);
+                 ctx.selected_wcs.insert(*p);
+             }
+             GCode::PlaneXY | GCode::PlaneZX | GCode::PlaneYZ => ctx.plane = *g,
+             GCode::DistAbs => ctx.dist_abs = true,
+-            GCode::DistInc => ctx.dist_abs = false,
++             /* ~ changed by cargo-mutants ~ */
+             GCode::FeedInverse => ctx.feed_inverse = true,
+             GCode::FeedPerMin => ctx.feed_inverse = false,
+             _ => {}
+         }
+     }
+ 
+     // (9) Порядок grbl gcode.c: feed → spindle → coolant.
+     if let Some(f) = b.word('F') {

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete match arm Wcs::G54 in wcs_code
+@@ -36,17 +36,17 @@
+         GCode::PlaneZX => ("I", 0, "K", 2), // G18: I(X) + K(Z)
+         GCode::PlaneYZ => ("J", 1, "K", 2), // G19: J(Y) + K(Z)
+         _ => ("I", 0, "J", 1),              // G17: I(X) + J(Y)
+     }
+ }
+ 
+ fn wcs_code(w: &Wcs) -> &'static str {
+     match w {
+-        Wcs::G54 => "G54",
++         /* ~ changed by cargo-mutants ~ */
+         Wcs::G55 => "G55",
+         Wcs::G56 => "G56",
+         Wcs::G57 => "G57",
+         Wcs::G58 => "G58",
+         Wcs::G59 => "G59",
+         // G59.1/.2/.3 вне словаря GRBL (COVERAGE §2.3) — канонизатор GRBL их
+         // не производит; кросс-адаптерный AST → отказ эмиссии.
+         _ => "",

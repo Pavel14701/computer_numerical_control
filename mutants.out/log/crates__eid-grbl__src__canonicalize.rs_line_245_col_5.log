@@ -1,0 +1,154 @@
+
+*** crates/eid-grbl/src/canonicalize.rs:245:5: replace canonicalize_with_notices -> Result<ParseOut, Vec<Diagnostic>> with Ok(Default::default())
+
+*** mutation diff:
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace canonicalize_with_notices -> Result<ParseOut, Vec<Diagnostic>> with Ok(Default::default())
+@@ -237,84 +237,17 @@
+ // ---------------------------------------------------------------------------
+ 
+ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+     canonicalize_with_notices(src, file).map(|o| o.program)
+ }
+ 
+ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>> {
+     // Лимит max_source_lines (COVERAGE §1.2).
+-    let line_count = src.lines().count() as f64;
+-    if line_count > 1_000_000.0 {
+-        return Err(vec![limit_err(
+-            "max_source_lines", 1_000_000.0, line_count,
+-            format!("file has {} lines, limit 1000000", src.lines().count()),
+-            file, 1,
+-        )]);
+-    }
+-
+-    let parsed: ParsedFile = crate::block::parse_file(src);
+-    // Лексические ошибки: мусор → E_INVALID_INPUT; длинное слово → LIMIT (§1.2).
+-    if !parsed.lex_errors.is_empty() {
+-        return Err(parsed
+-            .lex_errors
+-            .iter()
+-            .map(|e| match e.kind {
+-                crate::lexer::LexErrorKind::WordTooLong => limit_err(
+-                    "max_word_chars", 32.0, 32.0,
+-                    "word value exceeds max_word_chars (32)".into(), file, e.line,
+-                ),
+-                kind => err_staged(
+-                    eid_core::diag::Stage::Parse,
+-                    ErrorCode::InvalidInput,
+-                    format!("lexical error: {:?} at col {}", kind, e.col),
+-                    file, e.line, e.col as usize,
+-                ),
+-            })
+-            .collect());
+-    }
+-
+-    let mut ctx = Ctx {
+-        file: file.to_string(),
+-        units: Units::Mm,
+-        dist_abs: true,
+-        feed_inverse: false,
+-        plane: GCode::PlaneXY,
+-        motion: None,
+-        wcs: Wcs::G54,
+-        selected_wcs: HashSet::from([1]),
+-        wcs_origins: Vec::new(),
+-        feed: None,
+-        last_s: None,
+-        spindle: Spindle::Off,
+-        coolant: Coolant::default(),
+-        anchor: None,
+-        frame_def_count: 0,
+-        prev_end: None,
+-        prev_is_machine: false,
+-        prev_wcs: Wcs::G54,
+-        pos_mach: None,
+-        ops: Vec::new(),
+-        notices: Vec::new(),
+-        units_established: false,
+-        g43_family_seen: parsed
+-            .blocks
+-            .iter()
+-            .any(|b| b.g_codes.contains(&GCode::ToolLenDynamic)),
+-        g92_values: None,
+-        end_count: 0,
+-        end_is_last: true,
+-        end_line: 0,
+-    };
+-
+-    let n = parsed.blocks.len();
+-    for (i, b) in parsed.blocks.iter().enumerate() {
+-        process_block(&mut ctx, b, i + 1 == n)?;
+-    }
+-    finalize(&mut ctx, line_count as u32)
++    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Структурная проверка program_end (N12/N13/N14 → Err INVALID) + сборка Program.
+ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>> {
+     // Лимит max_ops_per_program (COVERAGE §1.2).
+     let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
+     if ops_n > 200_000.0 {
+         return Err(vec![limit_err(
+
+
+*** C:\\Users\\Pashtet\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --no-run --verbose --package=eid-grbl@0.1.0
+       Fresh unicode-ident v1.0.27
+       Fresh equivalent v1.0.3
+       Fresh hashbrown v0.17.1
+       Fresh toml_write v0.1.2
+       Fresh winnow v0.7.15
+       Fresh eid-core v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-core)
+       Fresh proc-macro2 v1.0.107
+       Fresh indexmap v2.14.2
+       Dirty eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-grbl): stale, unknown reason
+   Compiling eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-grbl)
+       Fresh quote v1.0.47
+       Fresh serde_core v1.0.229
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f66aa5f1d44b072 -C extra-filename=-22dfc31c079c2eb6 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rmeta'`
+       Fresh syn v3.0.10
+       Fresh serde_derive v1.0.229
+       Fresh serde v1.0.229
+       Fresh toml_datetime v0.6.11
+       Fresh serde_spanned v0.6.9
+       Fresh toml_edit v0.22.27
+       Fresh toml v0.8.23
+       Fresh eid-harness v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-harness)
+warning: unused variable: `roll`
+   --> crates\eid-harness\src\generator.rs:113:13
+    |
+113 |         let roll = rng.below(1000);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_roll`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `eid-harness` (lib) generated 1 warning
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d1483d80dfc8fd5f -C extra-filename=-cd8cd812586b141f --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'`
+warning: unused import: `ParsedFile`
+  --> crates\eid-grbl\src\canonicalize.rs:10:44
+   |
+10 | use crate::block::{Block, G10Kind, Marker, ParsedFile};
+   |                                            ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: the trait bound `ParseOut: Default` is not satisfied
+   --> crates\eid-grbl\src\canonicalize.rs:245:8
+    |
+245 |     Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+    |        ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `ParseOut`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `eid-grbl` (lib) generated 1 warning
+error: could not compile `eid-grbl` (lib) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f66aa5f1d44b072 -C extra-filename=-22dfc31c079c2eb6 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rmeta'` (exit code: 1)
+warning: build failed, waiting for other jobs to finish...
+warning: `eid-grbl` (lib test) generated 1 warning (1 duplicate)
+error: could not compile `eid-grbl` (lib test) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d1483d80dfc8fd5f -C extra-filename=-cd8cd812586b141f --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'` (exit code: 1)
+
+*** result: Failure(101)

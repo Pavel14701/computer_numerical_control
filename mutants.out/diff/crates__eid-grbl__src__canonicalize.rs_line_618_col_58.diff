@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace == with != in reading_now
+@@ -610,17 +610,17 @@
+                     &ctx.file, 0, 0,
+                 )]);
+             }
+         }
+         return Ok(machine_start(ctx));
+     }
+     if ctx.prev_end.is_none() {
+         // (a) первый motion-оп: якорь = frame_preset / wcs_set_here (той же WCS).
+-        return Ok(ctx.anchor.as_ref().filter(|(_, w)| *w == ctx.wcs).map(|(p, _)| p.clone()));
++        return Ok(ctx.anchor.as_ref().filter(|(_, w)| *w != /* ~ changed by cargo-mutants ~ */ ctx.wcs).map(|(p, _)| p.clone()));
+     }
+     if ctx.prev_is_machine {
+         // (d) первый WCS-ход после machine-ходов: reading = M − O_wcs − Δ.
+         let o = ctx.origin_of(wcs_to_p(&ctx.wcs));
+         return Ok(match (ctx.pos_mach.clone(), o) {
+             (Some(m), Some(o)) => Some(sub3(&m, o)),
+             _ => None,
+         });

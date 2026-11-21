@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace Ctx::push with ()
+@@ -197,17 +197,17 @@
+         }
+     }
+ 
+     fn origin_of(&self, p: u8) -> Option<&Point3> {
+         self.wcs_origins.iter().find(|(q, _)| *q == p).map(|(_, o)| o)
+     }
+ 
+     fn push(&mut self, op: Op) {
+-        self.ops.push(op);
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// drop-with-notice (оп НЕ попадает в ops, SPEC §3).
+     fn push_drop(&mut self, op: Op, kind: NoticeKind, message: String) {
+         let idx = self.ops.len();
+         self.notices.push(Notice { kind, message, op_index: idx, op });
+     }
+ 

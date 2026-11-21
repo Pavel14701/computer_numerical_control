@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace > with >= in arc_block
+@@ -847,17 +847,17 @@
+     }
+     let mut near_degenerate = false;
+     if b.word('R').is_some() && (180.0 - sweep.to_degrees()).abs() < 0.114 {
+         near_degenerate = true; // |cos(sweep/2)| < 1e-3 (EQUIVALENCE §4)
+     }
+ 
+     // Валидация §6: планиметрический радиус ρ_start ≈ ρ_end (N5a).
+     let tol_r = 0.001f64.max(1e-6 * rho_s.max(rho_e));
+-    if (rho_s - rho_e).abs() > tol_r {
++    if (rho_s - rho_e).abs() >= /* ~ changed by cargo-mutants ~ */ tol_r {
+         return Err(vec![inval(format!(
+             "arc radius mismatch: ρ_start {rho_s:.4} vs ρ_end {rho_e:.4} (SPEC §6; CORPUS n5a)"
+         ))]);
+     }
+     // Уравнение позиции: end ≈ c + Rot(n, dir, sweep)·(start − c) + pitch·n.
+     let v = {
+         let th = if mode == GCode::ArcCw { -sweep } else { sweep };
+         let rv = [s[0] - c[0], s[1] - c[1], s[2] - c[2]];

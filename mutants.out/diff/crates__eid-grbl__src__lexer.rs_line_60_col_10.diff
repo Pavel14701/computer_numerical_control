@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/lexer.rs
++++ replace < with == in lex_line
+@@ -52,17 +52,17 @@
+     let cs: Vec<char> = line.chars().collect();
+     let mut toks = Vec::new();
+     let mut i = 0usize;
+ 
+     // Маркеры начала строки.
+     while i < cs.len() && cs[i].is_whitespace() {
+         i += 1;
+     }
+-    if i < cs.len() && cs[i] == '$' {
++    if i == /* ~ changed by cargo-mutants ~ */ cs.len() && cs[i] == '$' {
+         return Ok(vec![Tok::ConfigLine(line.trim().to_string())]);
+     }
+     if i < cs.len() && cs[i] == '%' {
+         return Ok(vec![Tok::Percent]);
+     }
+     if i < cs.len() && cs[i] == '/' {
+         toks.push(Tok::BlockDelete);
+         i += 1;

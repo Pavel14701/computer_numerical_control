@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace match guard at_start with true in resolve_end
+@@ -678,17 +678,17 @@
+                             )]);
+                         }
+                     };
+                     Some(num_f64(base[i] + n.value()))
+                 }
+             }
+             None => match rv {
+                 Some(r) => Some(num_f64(r[i])),
+-                None if at_start => Some(num_f64(0.0)), // дефолт контроллера
++                None if true /* ~ changed by cargo-mutants ~ */ => Some(num_f64(0.0)), // дефолт контроллера
+                 None => None,
+             },
+         };
+     }
+     match (v[0].take(), v[1].take(), v[2].take()) {
+         (Some(x), Some(y), Some(z)) => Ok(Some(Point3 { x, y, z })),
+         _ => {
+             if reading.is_none() {

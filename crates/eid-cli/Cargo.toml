@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 eid-core = { path = "../eid-core" }
 eid-integration = { path = "../eid-integration" }
+
+[dev-dependencies]
+eid-harness = { path = "../eid-harness" }

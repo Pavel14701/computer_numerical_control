@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace == with != in validate_grbl
+@@ -294,17 +294,17 @@
+                         "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",
+                         Some(src.clone()),
+                     ));
+                 }
+             }
+             _ => {}
+         }
+     }
+-    if ends == 0 {
++    if ends != /* ~ changed by cargo-mutants ~ */ 0 {
+         v.push(err(
+             code("program_end_missing"),
+             "program_end missing: GRBL emission requires M2 (CORPUS n14)",
+             None,
+         ));
+     } else if ends > 1 {
+         v.push(err(code("program_end_duplicate"), "duplicate program_end (CORPUS n13)", None));
+     } else if !last_is_end {

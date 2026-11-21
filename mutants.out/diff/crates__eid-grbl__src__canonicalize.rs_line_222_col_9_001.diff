@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace Ctx::line -> u32 with 1
+@@ -214,17 +214,17 @@
+     /// notice при ЖИВОМ опе (near-degenerate R-arc, EQUIVALENCE §4).
+     fn push_keep(&mut self, op: Op, kind: NoticeKind, message: String) {
+         let idx = self.ops.len();
+         self.ops.push(op.clone());
+         self.notices.push(Notice { kind, message, op_index: idx, op });
+     }
+ 
+     fn line(&self, b: &Block) -> u32 {
+-        b.line_no
++        1 /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn raw_op(&self, b: &Block, raw_line: &str, code: ErrorCode, reason: &str) -> Op {
+         Op::Raw {
+             payload_hex: payload_hex(raw_line),
+             reason: reason.to_string(),
+             code,
+             src: span(&self.file, b.line_no, raw_line.len()),

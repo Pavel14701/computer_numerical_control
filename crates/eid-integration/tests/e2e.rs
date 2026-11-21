@@ -9,7 +9,7 @@
 use eid_core::adapter::Adapter;
 use eid_harness::diff::{semantic_diff, DiffConfig};
 use eid_integration::profile::MachineProfile;
-use eid_integration::sim::mock_sim;
+use eid_integration::sim::{check_program, mock_sim};
 use eid_integration::translate::{
     format_diagnostic, translate_file, translate_text, AnyAdapter, TranslateError,
 };
@@ -216,4 +216,94 @@ fn e2e_pending_dialect_is_reported() {
         .expect_err("grbl-hal — pending");
     assert!(matches!(err, TranslateError::AdapterPending { .. }));
     assert_eq!(err.stage(), "config");
+}
+
+// ---------------------------------------------------------------------------
+// Идемпотентность (QA, итерация 5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_translate_idempotent_double_run() {
+    // (a) двойной прогон одного файла → байт-в-байт тот же результат
+    let src = std::fs::read_to_string(corpus_pilot("01_linear_box", "linear_box.grbl.ngc")).unwrap();
+    let run1 = translate_text("grbl-1.1", "linuxcnc", &src, "in.grbl.ngc").unwrap();
+    let run2 = translate_text("grbl-1.1", "linuxcnc", &src, "in.grbl.ngc").unwrap();
+    assert_eq!(run1.emitted, run2.emitted, "translate недетерминирован");
+
+    // (б) translate(translate-выхода) → идентичный выход: same-dialect
+    // re-translate (linuxcnc→linuxcnc) стабилен (R1-свойство эмиссии)
+    let again = translate_text("linuxcnc", "linuxcnc", &run1.emitted, "mid.linuxcnc.ngc").unwrap();
+    assert_eq!(again.emitted, run1.emitted, "re-translate не идемпотентен");
+
+    // (в) и через файловую функцию: повторная запись — тот же байтовый файл
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let out1 = e2e_dir().join("idem1.ngc");
+    let out2 = e2e_dir().join("idem2.ngc");
+    translate_file("grbl-1.1", "linuxcnc", &input, &out1).unwrap();
+    translate_file("grbl-1.1", "linuxcnc", &input, &out2).unwrap();
+    assert_eq!(
+        std::fs::read(&out1).unwrap(),
+        std::fs::read(&out2).unwrap(),
+        "файловый translate недетерминирован"
+    );
+}
+
+#[test]
+fn e2e_verify_idempotent_same_report() {
+    // verify(verify) → тот же отчёт: parse + structural-проверки дважды
+    let output = e2e_dir().join("idem_verify.ngc");
+    translate_file(
+        "grbl-1.1",
+        "linuxcnc",
+        &corpus_pilot("01_linear_box", "linear_box.grbl.ngc"),
+        &output,
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&output).unwrap();
+    let profile = MachineProfile::linuxcnc_default();
+    let r1 = mock_sim(&profile, &text, "idem_verify.ngc");
+    let r2 = mock_sim(&profile, &text, "idem_verify.ngc");
+    assert_eq!(r1, r2, "verify-отчёт недетерминирован");
+
+    // и на AST-уровне: check_program на двух независимых parse — тот же отчёт
+    let a = parse("linuxcnc", &text, "f.ngc");
+    let b = parse("linuxcnc", &text, "f.ngc");
+    assert_eq!(check_program(&profile, &a), check_program(&profile, &b));
+}
+
+// ---------------------------------------------------------------------------
+// Смешанные line endings (метаморфное отношение)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_mixed_line_endings_equivalent() {
+    let lf = std::fs::read_to_string(corpus_pilot("01_linear_box", "linear_box.grbl.ngc")).unwrap();
+
+    // вперемешку: CRLF через строку, LF — остальные (голый \r без \n — вне
+    // словаря лексера, отдельная диспозиция владельца диалекта)
+    let mut mixed = String::new();
+    for (i, line) in lf.lines().enumerate() {
+        if i % 2 == 0 {
+            mixed.push_str(&format!("{line}\r\n"));
+        } else {
+            mixed.push_str(&format!("{line}\n"));
+        }
+    }
+
+    // parse Ok для смешанного входа и AST-эквивалентность LF-версии
+    // (одинаковое имя файла → src-spans сравнимы; semantic_diff их и так
+    // исключает — provenance, EQUIVALENCE §5)
+    let a = parse("grbl-1.1", &lf, "f.ngc");
+    let b = parse("grbl-1.1", &mixed, "f.ngc");
+    assert_eq!(a.ops.len(), b.ops.len(), "число опов разошлось на CRLF");
+    let d = semantic_diff(&a, &b, &DiffConfig::default());
+    assert!(d.is_empty(), "CRLF-версия не эквивалентна LF: {d:?}");
+
+    // метаморфное отношение на уровне CLI: эмиссии байт-в-байт равны
+    let out_lf = translate_text("grbl-1.1", "linuxcnc", &lf, "f.ngc").unwrap();
+    let out_mixed = translate_text("grbl-1.1", "linuxcnc", &mixed, "f.ngc").unwrap();
+    assert_eq!(
+        out_lf.emitted, out_mixed.emitted,
+        "translate(LF) != translate(LF+CRLF)"
+    );
 }

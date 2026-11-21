@@ -1,0 +1,64 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace resolve_end -> Result<Option<Point3>, Vec<Diagnostic>> with Ok(None)
+@@ -653,60 +653,17 @@
+ /// после genuinely-неизвестных позиций ((b)–(d), вкл. machine-ходы) частичный
+ /// end → E_RUNTIME_STATE.
+ fn resolve_end(
+     ctx: &Ctx,
+     b: &Block,
+     reading: &Option<Point3>,
+     allow_controller_default: bool,
+ ) -> Result<Option<Point3>, Vec<Diagnostic>> {
+-    let rv = reading.as_ref().map(|p| e3(p));
+-    let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
+-    let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
+-    for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
+-        v[i] = match b.word(w) {
+-            Some(n) => {
+-                if ctx.dist_abs {
+-                    Some(verbatim(n))
+-                } else {
+-                    let base = match rv {
+-                        Some(r) => r,
+-                        None if at_start => [0.0, 0.0, 0.0],
+-                        None => {
+-                            return Err(vec![err(
+-                                ErrorCode::RuntimeState,
+-                                "incremental move requires known current position (SPEC §2)",
+-                                &ctx.file, b.line_no, b.raw.len(),
+-                            )]);
+-                        }
+-                    };
+-                    Some(num_f64(base[i] + n.value()))
+-                }
+-            }
+-            None => match rv {
+-                Some(r) => Some(num_f64(r[i])),
+-                None if at_start => Some(num_f64(0.0)), // дефолт контроллера
+-                None => None,
+-            },
+-        };
+-    }
+-    match (v[0].take(), v[1].take(), v[2].take()) {
+-        (Some(x), Some(y), Some(z)) => Ok(Some(Point3 { x, y, z })),
+-        _ => {
+-            if reading.is_none() {
+-                Err(vec![err(
+-                    ErrorCode::RuntimeState,
+-                    "partial end with unknown reading inherits unknown (SPEC §2)",
+-                    &ctx.file, b.line_no, b.raw.len(),
+-                )])
+-            } else {
+-                unreachable!("reading known ⇒ все оси разрешены")
+-            }
+-        }
+-    }
++    Ok(None) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// G94: F как есть; G93: feed = len × F (только для linear/arc, SPEC §4).
+ fn resolved_feed(ctx: &Ctx, start: &StartPoint, end: &Point3, f: Num, line: u32, blen: usize) -> Result<Num, Vec<Diagnostic>> {
+     if !ctx.feed_inverse {
+         return Ok(f);
+     }
+     match start {

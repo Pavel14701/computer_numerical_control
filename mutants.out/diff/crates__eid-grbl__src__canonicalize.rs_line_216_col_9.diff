@@ -1,0 +1,23 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace Ctx::push_keep with ()
+@@ -208,19 +208,17 @@
+     /// drop-with-notice (оп НЕ попадает в ops, SPEC §3).
+     fn push_drop(&mut self, op: Op, kind: NoticeKind, message: String) {
+         let idx = self.ops.len();
+         self.notices.push(Notice { kind, message, op_index: idx, op });
+     }
+ 
+     /// notice при ЖИВОМ опе (near-degenerate R-arc, EQUIVALENCE §4).
+     fn push_keep(&mut self, op: Op, kind: NoticeKind, message: String) {
+-        let idx = self.ops.len();
+-        self.ops.push(op.clone());
+-        self.notices.push(Notice { kind, message, op_index: idx, op });
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn line(&self, b: &Block) -> u32 {
+         b.line_no
+     }
+ 
+     fn raw_op(&self, b: &Block, raw_line: &str, code: ErrorCode, reason: &str) -> Op {
+         Op::Raw {

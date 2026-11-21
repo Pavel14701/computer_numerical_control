@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm (Some(e), Some(a), Some(c)) in reading_now
+@@ -627,17 +627,17 @@
+     }
+     if ctx.prev_wcs == ctx.wcs {
+         return Ok(ctx.prev_end.clone());
+     }
+     // (b) смена wcs: обе системы in-text → reading_new = prev_end + O_prev − O_new.
+     let o_prev = ctx.origin_of(wcs_to_p(&ctx.prev_wcs));
+     let o_cur = ctx.origin_of(wcs_to_p(&ctx.wcs));
+     Ok(match (ctx.prev_end.clone(), o_prev, o_cur) {
+-        (Some(e), Some(a), Some(c)) => Some(sub3(&add3(&e, a), c)),
++         /* ~ changed by cargo-mutants ~ */
+         _ => None,
+     })
+ }
+ 
+ /// Старт machine-хода: цепочка с предыдущего machine-хода либо prev_end + O_wcs.
+ fn machine_start(ctx: &Ctx) -> Option<Point3> {
+     if ctx.prev_is_machine {
+         return ctx.prev_end.clone();

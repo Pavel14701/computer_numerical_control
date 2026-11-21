@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace == with != in spindle_eq
+@@ -61,17 +61,17 @@
+     spindle: Spindle,
+     coolant: Coolant,
+     first_motion: bool,
+ }
+ 
+ fn spindle_eq(a: &Spindle, b: &Spindle) -> bool {
+     match (a, b) {
+         (Spindle::Off, Spindle::Off) => true,
+-        (Spindle::Cw(x), Spindle::Cw(y)) | (Spindle::Ccw(x), Spindle::Ccw(y)) => x.value() == y.value(),
++        (Spindle::Cw(x), Spindle::Cw(y)) | (Spindle::Ccw(x), Spindle::Ccw(y)) => x.value() != /* ~ changed by cargo-mutants ~ */ y.value(),
+         _ => false,
+     }
+ }
+ 
+ impl Ectx {
+     /// Смена состояния перед опом (порядок grbl: wcs → spindle → coolant).
+     fn state_prefix(&mut self, st: &State) {
+         // WCS явно перед первым motion-опом и при смене (COVERAGE §5; бриф п.3).

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace != with == in Ectx::state_prefix
+@@ -83,17 +83,17 @@
+         if !spindle_eq(&st.spindle, &self.spindle) {
+             match &st.spindle {
+                 Spindle::Off => self.out.push_str("M5\n"),
+                 Spindle::Cw(n) => self.out.push_str(&format!("M3 S{}\n", fmt_num(n.value()))),
+                 Spindle::Ccw(n) => self.out.push_str(&format!("M4 S{}\n", fmt_num(n.value()))),
+             }
+             self.spindle = st.spindle.clone();
+         }
+-        if st.coolant != self.coolant {
++        if st.coolant == /* ~ changed by cargo-mutants ~ */ self.coolant {
+             // Дельта coolant (CORPUS #29): ЛЮБОЕ изменение поля даёт M-коды.
+             // Переход к none (из flood / mist / flood+mist) → M9; включения —
+             // M7/M8; ЛЮБОЕ выключение оси при живой второй (частичное) —
+             // M9 (гасит обе) + повтор оставшейся (GRBL не умеет точечно).
+             let prev = self.coolant;
+             let new = st.coolant;
+             if !new.flood && !new.mist {
+                 self.out.push_str("M9\n");

@@ -1,0 +1,32 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete match arm Op::Dwell{state, src, ..} | Op::WcsDefine{state, src, ..} | Op::WcsSetHere{state, src, ..} | Op::ProgramStop{state, src, ..} in validate_grbl
+@@ -279,28 +279,17 @@
+                 {
+                     v.push(err(
+                         code("raw_payload_not_hex"),
+                         "raw payload_hex is not valid byte hex (grammar D9 v0.3)",
+                         Some(src.clone()),
+                     ));
+                 }
+             }
+-            Op::Dwell { state, src, .. }
+-            | Op::WcsDefine { state, src, .. }
+-            | Op::WcsSetHere { state, src, .. }
+-            | Op::ProgramStop { state, src, .. } => {
+-                if wcs_code(&state.wcs).is_empty() {
+-                    v.push(err(
+-                        code("wcs_outside_g54_g59"),
+-                        "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",
+-                        Some(src.clone()),
+-                    ));
+-                }
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             _ => {}
+         }
+     }
+     if ends == 0 {
+         v.push(err(
+             code("program_end_missing"),
+             "program_end missing: GRBL emission requires M2 (CORPUS n14)",
+             None,

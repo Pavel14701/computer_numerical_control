@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm GCode::PlaneZX in plane_axes
+@@ -108,17 +108,17 @@
+     Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+ }
+ 
+ /// Плоскость → (axis_0, axis_1, axis_linear) — определение grbl gcode.c
+ /// (COVERAGE §6.11: G18 = ZX, G19 = YZ). Нормаль = +axis_linear (SPEC §6).
+ fn plane_axes(g: &GCode) -> (usize, usize, usize) {
+     match g {
+         GCode::PlaneXY => (0, 1, 2),
+-        GCode::PlaneZX => (2, 0, 1),
++         /* ~ changed by cargo-mutants ~ */
+         GCode::PlaneYZ => (1, 2, 0),
+         _ => (0, 1, 2),
+     }
+ }
+ 
+ fn wcs_from_p(p: u8) -> Wcs {
+     match p {
+         1 => Wcs::G54,

@@ -31,8 +31,9 @@ pub struct Bbox {
 }
 
 /// Отчёт симуляции: ошибки (fail), предупреждения (инфо о потерях), число
-/// опсов, bbox. `errors` пуст ⇒ sim принял программу.
-#[derive(Debug, Clone, Default)]
+/// опсов, bbox. `errors` пуст ⇒ sim принял программу. PartialEq — тест
+/// идемпотентности verify (двойной прогон → тот же отчёт).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SimReport {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete ! in process_block
+@@ -400,17 +400,17 @@
+             ErrorCode::InvalidInput,
+             format!("modal group violation in block: {:?} after {:?}", group, g),
+             &ctx.file, line, blen,
+         )]);
+     }
+ 
+     // (3) Слова вне словаря → Raw line-level. Оси A/B/C/U/V/W → SEMANTICS
+     // (COVERAGE §4); прочие (M6, G64, G90.1, H, ...) → SYNTAX (вне словаря GRBL).
+-    if !b.unsupported_words.is_empty() {
++    if  /* ~ changed by cargo-mutants ~ */b.unsupported_words.is_empty() {
+         let axes_sem =
+             b.unsupported_words.iter().all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
+         let (code, reason) = if axes_sem {
+             (
+                 ErrorCode::UnsupportedSemantics,
+                 "rotary/4th-axis words A/B/C/U/V/W — outside L1 (COVERAGE §4)",
+             )
+         } else {

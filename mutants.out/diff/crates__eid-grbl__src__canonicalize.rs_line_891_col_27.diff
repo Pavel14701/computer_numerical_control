@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace * with + in arc_block
+@@ -883,17 +883,17 @@
+     }
+     if resid2.sqrt() > eps_pos {
+         return Err(vec![inval(format!(
+             "arc rotation-equation residual {:.4} > {eps_pos:.4} (SPEC §6.3)",
+             resid2.sqrt()
+         ))]);
+     }
+ 
+-    let arc_len = ((rho_s * sweep).powi(2) + pitch * pitch).sqrt();
++    let arc_len = ((rho_s + /* ~ changed by cargo-mutants ~ */ sweep).powi(2) + pitch * pitch).sqrt();
+     let f = ctx.feed.clone().ok_or_else(|| {
+         vec![err(ErrorCode::InvalidInput, "arc move before any F word (SPEC §4)", &ctx.file, line, blen)]
+     })?;
+     let feed = if ctx.feed_inverse { num_f64(arc_len * f.value()) } else { f };
+     let mut st = ctx.state(Frame::Wcs);
+     st.feed = Some(feed);
+     let op = Op::Arc {
+         start: StartPoint::Known(start),

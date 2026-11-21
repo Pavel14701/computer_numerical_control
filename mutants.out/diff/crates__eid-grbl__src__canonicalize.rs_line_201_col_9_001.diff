@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace Ctx::origin_of -> Option<&Point3> with Some(Box::leak(Box::new(Default::default())))
+@@ -193,17 +193,17 @@
+             coolant: self.coolant,
+             tool: None, // GRBL: M6/T вне словаря — инструмент не устанавливается
+             frame,
+             wcs: self.wcs,
+         }
+     }
+ 
+     fn origin_of(&self, p: u8) -> Option<&Point3> {
+-        self.wcs_origins.iter().find(|(q, _)| *q == p).map(|(_, o)| o)
++        Some(Box::leak(Box::new(Default::default()))) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn push(&mut self, op: Op) {
+         self.ops.push(op);
+     }
+ 
+     /// drop-with-notice (оп НЕ попадает в ops, SPEC §3).
+     fn push_drop(&mut self, op: Op, kind: NoticeKind, message: String) {

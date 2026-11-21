@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace canonicalize -> Result<Program, Vec<Diagnostic>> with Ok(Default::default())
+@@ -232,17 +232,17 @@
+     }
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // Входные точки
+ // ---------------------------------------------------------------------------
+ 
+ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+-    canonicalize_with_notices(src, file).map(|o| o.program)
++    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>> {
+     // Лимит max_source_lines (COVERAGE §1.2).
+     let line_count = src.lines().count() as f64;
+     if line_count > 1_000_000.0 {
+         return Err(vec![limit_err(
+             "max_source_lines", 1_000_000.0, line_count,

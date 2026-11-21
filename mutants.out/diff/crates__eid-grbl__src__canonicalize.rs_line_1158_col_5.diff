@@ -1,0 +1,44 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace process_g92 -> Result<(), Vec<Diagnostic>> with Ok(())
+@@ -1150,40 +1150,10 @@
+             ctx.push(op);
+             Ok(())
+         }
+     }
+ }
+ 
+ /// G92 → frame_preset: только пресетка до первого motion-опа; full-triple.
+ fn process_g92(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
+-    let line = b.line_no;
+-    let blen = b.raw.len();
+-    if ctx.prev_end.is_some() {
+-        return Err(vec![err(
+-            ErrorCode::UnsupportedSemantics,
+-            "G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)",
+-            &ctx.file, line, blen,
+-        )]);
+-    }
+-    if ctx.frame_def_count >= 1 {
+-        return Err(vec![err(
+-            ErrorCode::UnsupportedSemantics,
+-            "second frame preset (G92/G10 L20) in one program (CORPUS n17)",
+-            &ctx.file, line, blen,
+-        )]);
+-    }
+-    let (x, y, z) = match (b.word('X'), b.word('Y'), b.word('Z')) {
+-        (Some(x), Some(y), Some(z)) => (verbatim(x), verbatim(y), verbatim(z)),
+-        _ => {
+-            return Err(vec![err(
+-                ErrorCode::RuntimeState,
+-                "partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)",
+-                &ctx.file, line, blen,
+-            )]);
+-        }
+-    };
+-    let values = Point3 { x, y, z };
+-    ctx.g92_values = Some((values.clone(), ctx.wcs));
+-    ctx.frame_def_count += 1;
+-    ctx.anchor = Some((values, ctx.wcs));
+-    Ok(())
++    Ok(()) /* ~ changed by cargo-mutants ~ */
+ }
