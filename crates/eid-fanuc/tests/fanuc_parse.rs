@@ -717,6 +717,7 @@ fn wcs_of_op(op: &Op) -> Option<eid_core::ast::Wcs> {
     }
 }
 
+#[allow(dead_code)] // хелпер этапа 2 — используется точечно; предупреждение чистоты сборки
 fn frame_of_op(op: &Op) -> Option<eid_core::ast::Frame> {
     match op {
         Op::Rapid { state, .. } | Op::Linear { state, .. } | Op::Arc { state, .. } => {
@@ -1114,12 +1115,14 @@ fn cycle_g82_dwell_p_ms() {
         "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG81 X20. Y20. Z-5. R2. F100.;\nG82 X30. Y20. Z-6. R2. P500.;\nM30;\n",
     )
     .expect("ok");
-    // G81: 4 опа (1..4); G82: 5 опов (5..9) — с dwell между feed и retract.
+    // G81: 4 опа (1..4); G82: traverse + [approach — ZERO-LENGTH (cz == 2 ==
+    // r_cur после отвода G81) → drop+notice, этап 3/SPEC §3] + drill + dwell
+    // + retract = 4 опа (5..8) — dwell между feed и retract.
     assert!(
-        matches!(&p.ops[8], Op::Dwell { seconds, .. } if (seconds.value() - 0.5).abs() <= EPS),
+        matches!(&p.ops[7], Op::Dwell { seconds, .. } if (seconds.value() - 0.5).abs() <= EPS),
         "P500 → 0.5 s"
     );
-    assert_eq!(end_of(&p.ops[9]), [30.0, 20.0, 2.0], "retract после dwell");
+    assert_eq!(end_of(&p.ops[8]), [30.0, 20.0, 2.0], "retract после dwell");
     // G82 без P — сломанный вход (паритет LinuxCNC-адаптера).
     assert_eq!(
         err_code(parse(
@@ -1313,7 +1316,8 @@ fn cycle_k0_g91_raw() {
         );
     }
     // K0 в G90 — легально: 0 повторов (детерминированный no-op, паритет
-    // LinuxCNC L0).
+    // LinuxCNC L0). RULING оркестратора (этап 3, п.3): K0-in-G90 = no-op
+    // ПРИНЯТ как паритет L0; COVERAGE `?`-реестр пополняет оркестратор.
     let p = parse(
         "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG81 X5. Y2. Z-15. R-3. K0 F100.;\nM30;\n",
     )
@@ -1356,17 +1360,20 @@ fn cycle_modal_repeat_xy() {
         "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG81 Z-5. R2. F100.;\nX20.;\nX30. Y-10. Z-6.;\nG80;\nG1 X40. F250.;\nM30;\n",
     )
     .expect("ok");
-    // G0; 2 развёртки × 4; linear; PEND = 11 (G81-параметр-кадр без опов).
-    assert_eq!(p.ops.len(), 11);
+    // G0; отверстие1 × 4; отверстие2 × 3 (approach — ZERO-LENGTH: cz == 2 ==
+    // r_cur после отвода отв.1 → drop+notice, этап 3/SPEC §3); linear; PEND
+    // = 10 (G81-параметр-кадр без опов).
+    assert_eq!(p.ops.len(), 10);
     // Отверстие 1 (X20): traverse (10,10,5)→(20,10,5).
     assert_eq!(end_of(&p.ops[1]), [20.0, 10.0, 5.0]);
     assert_eq!(end_of(&p.ops[3]), [20.0, 10.0, -5.0]);
     // Отверстие 2 (X30 Y-10, Z обновлён −6).
     assert_eq!(end_of(&p.ops[5]), [30.0, -10.0, 2.0], "traverse на retract Z");
-    assert_eq!(end_of(&p.ops[7]), [30.0, -10.0, -6.0], "обновлённый Z");
+    assert_eq!(end_of(&p.ops[6]), [30.0, -10.0, -6.0], "обновлённый Z");
+    assert_eq!(end_of(&p.ops[7]), [30.0, -10.0, 2.0], "retract");
     // После G80 X/Y = линейный ход (группа 01 модальна, цикл отменён).
-    assert!(matches!(&p.ops[9], Op::Linear { .. }));
-    assert_eq!(end_of(&p.ops[9]), [40.0, -10.0, 2.0]);
+    assert!(matches!(&p.ops[8], Op::Linear { .. }));
+    assert_eq!(end_of(&p.ops[8]), [40.0, -10.0, 2.0]);
 }
 
 #[test]
@@ -1384,12 +1391,16 @@ M30;
 ",
     )
     .expect("ok");
-    // 2 отверстия × 4 опа + G0 + PEND = 10; второе — глубже на Z-шаг.
-    assert_eq!(p.ops.len(), 10);
+    // G91: X0 Y0 → traverse нулевой (hole на той же X/Y) → drop+notice
+    // (этап 3/SPEC §3); на отверстие: approach + drill + retract × 2 + G0 +
+    // PEND = 8; второе — глубже на Z-шаг.
+    assert_eq!(p.ops.len(), 8);
     // iter1: r_cur = 2, zb = −3; iter2: r_cur = −1, zb = −6.
-    assert_eq!(end_of(&p.ops[3]), [10.0, 10.0, -3.0], "дно iter1");
-    assert_eq!(end_of(&p.ops[6]), [10.0, 10.0, -1.0], "approach iter2 (r_cur −1)");
-    assert_eq!(end_of(&p.ops[7]), [10.0, 10.0, -6.0], "дно iter2 (Z-шаг)");
+    assert_eq!(end_of(&p.ops[1]), [10.0, 10.0, 2.0], "approach iter1");
+    assert_eq!(end_of(&p.ops[2]), [10.0, 10.0, -3.0], "дно iter1");
+    assert_eq!(end_of(&p.ops[3]), [10.0, 10.0, 2.0], "retract iter1");
+    assert_eq!(end_of(&p.ops[4]), [10.0, 10.0, -1.0], "approach iter2 (r_cur −1)");
+    assert_eq!(end_of(&p.ops[5]), [10.0, 10.0, -6.0], "дно iter2 (Z-шаг)");
 }
 
 #[test]
@@ -1933,3 +1944,207 @@ fn path_switch_mid_invalid() {
         ErrorCode::UnsupportedSemantics
     );
 }
+
+// ===========================================================================
+// Этап 3 (зеркала SPEC v0.17 + rulings оркестратора)
+// ===========================================================================
+
+/// Хелпер: end-точка опа → [f64; 3].
+fn end_of3(op: &Op) -> [f64; 3] {
+    match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => pt3(end),
+        other => panic!("нет end у {other:?}"),
+    }
+}
+
+#[test]
+fn g38_probing_family_raw() {
+    // RULING (этап 3, п.2): G38.2–.5 — пробинг, класс = G31/G37
+    // (COVERAGE §2.1: «пробинг — этап 12») → Raw{E_UNSUPPORTED_SEMANTICS}.
+    for code in ["G38.2", "G38.3", "G38.4", "G38.5"] {
+        let out = canonicalize_with_notices(
+            &format!("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\n{code} Z-1. F100.;\nM30;\n"),
+            "t.ngc",
+        )
+        .expect("Ok + Raw");
+        assert!(
+            matches!(&out.program.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }),
+            "{code} → Raw SEMANTICS (probing)"
+        );
+    }
+}
+
+#[test]
+fn full_circle_explicit_end_words_360() {
+    // ЗЕРКАЛО SPEC §3 v0.17 (аудит #15, зонд rs274): center-форма с
+    // center ≠ start при start == end = полный круг 360° НЕЗАВИСИМО от
+    // явных end-слов. Проб: `G2 X10. Y0. I-5. J0` из (10,0) → sweep=360
+    // (критерий «форма команды» v0.13 отбросил бы дугу — ошибка).
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. I-5. J0. F100.;\nM30;\n",
+    );
+    assert!(
+        notices.iter().all(|n| n.kind != NoticeKind::ZeroLengthArc),
+        "полное кольцо с явными end-словами — НЕ zero-length drop"
+    );
+    match &p.ops[1] {
+        Op::Arc { end, center, sweep_deg, pitch, .. } => {
+            assert_pt(end, 10.0, 0.0, 0.0);
+            assert_pt(center, 5.0, 0.0, 0.0);
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "sweep {}", sweep_deg.value());
+            assert!(pitch.value().abs() <= EPS);
+        }
+        _ => panic!("оп не Arc"),
+    }
+    // Helical-вариант с явным end-словом вне плоскости: 360° + pitch.
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. Z5. I-5. J0. F100.;\nM30;\n",
+    );
+    assert!(notices.iter().all(|n| n.kind != NoticeKind::ZeroLengthArc));
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, pitch, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS);
+            assert!((pitch.value() - 5.0).abs() <= EPS);
+        }
+        _ => panic!("оп не Arc"),
+    }
+}
+
+#[test]
+fn zero_length_arc_degenerate_center_still_dropped() {
+    // SPEC §3 v0.17, вторая половина правила: end-слова, квантованные в
+    // старт, при center == start (вырожденное кольцо радиуса 0) → drop.
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. I0. J0. F100.;\nM30;\n",
+    );
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
+        "вырожденный центр (I0 J0) при end==start — zero-length drop"
+    );
+    assert_eq!(p.ops.len(), 2); // Rapid + PEND (дуга отброшена)
+}
+
+#[test]
+fn modal_absorption_g91_g28_incremental_next() {
+    // ЗЕРКАЛО SPEC §8.6 правило 6 (v0.17, критический аудит #33): пробой —
+    // `G91 G28 Z0` терял G91 (raw-возврат ДО абсорбции) → следующий
+    // `G0 X10 Y10` молча АБСОЛЮТНЫЙ. Теперь G91 абсорбируется до push_raw:
+    // следующий ход инкрементальный: (20,20,10) + (10,10,0) = (30,30,10).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X20. Y20. Z10.;\nG91 G28 Z0;\nG0 X10. Y10.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code: ErrorCode::RequiresMachineTable, .. } => {}
+        other => panic!("ops[1] не Raw(G28): {other:?}"),
+    }
+    match &p.ops[2] {
+        Op::Rapid { .. } => {
+            assert_eq!(known(&p.ops[2]), [20.0, 20.0, 10.0], "связывание с последнего хода");
+            assert_eq!(end_of3(&p.ops[2]), [30.0, 30.0, 10.0], "инкрементальная интерпретация");
+        }
+        other => panic!("ops[2] не Rapid: {other:?}"),
+    }
+}
+
+#[test]
+fn modal_on_raw_motion_not_continued_notice() {
+    // SPEC §8.6 (v0.17): raw-motion-G (G84…) с осями — модальное состояние
+    // абсорбируется, motion-режим НЕ продолжается + notice W_MODAL_ON_RAW.
+    let (_, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG84 X20. Y10. Z-15. R3. F100.;\nM30;\n",
+    );
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::ModalOnRaw),
+        "нет W_MODAL_ON_RAW на raw-motion-кадре"
+    );
+    // Явный G0 ПОСЛЕ raw-motion-G — легален (режим переустановлен),
+    // старт связывается с последнего motion-опа.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG84 X20. Y10. Z-15. R3. F100.;\nG0 X30. Y30.;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(known(&p.ops[2]), [10.0, 10.0, 5.0]);
+    // Голые координаты ПОСЛЕ raw-motion-G без переустановки режима —
+    // честный отказ (режим не продолжается молча).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG84 X20. Y10. Z-15. R3. F100.;\nX30. Y30.;\nM30;\n",
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn modal_absorption_units_wcs_feed_on_raw() {
+    // SPEC §8.6: units/wcs/feed/coolant абсорбируются и на raw-кадрах.
+    // (a) G20 на raw-кадре БЕЗ предыдущего units-слова — устанавливает inch
+    // (SPEC §2.5: первое вхождение устанавливает; дефолт mm — не «уже установлено»).
+    let out = canonicalize_with_notices(
+        "G43 H2 G20;\nM30;\n",
+        "t.ngc",
+    )
+    .expect("Ok + Raw");
+    assert_eq!(out.program.units, Units::In, "G20 на raw-кадре абсорбирован");
+    assert!(matches!(&out.program.ops[0], Op::Raw { code: ErrorCode::RequiresMachineTable, .. }));
+    // (b) G55 на raw-кадре — wcs абсорбирован → следующий оп несёт G55
+    // (полный end: точка разрыва (b) без origin'ов — start Unknown легален).
+    let p = parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG28 G55;\nG0 X20. Y20. Z5.;\nM30;\n").expect("ok");
+    match &p.ops[2] {
+        Op::Rapid { state, .. } => assert_eq!(state.wcs, eid_core::ast::Wcs::G55),
+        other => panic!("ops[2] не Rapid: {other:?}"),
+    }
+    // (c) F на raw-кадре (G43) — модальная подача установлена.
+    let p = parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG43 H2 F500.;\nG1 X20. Y20.;\nM30;\n").expect("ok");
+    match &p.ops[2] {
+        Op::Linear { state, .. } => {
+            assert!((state.feed.as_ref().expect("feed").value() - 500.0).abs() <= EPS);
+        }
+        other => panic!("ops[2] не Linear: {other:?}"),
+    }
+    // (d) M8 на raw-кадре — СОЖ абсорбирована.
+    let p = parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG43 H2 M8;\nG1 X20. Y20. F100.;\nM30;\n").expect("ok");
+    match &p.ops[2] {
+        Op::Linear { state, .. } => assert!(state.coolant.flood, "M8 на raw-кадре абсорбирован"),
+        other => panic!("ops[2] не Linear: {other:?}"),
+    }
+    // (e) Смена units на raw-кадре ПОСЛЕ установленной системы —
+    // структурный класс (§8.5), жёсткий отказ.
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG43 H2 G20;\nG0 X20. Y20.;\nM30;\n")),
+        ErrorCode::UnsupportedSemantics
+    );
+}
+
+#[test]
+fn g92_and_g10_absorb_on_raw_frames() {
+    // SPEC §8.6: G92/G10 в списке абсорбции. G92 X.. на кадре с raw-кодом —
+    // пресетка абсорбируется; G10 L2 полная форма на raw-кадре обновляет
+    // таблицу origin (связывание последующих WCS-переходов).
+    let (p, _) = notices_of(
+        "G21 G90 G94 G17;\nG92 X0. Y0. Z50. G43 H1;\nM30;\n",
+    );
+    let preset = p.frame_preset.as_ref().expect("G92 на raw-кадре абсорбирован");
+    assert_pt(&preset.values, 0.0, 0.0, 50.0);
+    // G10 L2 P2 (= origin G55) полная форма на raw-кадре + легальная P1
+    // (origin G54) + WCS-переход (формула разности):
+    // чтение в G55 = pos_wcs54 + O54 − O55 = (10,10,5) + 0 − (5,0,0) = (5,10,5).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG10 L2 P2 X5. Y0. Z0. G28;\nG10 L2 P1 X0. Y0. Z0.;\nG55;\nG0 X30. Y30.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code: ErrorCode::RequiresMachineTable, .. } => {}
+        other => panic!("ops[1] не Raw(G28): {other:?}"),
+    }
+    assert!(matches!(&p.ops[2], Op::WcsDefine { p: 1, .. }), "легальная L2 P1 — узел");
+    match &p.ops[3] {
+        Op::Rapid { .. } => {
+            let s = known(&p.ops[3]);
+            assert!((s[0] - 5.0).abs() <= EPS, "start {s:?} = prev(10,10,5) + O54(0) − O55(5,0,0)");
+            assert!((s[1] - 10.0).abs() <= EPS);
+        }
+        other => panic!("ops[3] не Rapid: {other:?}"),
+    }
+}
+

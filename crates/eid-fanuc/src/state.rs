@@ -456,6 +456,10 @@ pub fn g_raw_disposition(value: f64) -> Option<(eid_core::diag::ErrorCode, &'sta
         422..=426 => (US, "G42.2–.6 high-precision comp — option (COVERAGE §1.3 G40-family)"),
         380 => (US, "G38 preserve vector — cutter-comp class (COVERAGE §2.4)"),
         390 => (US, "G39 corner circular — cutter-comp class (COVERAGE §2.4)"),
+        // G38.2–.5 (ruling оркестратора этап 3): пробинг — сенсорная семантика,
+        // класс = G31/G37 (COVERAGE §2.1: «пробинг — этап 12»); stop-position
+        // зависит от контакта датчика — не статично.
+        382..=385 => (US, "G38.2–.5 probing — sensor semantics, class G31/G37 (ruling stage 3; COVERAGE §2.1)"),
         // TLO из таблицы — COVERAGE §2.4
         430 => (RT, "G43 tool length offset +H — offset from machine table (COVERAGE §2.4)"),
         431 => (RT, "G43.1 dynamic TLO — option `?`; candidate revision `tlo` (COVERAGE §2.4)"),

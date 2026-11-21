@@ -50,9 +50,13 @@
 //!   (ruling 7 — консистентность с grbl-моделью; Q11 даёт start=unknown на
 //!   точке разрыва; R1-text сохраняет байты; split-parse = скрытая
 //!   декомпозиция — ЗАПРЕЩЕНА: координата Z25 из Raw-кадра не извлекается).
-//! * Raw-кадры не меняют модальное состояние источника (Fanuc-контекст за
-//!   Raw-строкой статически неизвестен); соседние статические ходы парсятся
-//!   как обычно — эквивалентность движения не заявляется (анализ §4.3).
+//! * Raw-кадры АБСОРБИРУЮТ модальное состояние (SPEC §8.6 правило 6, v0.17 —
+//!   критический аудит #33): модальные G (plane/distance/arcdist/feedmode/
+//!   units/wcs/path/retract, G80), F/S, M3/M4/M5, M7/M8/M9, G92/G10 — до
+//!   push_raw; motion-режим на raw-motion-G (G33/G84/G28…) с осями НЕ
+//!   продолжается + notice W_MODAL_ON_RAW. Хвост после PEND — исключение
+//!   (программа структурно закончена; абсорбция G92 из sub-тела исказила бы
+//!   frame_preset).
 //! * Хвост после program_end → Raw-хвост (ruling 1) — COVERAGE-комментарий:
 //!   Fanuc-специфика (subs-тела после M30 — норма), осознанное расхождение
 //!   с grbl n12.
@@ -89,6 +93,10 @@ pub enum NoticeKind {
     /// W_CYCLE_PARAM_ASSUMED (анализ §5.3/§5.4): δ (clearance G73/G83) —
     /// станочный параметр вне текста; канон-константа 0.5mm (SPEC §7.4a).
     CycleParamAssumed,
+    /// W_MODAL_ON_RAW (SPEC §8.6 правило 6, v0.17 — критический аудит #33):
+    /// raw-motion-G (G33/G84/G28…) с осями — модальное состояние абсорбировано,
+    /// но motion-режим НЕ продолжается (ход не представим) — notice.
+    ModalOnRaw,
 }
 
 #[derive(Debug, Clone)]
@@ -752,9 +760,19 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         )]);
     }
 
+    // (3a) Модальная абсорбция ДО любых raw-возвратов (SPEC §8.6 правило 6,
+    // v0.17 — критический аудит #33): строка, уходящая в Raw целиком, обязана
+    // абсорбировать frame-level состояние до push_raw — иначе следующий кадр
+    // парсится в потерянной модальности (пробой аудита: `G91 G28 Z0` терял
+    // G91 → следующий `G0 X10 Y10` молча абсолютный). Для легальных кадров
+    // тот же код выполнял шаги (9)–(12) прежней нумерации — порядок эффектов
+    // не изменился.
+    absorb_frame_state(ctx, b)?;
+
     // (4) G95 — детект для RAW (§2.2: feed/rev требует rpm, зависящего от
     // override; статическая эквивалентность не гарантируется).
     if b.g_codes.contains(&GCode::FeedPerRev) {
+        absorb_frame_structs(ctx, b)?;
         let op = ctx.raw_op(
             b,
             ErrorCode::UnsupportedSemantics,
@@ -766,9 +784,32 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
 
     // (5) G/M-коды вне enum: raw-таблица (фиксированные COVERAGE-коды §2/§3)
     // первым приоритетом, затем generic-ведро Raw{SYNTAX} + диагностика текста.
+    // SPEC §8.6 (v0.17): raw-motion-G (G28/G33/G84…) с осями — модальное
+    // состояние уже абсорбировано в (3a); motion-режим НЕ продолжается
+    // (ход не представим — «продолжение» молча интерпретировало бы следующий
+    // X/Y-кадр в старом режиме) + notice W_MODAL_ON_RAW.
     for w in &b.unsupported_words {
         if w.letter == 'G' {
             if let Some((code, reason)) = g_raw_disposition(w.num.value) {
+                absorb_frame_structs(ctx, b)?;
+                let t = (w.num.value * 10.0).round() as i64;
+                let has_motion_words = ['X', 'Y', 'Z', 'I', 'J', 'K', 'R']
+                    .iter()
+                    .any(|l| b.word(*l).is_some());
+                if has_motion_words && RAW_MOTION_G.contains(&t) {
+                    ctx.modal.motion = None;
+                    ctx.cycle = None;
+                    let op = ctx.raw_op(b, code, reason);
+                    ctx.push_keep(
+                        op,
+                        NoticeKind::ModalOnRaw,
+                        format!(
+                            "W_MODAL_ON_RAW: G{} — raw motion block with axis words; modal motion mode/cycle NOT continued (SPEC §8.6 rule 6, audit #33)",
+                            w.num.text
+                        ),
+                    );
+                    return Ok(());
+                }
                 let op = ctx.raw_op(b, code, reason);
                 ctx.push(op);
                 return Ok(());
@@ -812,6 +853,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             ),
             _ => continue,
         };
+        absorb_frame_structs(ctx, b)?;
         let op = ctx.raw_op(b, code, reason);
         ctx.push(op);
         return Ok(());
@@ -831,6 +873,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     // (8) G92 S → Raw{SEMANTICS} — кламп оборотов: тот же адрес G92, другой
     // word (COVERAGE §2.6: парсер обязан различать, НЕ frame_preset).
     if b.g_codes.contains(&GCode::Preset) && b.word('S').is_some() {
+        absorb_frame_structs(ctx, b)?; // без осевых слов — no-op, форма-только
         let op = ctx.raw_op(
             b,
             ErrorCode::UnsupportedSemantics,
@@ -840,87 +883,8 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         return Ok(());
     }
 
-    // (9) Единицы: ровно одна система на программу (SPEC §2.5). Первое слово
-    // G20/G21 (или псевдоним G70/G71, ruling 6) устанавливает; повторная
-    // смена — отказ.
-    for g in &b.g_codes {
-        if let Some(u) = g.units() {
-            if u != ctx.modal.units {
-                if ctx.modal.units_established {
-                    return Err(vec![err(
-                        ErrorCode::UnsupportedSemantics,
-                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                        &ctx.file, line, blen,
-                    )]);
-                }
-                ctx.modal.units = u;
-            }
-            ctx.modal.units_established = true;
-        }
-    }
-
-    // (10) ABSORB модальных групп (01–06, 10, 12; units уже проверены в (9)).
-    // Явный код группы 01 отменяет активный цикл (Fanuc: G0–G3 cancel cycle);
-    // G80 — IGNORED_SAFE, отмена cycle-моды (COVERAGE §2.1).
-    for g in &b.g_codes {
-        if modal_group_is_motion(*g) {
-            ctx.cycle = None;
-        }
-        if *g == GCode::CycleCancel {
-            ctx.cycle = None;
-        }
-        ctx.modal.apply(*g);
-    }
-
-    // (11) Path-режим (группа 13): глобален (§3); переключение — отказ.
-    // Fanuc value shift: G61/G61.1 → exact_stop, G64 → bare blend.
-    for g in &b.g_codes {
-        if let Some(pm) = g.path_mode() {
-            match &ctx.modal.path {
-                None => ctx.modal.path = Some(pm),
-                Some(old) if *old != pm => {
-                    return Err(vec![err(
-                        ErrorCode::UnsupportedSemantics,
-                        "path mode switch mid-program — one mode per program (SPEC §3)",
-                        &ctx.file, line, blen,
-                    )]);
-                }
-                _ => {} // повтор того же режима — легальный no-op
-            }
-        }
-    }
-
-    // (12) Слова: F — модальная подача (ruling 2: bare F = целое mm/min
-    // verbatim + notice); S — обороты (голое S — сохранение, §3 отчёта);
-    // M3/M4/M5 → шпиндель; M7/M8/M9 → СОЖ.
-    if let Some(f) = b.word('F') {
-        let num = ctx.feed_num(f);
-        ctx.feed = Some(num);
-    }
-    if let Some(s) = b.word('S') {
-        let num = verbatim(s);
-        match ctx.spindle.clone() {
-            Spindle::Off => ctx.last_s = Some(num),
-            Spindle::Cw(_) => ctx.spindle = Spindle::Cw(num),
-            Spindle::Ccw(_) => ctx.spindle = Spindle::Ccw(num),
-        }
-    }
-    for m in &b.m_codes {
-        match m {
-            MCode::SpindleCw | MCode::SpindleCcw => {
-                let n = match b.word('S') {
-                    Some(s) => verbatim(s),
-                    None => ctx.last_s.clone().unwrap_or_else(|| num_f64(0.0)),
-                };
-                ctx.spindle = if *m == MCode::SpindleCw { Spindle::Cw(n) } else { Spindle::Ccw(n) };
-            }
-            MCode::SpindleOff => ctx.spindle = Spindle::Off,
-            MCode::CoolantMist => ctx.coolant.mist = true,
-            MCode::CoolantFlood => ctx.coolant.flood = true,
-            MCode::CoolantOff => ctx.coolant = Coolant::default(),
-            _ => {}
-        }
-    }
+    // (9)–(12) — бывшие шаги units/ABSORB/path/F-S-M — перенесены в
+    // absorb_frame_state (вызов в (3a), ДО raw-возвратов; SPEC §8.6 v0.17).
 
     // (13) План кадра (приоритет Fanuc-групп: one-shot 00 > frame > 09 > 01).
     let has_axis = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
@@ -1223,6 +1187,205 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
 
 fn modal_group_is_motion(g: GCode) -> bool {
     matches!(g, GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw)
+}
+
+// ---------------------------------------------------------------------------
+// Модальная абсорбция на RAW-строках (SPEC §8.6 правило 6, v0.17 — аудит #33)
+// ---------------------------------------------------------------------------
+
+/// raw-таблица: G-коды, чей блок с осями — ход движения (motion-класс).
+/// t = round(value*10). Home G27–G30(.1); G45–G48; probing G31(.8)/G37;
+/// threading G33–G36; интерполяции-опции G2.2/.3/.4, G3.2/.3/.4, G6.2;
+/// циклы-отказы G74/G76/G84(.2/.3)/G87/G88; RTCP G53.1/G68.2; вендорские
+/// motion-режимы G81.1 (chopping). Не-motion (компенсации/TLO/трансформации/
+/// Macro B) — НЕ в списке: их raw-кадр не является ходом.
+const RAW_MOTION_G: &[i64] = &[
+    270, 280, 290, 300, 301, // G27/G28/G29/G30/.1 — home
+    450, 460, 470, 480,     // G45–G48 — ±H positioning
+    310, 318, 370,          // G31/G31.8 probing, G37 measurement
+    330, 340, 350, 360,     // G33–G36 threading
+    22, 32, 23, 33, 24, 34, 62, // G2.2/.3/.4, G3.2/.3/.4, G6.2
+    740, 760, 840, 842, 843, 870, 880, // G74/G76/G84.2/.3/G87/G88 cycles
+    531, 682,               // G53.1/G68.2 RTCP
+    811,                    // G81.1 chopping
+];
+
+/// Абсорбция frame-level состояния кадра (SPEC §8.6 правило 6, v0.17).
+/// Вызывается ДО любых raw-возвратов: строка, уходящая в Raw целиком, обязана
+/// абсорбировать модальные группы (plane/distance/arcdist/feedmode/units/wcs/
+/// path/retract, G80), F/S, M3/M4/M5, M7/M8/M9, G92 (пресетка), G10 L2
+/// (таблица origin) — иначе следующий кадр парсится в потерянной
+/// модальности (пробой аудита: `G91 G28 Z0` терял G91 → следующий
+/// `G0 X10 Y10` молча абсолютный — точное нарушение правила).
+/// Для легальных кадров функция выполняет шаги (9)–(12) прежней нумерации
+/// (units-проверка, ABSORB, path, F/S/M-состояние).
+///
+/// selected_tool (голое T) — вне абсорбции: в State L1 поля нет
+/// (только физический tool через M6), абсорбция исказила бы tool-снапшоты;
+/// одиночное T остаётся Raw{SEMANTICS} (candidate `selected_tool`, этап 12).
+///
+/// Хвост после PEND — НЕ абсорбируется (process_block (0)): программа
+/// структурно закончена, G92 из sub-тела исказил бы frame_preset.
+fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
+    let line = b.line_no;
+    let blen = b.raw.len();
+
+    // (a) Единицы: ровно одна система на программу (SPEC §2.5) — и на
+    // RAW-кадре (§8.5: смена units — структурный класс, жёсткий отказ).
+    for g in &b.g_codes {
+        if let Some(u) = g.units() {
+            if u != ctx.modal.units {
+                if ctx.modal.units_established {
+                    return Err(vec![err(
+                        ErrorCode::UnsupportedSemantics,
+                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
+                        &ctx.file, line, blen,
+                    )]);
+                }
+                ctx.modal.units = u;
+            }
+            ctx.modal.units_established = true;
+        }
+    }
+
+    // (b) ABSORB модальных групп (01–06, 10, 12; units выше). Явный код
+    // группы 01 отменяет активный цикл; G80 — отмена cycle-моды.
+    for g in &b.g_codes {
+        if modal_group_is_motion(*g) || *g == GCode::CycleCancel {
+            ctx.cycle = None;
+        }
+        ctx.modal.apply(*g);
+    }
+
+    // (c) Path-режим (группа 13): глобален (§3); переключение — отказ
+    // (и на RAW-кадре — метаданные программы).
+    for g in &b.g_codes {
+        if let Some(pm) = g.path_mode() {
+            match &ctx.modal.path {
+                None => ctx.modal.path = Some(pm),
+                Some(old) if *old != pm => {
+                    return Err(vec![err(
+                        ErrorCode::UnsupportedSemantics,
+                        "path mode switch mid-program — one mode per program (SPEC §3)",
+                        &ctx.file, line, blen,
+                    )]);
+                }
+                _ => {} // повтор того же режима — легальный no-op
+            }
+        }
+    }
+
+    // (d) F — модальная подача (ruling 2: bare F = целое mm/min verbatim +
+    // notice; notice прицепится к raw-опу через pending_dpi). S — обороты,
+    // КРОМЕ G92-кадра (кламп, не команда — шаг (8) даёт raw; абсорбция
+    // исказила бы шпиндель).
+    if let Some(f) = b.word('F') {
+        let num = ctx.feed_num(f);
+        ctx.feed = Some(num);
+    }
+    if !b.g_codes.contains(&GCode::Preset) {
+        if let Some(s) = b.word('S') {
+            let num = verbatim(s);
+            match ctx.spindle.clone() {
+                Spindle::Off => ctx.last_s = Some(num),
+                Spindle::Cw(_) => ctx.spindle = Spindle::Cw(num),
+                Spindle::Ccw(_) => ctx.spindle = Spindle::Ccw(num),
+            }
+        }
+    }
+
+    // (e) M3/M4/M5 → шпиндель; M7/M8/M9 → СОЖ.
+    for m in &b.m_codes {
+        match m {
+            MCode::SpindleCw | MCode::SpindleCcw => {
+                let n = match b.word('S') {
+                    Some(s) => verbatim(s),
+                    None => ctx.last_s.clone().unwrap_or_else(|| num_f64(0.0)),
+                };
+                ctx.spindle = if *m == MCode::SpindleCw { Spindle::Cw(n) } else { Spindle::Ccw(n) };
+            }
+            MCode::SpindleOff => ctx.spindle = Spindle::Off,
+            MCode::CoolantMist => ctx.coolant.mist = true,
+            MCode::CoolantFlood => ctx.coolant.flood = true,
+            MCode::CoolantOff => ctx.coolant = Coolant::default(),
+            _ => {}
+        }
+    }
+
+    // (f)/(g) — G92/G10 — в absorb_frame_structs: вызывается ТОЛЬКО на
+    // raw-возвратах (двойная обработка структурного пути недопустима:
+    // пресетка «second G92» и задвоение wcs_define).
+    Ok(())
+}
+
+/// Структурная часть абсорбции (SPEC §8.6: G92/G10 в списке абсорбции) —
+/// вызывается ТОЛЬКО перед raw-возвратами. Легальный путь обрабатывает
+/// G92/G10 в основных шагах (16)/(17); G10-обновление таблицы idempotent
+/// (те же слова, та же модальность → то же значение), G92 — нет, поэтому
+/// его абсорбция отделена от общего пути.
+fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
+    let line = b.line_no;
+    let blen = b.raw.len();
+
+    // (f) G92 → пресетка (до первого motion-опа, одна пресетка — инварианты
+    // основного пути; на raw-кадре осевые слова абсорбируются в frame_preset,
+    // S-кламп отсечён условием «есть осевые»).
+    if b.g_codes.contains(&GCode::Preset)
+        && (b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some())
+    {
+        if ctx.saw_motion {
+            return Err(vec![err(
+                ErrorCode::UnsupportedSemantics,
+                "G92 after motion: frame_preset only as startup preset (SPEC §3; Q4/Q5)",
+                &ctx.file, line, blen,
+            )]);
+        }
+        if ctx.preset.is_some() {
+            return Err(vec![err(
+                ErrorCode::UnsupportedSemantics,
+                "second G92 — multiple presets in one program (Q5; SPEC §3)",
+                &ctx.file, line, blen,
+            )]);
+        }
+        let mut vals = [0.0f64; 3];
+        for (i, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
+            if let Some(w) = b.word(letter) {
+                vals[i] = ctx.dpi_num(letter, w).value();
+            }
+        }
+        ctx.preset = Some(FramePreset { values: p3(vals), wcs: ctx.modal.wcs });
+    }
+
+    // (g) G10 L2 P1–6 ПОЛНАЯ форма → обновление таблицы origin (§8.6: G10 в
+    // списке абсорбции). RAW-формы (L20/L1/P0/partial/сломанные) таблицу не
+    // трогают — значение из машины, вне текста. WcsDefine-оп на raw-кадре НЕ
+    // строится (кадр представлен Raw-опом; обновление — внутреннее состояние
+    // связывания последующих ходов).
+    if b.g_codes.contains(&GCode::DataRecord) && !g10_form_is_raw(b) {
+        if let (Some(lv), Some(pv)) = (b.word('L').map(|n| n.value), b.word('P').map(|n| n.value)) {
+            let pi = pv as i64;
+            if lv == 2.0
+                && pv.fract() == 0.0
+                && (1..=6).contains(&pi)
+                && b.word('X').is_some()
+                && b.word('Y').is_some()
+                && b.word('Z').is_some()
+            {
+                let idx = (pi - 1) as usize;
+                let old = ctx.origins[idx].unwrap_or([0.0; 3]);
+                let mut origin = old;
+                for (i, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
+                    if let Some(w) = b.word(letter) {
+                        let v = ctx.dpi_num(letter, w).value();
+                        origin[i] = if ctx.modal.dist_abs { v } else { old[i] + v };
+                    }
+                }
+                ctx.origins[idx] = Some(origin);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,7 +1703,9 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 /// ВСЕГДА (независимо от G90/G91); G90.1 (группа 04, опция) — абсолютный
 /// центр как LinuxCNC. R-форма: знак R выбирает ≤180°/>180°; R при полной
 /// окружности → E_INVALID_INPUT. Helical — вне-плоскостное осевое слово →
-/// pitch; полная окружность (нет end-слов + center ≠ start) → sweep 360°.
+/// pitch; полный круг (center-форма, center ≠ start, start == end) →
+/// sweep 360° НЕЗАВИСИМО от наличия явных end-слов (SPEC §3 v0.17);
+/// вырожденный центр (center == start) при end == start → drop+notice.
 /// Валидация нормали по активной плоскости (SPEC §4/§6): перпендикулярная
 /// компонента (center − start) ≈ 0, иначе E_INVALID_INPUT.
 fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> Result<(), Vec<Diagnostic>> {
@@ -1650,13 +1815,19 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
         }
     };
 
-    // zero-length arc (SPEC §3/§6): end-слова, квантованные до стартовой
-    // точки (§10.6), — нулевой ход, не полное кольцо (§6: 360° — только
-    // наследованный end / отсутствие end-слов).
+    // zero-length arc (SPEC §3 v0.17): нулевой ход = end-слова, квантованные
+    // до стартовой точки (§10.6), при center == start (вырожденное кольцо
+    // радиуса 0) → drop+notice. Center-форма с center ≠ start при
+    // start == end = полный круг 360° НЕЗАВИСИМО от формы команды (явные
+    // end-слова или наследованные; v0.17 по зонд-доказательству rs274 —
+    // реальный контроллер интерпретирует `G2 X10. Y0. I-5. J0` из (10,0)
+    // как полный оборот, CAM-посты систематически пишут end-слова на
+    // полных кругах). Критерий «форма команды» v0.13 действовал только
+    // для R-формы и degenerate-центра.
     let rho_s = ((s[a0] - c[a0]).powi(2) + (s[a1] - c[a1]).powi(2)).sqrt();
     let rho_e = ((e[a0] - c[a0]).powi(2) + (e[a1] - c[a1]).powi(2)).sqrt();
     let explicit_end = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
-    if explicit_end && chord_plane < 1e-9 && pitch.abs() < 1e-9 {
+    if explicit_end && chord_plane < 1e-9 && pitch.abs() < 1e-9 && rho_s < 1e-9 {
         let mut st = ctx.state();
         st.feed = ctx.feed.clone();
         let op = Op::Arc {
@@ -1958,7 +2129,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
         let z_bottom = if ctx.modal.dist_abs { z_word } else { r_cur + z_word };
 
         // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
-        //    с подходом запрещён).
+        //    с подходом запрещён); нулевой (повтор той же X/Y) → drop.
         let traverse = Op::Rapid {
             start: StartPoint::Known(pt(fx, fy, cz)),
             end: pt(cx, cy, cz),
@@ -1966,12 +2137,13 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
             src: src.clone(),
             sub: Some(sub),
         };
-        ctx.push(traverse.clone());
+        push_cycle_move(ctx, traverse.clone());
         if first_pushed.is_none() {
             first_pushed = Some((ctx.ops.len() - 1, traverse));
         }
         sub += 1;
-        // 2. подход к R-плоскости — отдельный оп (§7.7 #2).
+        // 2. подход к R-плоскости — отдельный оп (§7.7 #2); при cz == r_cur
+        // (после отвода предыдущего отверстия) — zero-length → drop+notice.
         let approach = Op::Rapid {
             start: StartPoint::Known(pt(cx, cy, cz)),
             end: pt(cx, cy, r_cur),
@@ -1979,7 +2151,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
             src: src.clone(),
             sub: Some(sub),
         };
-        ctx.push(approach);
+        push_cycle_move(ctx, approach);
         sub += 1;
         cz = r_cur;
 
@@ -1987,7 +2159,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
         match cyc.kind {
             CycleKind::Drill | CycleKind::DrillDwell | CycleKind::BoreFeedOut
             | CycleKind::BoreDwell | CycleKind::BoreStop => {
-                ctx.push(cyc_linear(ctx, [cx, cy, cz], [cx, cy, z_bottom], &feed, src.clone(), sub));
+                push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, z_bottom], &feed, src.clone(), sub));
                 sub += 1;
                 cz = z_bottom;
                 if let Some(p) = dwell {
@@ -1997,7 +2169,16 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                         src: src.clone(),
                         sub: Some(sub),
                     };
-                    ctx.push(op);
+                    // SPEC §5.2: dwell == 0 → drop + notice (P0 в цикле).
+                    if p == 0.0 {
+                        ctx.push_drop(
+                            op,
+                            NoticeKind::ZeroLengthDwell,
+                            "zero dwell dropped (seconds == 0, SPEC §5.2)".into(),
+                        );
+                    } else {
+                        ctx.push(op);
+                    }
                     sub += 1;
                 }
             }
@@ -2027,7 +2208,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                 let clr = approach_clearance(units);
                 for kk in 1..=n {
                     let d = (r_cur - kk as f64 * q).max(z_bottom);
-                    ctx.push(cyc_linear(ctx, [cx, cy, cz], [cx, cy, d], &feed, src.clone(), sub));
+                    push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, d], &feed, src.clone(), sub));
                     sub += 1;
                     cz = d;
                     if kk == n {
@@ -2043,7 +2224,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                                 src: src.clone(),
                                 sub: Some(sub),
                             };
-                            ctx.push(op);
+                            push_cycle_move(ctx, op);
                             sub += 1;
                             cz = r_cur;
                         }
@@ -2057,7 +2238,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                                 src: src.clone(),
                                 sub: Some(sub),
                             };
-                            ctx.push(op);
+                            push_cycle_move(ctx, op);
                             sub += 1;
                             cz = up;
                         }
@@ -2071,7 +2252,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                         src: src.clone(),
                         sub: Some(sub),
                     };
-                    ctx.push(op);
+                    push_cycle_move(ctx, op);
                     sub += 1;
                     cz = appr;
                 }
@@ -2085,7 +2266,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
         let retract = if ctx.modal.retract_g98 { initial_z } else { r_cur };
         match cyc.kind {
             CycleKind::BoreFeedOut | CycleKind::BoreDwell => {
-                ctx.push(cyc_linear(ctx, [cx, cy, cz], [cx, cy, retract], &feed, src.clone(), sub));
+                push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, retract], &feed, src.clone(), sub));
                 sub += 1;
             }
             CycleKind::BoreStop => {
@@ -2097,7 +2278,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                     src: src.clone(),
                     sub: Some(sub),
                 };
-                ctx.push(op);
+                push_cycle_move(ctx, op);
                 sub += 1;
                 ctx.spindle = spindle_before.clone(); // рестарт — в state последующих опов
             }
@@ -2109,7 +2290,7 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                     src: src.clone(),
                     sub: Some(sub),
                 };
-                ctx.push(op);
+                push_cycle_move(ctx, op);
                 sub += 1;
             }
         }
@@ -2136,6 +2317,31 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
     ctx.prev = Some(Reading { pos: [cx, cy, cz], frame: Frame::Wcs, wcs: ctx.modal.wcs });
     ctx.saw_motion = true;
     Ok(())
+}
+
+/// Push производного хода развёртки с guard'ом нулевой длины (SPEC §3:
+/// каноническая форма не содержит zero-length опов — verify эмиссии
+/// отсекает; найдено смоук-этапа 3: подход G82 после отвода G83 на ту же
+/// R-плоскость даёт нулевой ход → drop + notice, не оп).
+fn push_cycle_move(ctx: &mut Ctx, op: Op) {
+    let zero = match &op {
+        Op::Rapid { start: StartPoint::Known(s), end, .. }
+        | Op::Linear { start: StartPoint::Known(s), end, .. } => {
+            let sv = e3(s);
+            let ev = e3(end);
+            sv.iter().zip(ev.iter()).all(|(a, b)| (a - b).abs() < 1e-9)
+        }
+        _ => false,
+    };
+    if zero {
+        ctx.push_drop(
+            op,
+            NoticeKind::ZeroLengthMotion,
+            "zero-length motion dropped (start == end, SPEC §3)".into(),
+        );
+    } else {
+        ctx.push(op);
+    }
 }
 
 /// LINEAR-оп цикла: feed кадра цикла активен для ВСЕХ производных опов
