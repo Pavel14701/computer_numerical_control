@@ -7,6 +7,8 @@
 //! Детерминизм: двойной emit байт-в-байт.
 
 use eid_core::adapter::{Adapter, EidTextAdapter};
+use eid_core::ast::Op;
+use eid_core::diag::ErrorCode;
 use eid_harness::diff::{semantic_diff, DiffConfig};
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::PathBuf;
@@ -477,4 +479,96 @@ fn full_circle_emits_without_end_words() {
     // винтовой полный оборот: только off-plane Z end-слово (in-plane нет)
     assert!(arc_h.starts_with("G2 Z4.0000 "), "helical: только Z-слово:\n{arc_h}");
     assert!(!arc_h.contains("X1") && !arc_h.contains("Y0.0000"), "in-plane end-слов нет");
+}
+
+// ===========================================================================
+// Mutation-kill: байт-точные строки эмиссии (кластер Writer::op 478-516)
+// ===========================================================================
+
+#[test]
+fn mutation_wcs_words_exact_and_percent() {
+    // Все не-дефолтные WCS-слова выбираются точно (мутанты ==/!= на выборе
+    // WCS); G54 — дефолт: строки нет, semantic — reparse равен. G61.1 —
+    // path_mode строкой. Dwell G4 с P — P-слово поглощено.
+    let srcs = [
+        ("G55", "G55"), ("G56", "G56"), ("G57", "G57"), ("G58", "G58"),
+        ("G59", "G59"), ("G59.1", "G59.1"), ("G59.2", "G59.2"), ("G59.3", "G59.3"),
+    ];
+    for (wcs_word, want_line) in srcs {
+        let src = format!(
+            "G21 G90 G94 G17
+{wcs_word}
+G0 X1.0000 Y1.0000 Z1.0000
+M2
+"
+        );
+        let p = LinuxCncAdapter::new().parse(&src, "wcs.ngc").expect("parses");
+        let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+        assert!(
+            text.lines().any(|l| l == want_line),
+            "ожидается строка `{want_line}` для {wcs_word}:
+{text}"
+        );
+    }
+    // G54-дефолт: линии нет, semantic reparse равен.
+    let src = "G21 G90 G94 G17
+G0 X1.0000 Y1.0000 Z1.0000
+M2
+";
+    let p = LinuxCncAdapter::new().parse(src, "g54.ngc").expect("parses");
+    let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+    assert!(!text.lines().any(|l| l.starts_with("G5")), "G54-дефолт без строки:
+{text}");
+    let p2 = LinuxCncAdapter::new().parse(&text, "rt.ngc").expect("reparse");
+    assert!(eid_harness::diff::semantic_diff(&p, &p2, &DiffConfig::default()).is_empty());
+    // path modes строкой (G61.1 проверен в другом тесте — здесь G64 P).
+    for (mode_line, p_word) in [("G64", None), ("G64 P0.0500", Some("P0.0500"))] {
+        let src = format!("G21 G90 G94 G17
+{mode_line}
+G0 X1.0000 Y1.0000 Z1.0000
+M2
+");
+        let p = LinuxCncAdapter::new().parse(&src, "pm.ngc").expect("parses");
+        let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+        match p_word {
+            None => assert!(text.lines().any(|l| l == "G64"), "G64 bare:
+{text}"),
+            Some(_) => assert!(text.lines().any(|l| l == "G64 P0.0500"), "G64 P:
+{text}"),
+        }
+    }
+}
+
+#[test]
+fn mutation_emit_nonfinite_feed_is_err() {
+    // num_text: non-finite значение → Err InvalidInput (мутант «убрать
+    // is_finite-чек» эмитил бы NaN/inf текст).
+    let mut p = LinuxCncAdapter::new()
+        .parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nG1 X5.0000 Y0.0000 Z0.0000 F100.0\nM2\n", "nf.ngc")
+        .expect("parses");
+    for op in &mut p.ops {
+        if let Op::Linear { state, .. } = op {
+            if let Some(f) = &mut state.feed {
+                *f = eid_core::ast::Num::new("inf".into(), f64::INFINITY);
+            }
+        }
+    }
+    let err = LinuxCncAdapter::new().emit(&p).expect_err("non-finite feed");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+}
+
+#[test]
+fn mutation_emit_num_minus_zero_canonicalized() {
+    // Num{text:"-0.0000", value:-0.0} — вербатим-текст "-0.0000" запрещён
+    // (fmt_num даёт "0.0000"); мутант «вербатим без исключения» сломал бы
+    // R1-текст эмиссии.
+    let mut p = LinuxCncAdapter::new()
+        .parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM2\n", "mz.ngc")
+        .expect("parses");
+    if let Op::Rapid { end, .. } = &mut p.ops[0] {
+        end.x = eid_core::ast::Num::new("-0.0000".into(), -0.0);
+    }
+    let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+    assert!(text.contains("X0.0000"), "-0.0000 канонизуется в 0.0000:\n{text}");
+    assert!(!text.contains("-0.0000"));
 }

@@ -1295,25 +1295,25 @@ fn spec_cov_lcnc_q11_machine_frame_computable_and_chain() {
     // вычислим) / цепочка последующих machine-ходов; (d) возврат в WCS.
     let src = concat!(
         "G21 G90 G94 G17\n",
-        "G10 L2 P1 X0.0000 Y0.0000 Z0.0000\n",
+        "G10 L2 P1 X1.0000 Y2.0000 Z3.0000\n",
         "G0 X1.0000 Y1.0000 Z1.0000\n",
         "G53 G0 X2.0000 Y3.0000 Z4.0000\n",
         "G53 G0 X6.0000 Y3.0000 Z4.0000\n",
-        "G0 X8.0000 Y3.0000 Z4.0000\n",
+        "G0 X8.0000 Y4.0000 Z4.0000\n",
         "M2\n",
     );
     let p = parse_str(src).expect("parses");
-    // §2(c) computable (in-text origin): machine-ходы Known; цепочка.
+    // Первый G53-ход (2,3,4)→(2,3,4) — нулевой в machine-фрейме →
+    // отбрасывается с notice (kill-поверхность знаковых мутантов подхода).
+    // ops: [WcsDefine, G53-rapid(zero→drop), G53-rapid(цепочка), wcs-возврат, PEND].
     assert!(matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
-        if to_f64(s) == [1.0, 1.0, 1.0] && to_f64(end) == [2.0, 3.0, 4.0]),
-        "machine-ход: start = prev_wcs_end + O_P1 (§2c computable)");
-    assert!(matches!(&p.ops[3], Op::Rapid { start: StartPoint::Known(s), end, .. }
         if to_f64(s) == [2.0, 3.0, 4.0] && to_f64(end) == [6.0, 3.0, 4.0]),
-        "последующие machine-ходы цепляются (§2 v0.10)");
-    // (d): возврат в WCS — reading = M − O_P1 = (6,3,4).
-    assert!(matches!(&p.ops[4], Op::Rapid { start: StartPoint::Known(s), end, .. }
-        if to_f64(s) == [6.0, 3.0, 4.0] && to_f64(end) == [8.0, 3.0, 4.0]),
-        "возврат в WCS: reading = M − O (§2 (d))");
+        "machine→machine: цепочка exact (§2 v0.10)");
+    // (d): возврат в WCS — reading = M − O_P1 = (6,3,4) − (1,2,3) = (5,1,1).
+    // Ненулевой origin убивает знаковые/осевые мутанты в reading = M − O.
+    assert!(matches!(&p.ops[3], Op::Rapid { start: StartPoint::Known(s), end, .. }
+        if to_f64(s) == [5.0, 1.0, 1.0] && to_f64(end) == [8.0, 4.0, 4.0]),
+        "возврат в WCS: reading = M − O (§2 (d), ненулевой origin)");
 }
 
 #[test]
@@ -1465,4 +1465,104 @@ fn metamorphic_n_word_invariance() {
     assert_meta_invariant(base, no_n, "n-word: без N ≡ с N");
     let other_n = "N1 G21 G90 G94 G17 G91.1\nM3 S8000\nN2 G0 X1.0000 Y1.0000 Z1.0000\nG1 N99 X5.0000 F100.0\nM2\n";
     assert_meta_invariant(other_n, no_n, "n-word: другие номера ≡ без N");
+}
+
+// ===========================================================================
+// Mutation-kill усиление (кластеры 1107-1122/1339/1370/1426/1586, emit 45)
+// ===========================================================================
+
+#[test]
+fn mutation_g93_helical_arc_feed_formula() {
+    // Кластер 1339: G93-дуга feed = len·F, len = sqrt((sweep·ρ)² + pitch²).
+    // R=5 (I-центр (0,0) от (5,0)), sweep 90°, pitch 2, F=2:
+    // len = sqrt((5·π/2)² + 2²) = 8.104754…; feed = 2·len = 16.209508…
+    // Мутанты «без pitch»/«без sweep» дают 15.708/16.0 — убиваются ассертом.
+    let src = concat!(
+        "G21 G90 G93 G17\n",
+        "G0 X5.0000 Y0.0000 Z0.0000\n",
+        "G3 X0.0000 Y5.0000 Z2.0000 I-5.0000 J0.0000 F2.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    match &p.ops[1] {
+        Op::Arc { state, sweep_deg, pitch, .. } => {
+            assert_eq!(sweep_deg.value, 90.0);
+            assert_eq!(pitch.value, 2.0);
+            let f = state.feed.as_ref().unwrap().value;
+            // π/2·5 = 7.853982; +pitch² → sqrt(65.685019) = 8.104754; ×F2 = 16.209508
+            assert!((f - 16.2095).abs() < 0.001, "G93-дуга: feed = len·F = 16.2095, got {f}");
+            // Мутант «pitch выброшен» дал бы 15.708 — убит строгой границей:
+            assert!(f > 16.0, "pitch вносит вклад (мутант «без pitch» убит)");
+        }
+        other => panic!("op 1 must be Arc: {other:?}"),
+    }
+}
+
+#[test]
+fn mutation_approach_clearance_inch() {
+    // Кластер 1426: approach_clearance(In) = 0.05 (не 0.5, не наоборот).
+    // G20 G83: R=0, Z=-1.0, Q=0.4 → пеки -0.4/-0.8/-1.0; после 1-го пека
+    // подход rapid на -0.4 + 0.05 = -0.35.
+    let src = concat!(
+        "G20 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z1.0000\n",
+        "G99 G83 X1.0000 Y1.0000 Z-1.0000 R0.0000 Q0.4000 F50.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // Подход после 1-го пека: rapid из текущего z=0.0 вниз на -0.35
+    // (= последняя глубина -0.4 + clearance 0.05 inch).
+    let mut approach_z = None;
+    for o in &p.ops[2..] {
+        if let Op::Rapid { start: StartPoint::Known(s), end, .. } = o {
+            let (sz, ez) = (to_f64(s)[2], to_f64(end)[2]);
+            if sz.abs() < 1e-9 && (ez + 0.35).abs() < 1e-9 {
+                approach_z = Some(ez); // подход вниз после первого пека
+            }
+        }
+    }
+    assert_eq!(approach_z, Some(-0.35), "approach(In) = 0.05 над последней глубиной");
+}
+
+#[test]
+fn mutation_unroll_est_boundary_pass_and_fail() {
+    // Кластер 1586: est = 2 + 3n + 1; граница est = MAX(10000):
+    // Z=-3332 → n=3332 → est = 9999 ≤ 10000 → Ok;
+    // Z=-3333 → n=3333 → est = 10002 > 10000 → Err LIMIT_EXCEEDED.
+    let ok_src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z0.0000\n",
+        "G99 G83 X1.0000 Y1.0000 Z-3332.0000 R0.0000 Q1.0000 F100.0\n",
+        "M2\n",
+    );
+    assert!(parse_str(ok_src).is_ok(), "est = 9999 ≤ 10000 — на границе изнутри");
+    let bad_src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z0.0000\n",
+        "G99 G83 X1.0000 Y1.0000 Z-3333.0000 R0.0000 Q1.0000 F100.0\n",
+        "M2\n",
+    );
+    let err = parse_str(bad_src).expect_err("est = 10002 > 10000");
+    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+}
+
+#[test]
+fn mutation_l_word_boundary_pass_and_fail() {
+    // L=10000 → ровно лимит, L=10001 → E_LIMIT_EXCEEDED (COVERAGE §1.2).
+    let ok = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X1.0000 Y1.0000 Z-1.0000 R0.0000 F100.0 L10000\n",
+        "M2\n",
+    );
+    let p = LinuxCncAdapter::new().parse(ok, "l_ok.ngc").expect("L=10000 — ровно лимит");
+    assert!(p.ops.len() >= 3);
+    let over = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X1.0000 Y1.0000 Z-1.0000 R0.0000 F100.0 L10001\n",
+        "M2\n",
+    );
+    let err = parse_str(over).expect_err("L=10001 > 10000");
+    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
 }
