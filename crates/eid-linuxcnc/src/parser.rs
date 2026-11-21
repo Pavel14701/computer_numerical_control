@@ -38,7 +38,32 @@ use eid_core::ast::{
     Dir, Frame, Num, Op, PathMode, Program, SrcSpan, StartPoint, State, Units, Wcs,
 };
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
-use eid_core::parser::{Notice, NoticeKind};
+
+/// Локальные kind'и notice'ов канонизатора LinuxCNC (зеркально eid-grbl).
+/// MissingProgramEnd — SPEC §3 v0.16: отсутствие M2/M30 = неявный конец
+/// (ProgramEnd добавлен последним опом + notice), не отказ; 18+/32 Tier B —
+/// реальные посты не пишут program-end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    /// rapid/linear: start == end (SPEC §3).
+    ZeroLengthMotion,
+    /// arc: start == end при sweep != 360° и pitch == 0 (SPEC §3/§6; #13).
+    ZeroLengthArc,
+    /// dwell: seconds == 0 (SPEC §5.2).
+    ZeroDwell,
+    /// Программа без M2/M30: ProgramEnd добавлен автоматически последним.
+    MissingProgramEnd,
+}
+
+/// Отброшенный/добавленный оп + контекст notice'а.
+#[derive(Debug, Clone)]
+pub struct Notice {
+    pub kind: NoticeKind,
+    pub message: String,
+    /// Индекс опа в списке ops (для MissingProgramEnd — индекс добавленного).
+    pub op_index: usize,
+    pub op: Op,
+}
 use eid_core::ast::{Coolant, Spindle};
 
 /// eid_version = версия grammar.ebnf (SPEC §10.4).
@@ -469,12 +494,8 @@ fn parse_block(
     }
 
     // --- 1. Жёсткие структурные коды (до line-level raw) --------------------
-    if ms.iter().any(|&(maj, _)| maj == 98 || maj == 99) {
-        return Err(fl!(
-            ErrorCode::UnsupportedSyntax,
-            "M98/M99 (подпрограммы) — вне грамматики L1 (SPEC §1.1, Q10; N11)",
-        ));
-    }
+    // M98/M99 (ruling итерации 6, Phase 1.2): line-local → line-level Raw
+    // (см. raw-скан ниже), НЕ структурный Err.
     // Развёртываемые циклы (SPEC §7) — диспетчеризация в цикловом блоке ниже
     // (после сбора слов и модальных обновлений); refuse-циклы (G74/G84/G87/
     // G88) и G76 остаются line-level raw (COVERAGE §2.5).
@@ -1661,20 +1682,31 @@ fn expand_cycle(
 // Финализация: PEND-инвариант, drop+notice, feed-требование
 // ===========================================================================
 
-fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
+fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     let mut errors: Vec<Diagnostic> = Vec::new();
 
-    // SPEC §3: program_end ровно один раз, последний (N12/N13/N14).
+    // SPEC §3 v0.16: program_end ровно один раз, последний; ОТСУТСТВИЕ
+    // M2/M30 = неявный конец → авто-PEND + notice (не отказ; реальные
+    // посты часто не пишут program-end — 18+/32 Tier B).
     let end_count = st.ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })).count();
+    let mut notices: Vec<Notice> = st.notices;
     if end_count == 0 {
-        errors.push(Diagnostic {
-            stage: Stage::Verify,
-            code: ErrorCode::InvalidInput,
-            message: "program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)".into(),
-            src: None,
-            options: Vec::new(),
-            limit: None,
+        let auto = Op::ProgramEnd {
+            src: SrcSpan {
+                file: st.file.clone(),
+                line_start: 0,
+                col_start: 1,
+                line_end: 0,
+                col_end: 0,
+            },
+        };
+        notices.push(Notice {
+            kind: NoticeKind::MissingProgramEnd,
+            message: "W_MISSING_PROGRAM_END: program_end отсутствует — добавлен автоматически (SPEC §3 v0.16)".into(),
+            op_index: st.ops.len(),
+            op: auto.clone(),
         });
+        st.ops.push(auto);
     }
     if end_count > 1 {
         errors.push(Diagnostic {
@@ -1698,22 +1730,11 @@ fn finish(st: St) -> Result<ParseOut, Vec<Diagnostic>> {
                 limit: None,
             });
         }
-        None => {
-            errors.push(Diagnostic {
-                stage: Stage::Verify,
-                code: ErrorCode::InvalidInput,
-                message: "пустая программа: program_end обязателен (SPEC §3)".to_string(),
-                src: None,
-                options: Vec::new(),
-                limit: None,
-            });
-        }
         _ => {}
     }
 
     // Drop-with-notice (SPEC §3/§5.2/§10.6): ход-разбора (zero-sweep дуги)
     // + пост-проход (zero-length rapid/linear, dwell 0).
-    let mut notices: Vec<Notice> = st.notices;
     let mut kept: Vec<Op> = Vec::new();
     for (i, o) in st.ops.iter().enumerate() {
         let zero: Option<(NoticeKind, String)> = match o {

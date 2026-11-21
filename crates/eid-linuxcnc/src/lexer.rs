@@ -238,11 +238,10 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
             }
             let letter = alpha.chars().next().unwrap().to_ascii_uppercase();
             if letter == 'O' {
-                return Err(fail(
-                    ErrorCode::UnsupportedSyntax,
-                    "O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)".into(),
-                    col_at(k),
-                ));
+                // Ruling итерации 6 (Phase 1.2): O-code строки — line-local →
+                // вся строка RAW{E_UNSUPPORTED_SYNTAX} (CORPUS #47-класс;
+                // зеркально `$`-строкам), разбор продолжается.
+                return Ok(LineTok::Unknown);
             }
             // Число: [sign] digits [. digits]
             let num_start = j;

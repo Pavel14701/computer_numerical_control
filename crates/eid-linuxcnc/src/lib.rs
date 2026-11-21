@@ -24,7 +24,7 @@ pub mod parser;
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use eid_core::parser::Notice;
+use crate::parser::Notice;
 use std::cell::RefCell;
 
 pub struct LinuxCncAdapter {

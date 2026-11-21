@@ -44,7 +44,7 @@
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::{Op, PathMode, StartPoint};
 use eid_core::diag::ErrorCode;
-use eid_core::parser::NoticeKind;
+use eid_linuxcnc::parser::NoticeKind;
 use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
 use eid_linuxcnc::LinuxCncAdapter;
 use eid_linuxcnc::canonicalize::to_f64;
@@ -280,8 +280,19 @@ fn n13_program_end_duplicate_err_invalid_input() {
 }
 
 #[test]
-fn n14_program_end_missing_err_invalid_input() {
-    assert_err_code("n14_program_end_missing/program_end_missing.linuxcnc.ngc", ErrorCode::InvalidInput, "N14");
+fn n14_program_end_missing_auto_pend() {
+    // SPEC §3 v0.16: отсутствие M2/M30 = неявный конец — parse Ok +
+    // notice MissingProgramEnd (ProgramEnd добавлен автоматически).
+    let a = LinuxCncAdapter::new();
+    let p = a
+        .parse(&read("n14_program_end_missing/program_end_missing.linuxcnc.ngc"), "n14")
+        .expect("N14: missing PEND теперь Ok (auto-PEND)");
+    assert!(matches!(p.ops.last(), Some(Op::ProgramEnd { .. })), "auto-PEND последним");
+    let notices = a.take_notices();
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::MissingProgramEnd),
+        "notice MissingProgramEnd обязателен: {notices:?}"
+    );
 }
 
 #[test]
@@ -376,11 +387,20 @@ fn n6_naked_coords_after_g80() {
 }
 
 #[test]
-fn n11_m98_call_err_syntax() {
-    // По брифу итерации 2 / SPEC §1.1 (O-code, M98/M99 — структурные):
-    // жёсткий Err E_UNSUPPORTED_SYNTAX. CORPUS §1.2 v0.5 перечисляет N11 в
-    // Ok-классе — расхождение заведено в отчёт как СТОП-вопрос №1.
-    assert_err_code("n11_m98_call/m98_call.linuxcnc.ngc", ErrorCode::UnsupportedSyntax, "N11");
+fn n11_m98_call_line_level_raw() {
+    // Ruling итерации 6 (Phase 1.2): M98/M99 → line-level Raw{SYNTAX}
+    // (line-local конструкция, правило двух классов), разбор продолжается.
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(&read("n11_m98_call/m98_call.linuxcnc.ngc"), "n11")
+        .expect("N11: Ok (line-level Raw)");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+            if payload_hex.starts_with("4D3938")
+    ), "payload = `M98…`");
+    assert!(matches!(&p.ops.last(), Some(Op::ProgramEnd { .. })));
+    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    assert!(codes.contains(&ErrorCode::UnsupportedSyntax), "{codes:?}");
 }
 
 // ===========================================================================
@@ -477,8 +497,8 @@ fn unit_zero_length_and_zero_dwell_notice() {
     let notices = adapter.take_notices();
     assert_eq!(p.ops.len(), 2); // Linear + PEND (нулевые отброшены)
     assert_eq!(notices.len(), 2);
-    assert!(notices.iter().any(|n| n.kind == eid_core::parser::NoticeKind::ZeroLengthMotion));
-    assert!(notices.iter().any(|n| n.kind == eid_core::parser::NoticeKind::ZeroDwell));
+    assert!(notices.iter().any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroLengthMotion));
+    assert!(notices.iter().any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroDwell));
 }
 
 #[test]
@@ -500,9 +520,14 @@ fn unit_hash_param_err_runtime_state() {
 
 #[test]
 fn unit_o_code_err_syntax() {
-    let src = "G21 G90\nO100\nM2\n";
-    let err = parse_str(src).expect_err("E_UNSUPPORTED_SYNTAX");
-    assert!(err.iter().all(|d| d.code == ErrorCode::UnsupportedSyntax), "{err:?}");
+    // Ruling итерации 6: O-code строки → line-level Raw{SYNTAX}, разбор идёт.
+    let a = LinuxCncAdapter::new();
+    let p = a.parse("G21 G90\nO100\nM2\n", "o.ngc").expect("Ok + Raw");
+    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+        if payload_hex == "4F3130300A"), "payload = `O100`");
+    assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
+    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
 }
 
 #[test]
@@ -1365,19 +1390,22 @@ fn spec_cov_lcnc_stage_attribution() {
     //  * Emit — эмиссионные отказы (таблица легальности, COVERAGE §5).
     use eid_core::diag::Stage;
 
-    // Parse: лексический отказ (O-code) — stage=Parse.
-    let err = parse_str("G21 G90 G94\nO100\nM2\n").expect_err("O-code");
-    assert!(err.iter().all(|d| d.stage == Stage::Parse && d.code == ErrorCode::UnsupportedSyntax));
+    // Parse: line-level Raw (O-code) — диагностика stage=Parse, разбор идёт.
+    let a = LinuxCncAdapter::new();
+    let p = a.parse("G21 G90 G94
+O100
+G0 X1.0000 Y1.0000 Z1.0000
+M2
+", "o.ngc")
+        .expect("O-code: Ok + Raw");
+    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }));
+    let d1 = a.take_diagnostics();
+    assert!(d1.iter().all(|d| d.stage == Stage::Parse && d.code == ErrorCode::UnsupportedSyntax));
 
     // Parse: структурный отказ кадра (G53 без G0/G1) — stage=Parse.
     let err = parse_str("G21 G90 G94\nG53 G2 X5.0000 Y5.0000 I5.0000 J0.0000 F100.0\nM2\n")
         .expect_err("G53+дуга");
     assert!(err.iter().all(|d| d.stage == Stage::Parse));
-
-    // Verify: PEND-инвариант (нет program_end) — stage=Verify (finish).
-    let err = parse_str("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\n")
-        .expect_err("без M2");
-    assert!(err.iter().all(|d| d.stage == Stage::Verify && d.code == ErrorCode::InvalidInput));
 
     // Verify: linear без feed (инвариант §3) — stage=Verify.
     let err = parse_str("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X2.0000 Y1.0000 Z1.0000\nM2\n")
@@ -1565,4 +1593,17 @@ fn mutation_l_word_boundary_pass_and_fail() {
     );
     let err = parse_str(over).expect_err("L=10001 > 10000");
     assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+}
+
+#[test]
+fn spec_cov_lcnc_partial_end_first_move_inherits() {
+    // SPEC §2/§10.6 v0.11: частичный end на старте (break (a)) —
+    // отсутствующие оси наследуют дефолт-0. G0 X10 → end (10,0,0).
+    let p = parse_str("G21 G90 G94 G17\nG0 X10.0000\nM2\n").expect("parses");
+    match &p.ops[0] {
+        Op::Rapid { start: StartPoint::Unknown, end, .. } => {
+            assert_eq!(to_f64(end), [10.0, 0.0, 0.0], "частичный end наследует дефолт-0");
+        }
+        other => panic!("op 0: {other:?}"),
+    }
 }
