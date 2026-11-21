@@ -49,6 +49,27 @@ bare G64). Причина: AST нёс `Blend { t: Option<Num> }`, а grammar v0.
 
 ## IMPLEMENTATION-PLAN / интерфейсы
 
+### v0.1.3 — 2026-11-20 (итерация 5: bindings v0.15/v0.3, R-1 закрыт, §5а/§5б триажи, правило редактора)
+
+1. **R-1 миграция ЗАВЕРШЕНА** (E: профили TOML, B: manifest.toml — YAML
+   удалён; `grep serde_yaml crates/` и unsafe-libyaml в Cargo.lock — ноль).
+   PLAN-заголовки: v0.1.2/v0.1.3 bindings (SPEC v0.15, grammar v0.3).
+2. **§5а — триаж практик MLIR/LLVM** (ConversionTarget — принять (C/D),
+   verify-pass — принять (A), four-tier corpus — принять (B), mutation-aware
+   fuzz — принять (B), version hooks — post-freeze, extensible dialects —
+   post-MVP, pattern-rewriter — не применять (недетерминизм для плоского
+   списка), SMT TV — v1.0, retract_clearance→профиль — **отклонено повторно**
+   (детерминизм канонической формы; LLVM-аналог TargetMachine = бэкенд)).
+3. **§5б — триаж QA-таксономии** (fuzz byte-level/metamorphic/cargo-mutants —
+   принять; contract/idempotency/determinism/differential/DoS/OOM — уже ядро;
+   chaos/monkey/interrupt/race — N/A; shadow/soak — post-MVP). Дисциплина:
+   выживший мутант → усилить тест; находка фаззера → минимальный repro →
+   edge_case; отказ без диагностики = баг.
+4. **Правило редактора:** документы — только через редактор с явным diff,
+   никогда sed/потоковые правки (инцидент: sed по CJK сбросил read-state,
+   снёс H1 двух документов — восстановлено).
+5. **Активная версия в шапке задач** (снимает «работал по устаревшей спеке»).
+
 ### v0.1.2 — 2026-11-20 (итерация 4: Diagnostic.stage + verify-pass)
 
 1. **`eid_core::diag`:** `Diagnostic` += `stage: Stage` (новый enum
@@ -105,6 +126,26 @@ CORPUS §1.2 v0.5). Изменение управляемое: поле конс
 ---
 
 ## SPEC-EID-L1
+
+### v0.15 — 2026-11-20 (красный-протокол round 2: шаблон развёртки + payload-граница)
+
+1. **§7.7 канонический шаблон развёртки** (Spec-ambiguous: семейство 10
+   цикловых векторов checkpoint v4): traverse RAPID (X,Y,curZ) [модальный
+   feed] → RAPID (X,Y,R) отдельным опом → feed-ходы → пеки §7.4a → retract.
+   Объединение traverse+подход запрещено. Golden'ы цикловых векторов —
+   регенерация по шаблону (v0-debt §1 закрытие).
+2. **D9/§5.4 граница payload:** байты строки включая line terminator
+   (сплиттер съедал 
+ → payload терял байт на #47). grammar v0.3, magic
+   v0.3, все golden обновлены.
+
+### v0.15.1 — 2026-11-20 (микро: §7.7-1 feed-видимость)
+
+**F кадра цикла активен для ВСЕХ производных опов, включая
+traverse/approach** (семантика контроллера: F кадра G81 устанавливается до
+исполнения внутренних ходов; последующий G1 без F унаследует feed кадра).
+Красный checkpoint v4: golden'ы с feed=none на traverse/approach —
+AST-wrong, регенерация из конформного unroll (десять цикловых векторов).
 
 ### v0.14 — 2026-11-20 (итерация 3-4: циклы — уточнения §7 по флагам Agent D)
 
@@ -534,6 +575,14 @@ G4 секунды).
 ---
 
 ## CORPUS-CONTRACT
+
+### v0.6.5 — 2026-11-20 (collection roadmap: diversity после acceptance)
+
+§7: первый published-батч — 2D/2.5D-скew (SVG/гравировка/роутер;
+задокументировано в PROVENANCE). Diversity-targeted сбор (3-осевой
+mill-контент) — post-acceptance, итерация 5, по постоянному
+content-diversity чек-листу (прецедент первого батча). Claim по Tier B
+published — с пометкой скew'а.
 
 ### v0.6.4 — 2026-11-20 (итерация 4: corpus normalization #17–#26 — bare PEND)
 
