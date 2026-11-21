@@ -26,7 +26,9 @@
 //!    origin'ов, (c) machine Known/Unknown/Err-ARC, (d) возврат в WCS);
 //!  * циклы §7.7 — каждый cycle-тип × каждая позиция шаблона:
 //!    traverse (модальный feed), подход R отдельным опом, feed-ходы,
-//!    dwell (G82/G89), пеки d_k+0.5 (G83), de-retract min(R,d+Q) (G73),
+//!    dwell (G82/G89/G86 — P обязателен, v0.18), пеки d_k = R−kQ (G83/G73:
+//!    расписание как G83; G73 — одиночный rapid d+клиренс после каждого
+//!    промежуточного пека, §7.4a v0.18; клиренс 0.01in unit-scaled),
 //!    feed-out (G85/G89), G86 off/рестарт, retract G98/G99,
 //!    L/K-повторы (G90-констант/G91-шаг), лимиты (L и Q-guard);
 //!  * refuse/line-level: G84/G74/G87/G88, G76, G5.x+P (NURBS, находка
@@ -1296,6 +1298,30 @@ fn unit_cycle_g82_without_p_err() {
     );
 }
 
+#[test]
+fn unit_cycle_g86_without_p_err() {
+    // SPEC §7.4a v0.18: P в G86 обязателен — rs274 exit 1 «Dwell time p
+    // word missing with g86» на файле без P (probe, вектор #21 v0);
+    // E_INVALID_INPUT, сообщение зеркалирует rs274 дословно.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "M3 S8000\n",
+        "G0 X1.0000 Y1.0000 Z1.0000\n",
+        "G99 G86 X2.0000 Y2.0000 Z-1.0000 R1.0000 F100.0\n",
+        "M2\n",
+    );
+    let err = parse_str(src).expect_err("G86 требует P (v0.18)");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(
+        err.iter()
+            .any(|d| d.message == "Dwell time p word missing with g86"),
+        "сообщение зеркалирует rs274: {err:?}"
+    );
+}
+
 // ===========================================================================
 // Циклы — этап B: пеки G83/G73, feed-out G85/G89, лимит развёртки
 // ===========================================================================
@@ -1303,8 +1329,9 @@ fn unit_cycle_g82_without_p_err() {
 #[test]
 fn unit_cycle_g83_peck_order_full_retract() {
     // R=2, Z=−4, Q=1.5 → 4 пека вниз шагами Q: 0.5, −1.0, −2.5, −4.0;
-    // полный отвод на R + подход (clr=0.5 над последней глубиной, ≤ R)
-    // после каждого промежуточного пека; порядок пиков точный (SPEC §7.4).
+    // полный отвод на R + подход (клиренс пека 0.01in unit-scaled = 0.254mm
+    // в G21 над последней глубиной, ≤ R; SPEC §7.4a v0.18) после каждого
+    // промежуточного пека; порядок пиков точный (SPEC §7.4).
     let src = concat!(
         "G21 G90 G94 G17\n",
         "G0 X0.0000 Y0.0000 Z5.0000\n",
@@ -1316,17 +1343,27 @@ fn unit_cycle_g83_peck_order_full_retract() {
     // финальный retract (G99 → R) sub=13; всего 13 + initial + PEND = 15.
     assert_eq!(p.ops.len(), 15);
     let mut depths: Vec<f64> = Vec::new();
+    let mut approaches: Vec<f64> = Vec::new();
     let mut retract_after_last_feed = f64::NAN;
+    let mut cur = 5.0f64;
     for o in &p.ops[1..14] {
         match o {
-            Op::Linear { end, sub, .. } => {
+            Op::Linear { end, .. } => {
                 depths.push(to_f64(end)[2]);
-                let _ = sub;
+                cur = to_f64(end)[2];
             }
-            Op::Rapid {
-                end, sub: Some(s), ..
-            } if *s == 4 || *s == 7 || *s == 10 || *s == 13 => {
-                retract_after_last_feed = to_f64(end)[2];
+            Op::Rapid { end, .. } => {
+                let z = to_f64(end)[2];
+                if !depths.is_empty() {
+                    // после первого пека: отвод на R (z ≥ cur) или подход
+                    // вниз (z < cur)
+                    if z < cur {
+                        approaches.push(z); // подход вниз после отвода на R
+                    } else {
+                        retract_after_last_feed = z;
+                    }
+                }
+                cur = z;
             }
             _ => {}
         }
@@ -1336,14 +1373,22 @@ fn unit_cycle_g83_peck_order_full_retract() {
         vec![0.5, -1.0, -2.5, -4.0],
         "пеки вниз шагами Q (порядок §7.4)"
     );
+    // Подходы = последняя глубина + 0.254 (клиренс 0.01in в G21-числах).
+    assert_eq!(
+        approaches,
+        vec![0.754, -0.746, -2.246],
+        "подход d+0.254 (§7.4a v0.18: клиренс 0.01in unit-scaled)"
+    );
     assert_eq!(retract_after_last_feed, 2.0, "G99: финальный отвод на R");
 }
 
 #[test]
-fn unit_cycle_g73_chipbreak_retract_q() {
-    // G73: отвод на Q над последней глубиной (не полный на R);
-    // подход clr=0.5 над последней глубиной. R=2, Z=−4, Q=2 → 3 пека:
-    // 0.0, −2.0, −4.0.
+fn unit_cycle_g73_chipbreak_single_de_retract() {
+    // G73 (SPEC §7.4a v0.18): депеки R−kQ (расписание как G83), после
+    // КАЖДОГО промежуточного пека — ОДИН rapid на d+клиренс (0.254 в G21),
+    // финальный отвод (G99) на R. R=2, Z=−4, Q=2 → 3 пека: 0.0, −2.0, −4.0;
+    // промежуточные отводы: 0.254, −1.746; финал: R=2.0.
+    // Модели «de-retract min(R, d+Q) + отдельный подход» больше нет.
     let src = concat!(
         "G21 G90 G94 G17\n",
         "G0 X0.0000 Y0.0000 Z5.0000\n",
@@ -1371,12 +1416,58 @@ fn unit_cycle_g73_chipbreak_retract_q() {
         }
     }
     assert_eq!(depths, vec![0.0, -2.0, -4.0], "G73 пеки");
-    // De-retract на Q над последней глубиной: 2.0 (над 0.0, clamp на R),
-    // 0.0 (над −2.0); финальный отвод (G99) на R=2.0.
+    // Один rapid d+0.254 после каждого промежуточного пека: 0.254 (над 0.0),
+    // −1.746 (над −2.0); финальный отвод (G99) на R=2.0.
     assert_eq!(
         ups,
-        vec![2.0, 0.0, 2.0],
-        "G73 de-retract + финальный отвод на R"
+        vec![0.254, -1.746, 2.0],
+        "G73 одиночный de-retract d+клиренс + финальный отвод на R"
+    );
+}
+
+#[test]
+fn unit_cycle_g73_probe_g73_r2_structure() {
+    // Структура опов 1:1 с зонд-потоком rs274 `g73_r2` (SPEC §7.4a v0.18):
+    // R2 Q2 Z−5 → депеки R−Q = 0/−2/−4/−5; отводы d+0.254 после каждого
+    // промежуточного пека; финал на R. Полная цепочка (subs 1..10):
+    // traverse(5) → approach R(2) → feed 0 → rapid 0.254 → feed −2 →
+    // rapid −1.746 → feed −4 → rapid −3.746 → feed −5 → rapid 2.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G73 X10.0000 Y0.0000 Z-5.0000 R2.0000 Q2.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    // initial rapid + 10 производных + PEND = 12.
+    assert_eq!(p.ops.len(), 12);
+    let seq: Vec<(char, f64)> = p.ops[1..11]
+        .iter()
+        .map(|o| match o {
+            Op::Rapid { end, sub, .. } => (*sub, 'R', to_f64(end)[2]),
+            Op::Linear { end, sub, .. } => (*sub, 'F', to_f64(end)[2]),
+            other => panic!("не ход: {other:?}"),
+        })
+        .map(|(s, k, z)| {
+            assert!(s.is_some(), "производный оп без sub");
+            (k, z)
+        })
+        .collect();
+    assert_eq!(
+        seq,
+        vec![
+            ('R', 5.0),    // traverse на текущем Z
+            ('R', 2.0),    // подход к R
+            ('F', 0.0),    // депек 1: R−Q
+            ('R', 0.254),  // отвод d+0.254
+            ('F', -2.0),   // депек 2: R−2Q
+            ('R', -1.746), // отвод d+0.254
+            ('F', -4.0),   // депек 3: R−3Q
+            ('R', -3.746), // отвод d+0.254
+            ('F', -5.0),   // депек 4: z_bottom
+            ('R', 2.0),    // финал на R (G99)
+        ],
+        "1:1 с зонд-потоком g73_r2"
     );
 }
 
@@ -2033,9 +2124,10 @@ fn mutation_g93_helical_arc_feed_formula() {
 
 #[test]
 fn mutation_approach_clearance_inch() {
-    // Кластер 1426: approach_clearance(In) = 0.05 (не 0.5, не наоборот).
-    // G20 G83: R=0, Z=-1.0, Q=0.4 → пеки -0.4/-0.8/-1.0; после 1-го пека
-    // подход rapid на -0.4 + 0.05 = -0.35.
+    // Кластер 1426 + SPEC §7.4a v0.18: approach_clearance(In) = 0.01
+    // (ровно 0.0100 в inch-числах; прежде 0.05 — зондом rs274 g83_inch
+    // опровергнуто). G20 G83: R=0, Z=-1.0, Q=0.4 → пеки -0.4/-0.8/-1.0;
+    // после 1-го пека подход rapid на -0.4 + 0.01 = -0.39.
     let src = concat!(
         "G20 G90 G94 G17\n",
         "G0 X0.0000 Y0.0000 Z1.0000\n",
@@ -2043,8 +2135,8 @@ fn mutation_approach_clearance_inch() {
         "M2\n",
     );
     let p = parse_str(src).expect("parses");
-    // Подход после 1-го пека: rapid из текущего z=0.0 вниз на -0.35
-    // (= последняя глубина -0.4 + clearance 0.05 inch).
+    // Подход после 1-го пека: rapid из текущего z=0.0 вниз на -0.39
+    // (= последняя глубина -0.4 + clearance 0.0100 inch).
     let mut approach_z = None;
     for o in &p.ops[2..] {
         if let Op::Rapid {
@@ -2054,15 +2146,15 @@ fn mutation_approach_clearance_inch() {
         } = o
         {
             let (sz, ez) = (to_f64(s)[2], to_f64(end)[2]);
-            if sz.abs() < 1e-9 && (ez + 0.35).abs() < 1e-9 {
+            if sz.abs() < 1e-9 && (ez + 0.39).abs() < 1e-9 {
                 approach_z = Some(ez); // подход вниз после первого пека
             }
         }
     }
     assert_eq!(
         approach_z,
-        Some(-0.35),
-        "approach(In) = 0.05 над последней глубиной"
+        Some(-0.39),
+        "approach(In) = ровно 0.0100 над последней глубиной (§7.4a v0.18)"
     );
 }
 

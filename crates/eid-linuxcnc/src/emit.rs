@@ -22,7 +22,11 @@
 //!  6. motion: все три оси конца на каждом ходе; frame=machine → префикс
 //!     `G53 ` (одномодальный); F — при отличии модального feed от текущего
 //!     выведенного (обычный rapid — без F; F-слово на rapid-кадре
-//!     воспроизводится, т.к. меняет модальный feed);
+//!     воспроизводится, т.к. меняет модальный feed); ПЛЮС на первом
+//!     производном опе (sub=1) каждого кадра цикла F переизлучается даже
+//!     при неизменном значении (SPEC §7.4a v0.18: rs274 ассертит
+//!     SET_FEED_RATE на каждом кадре с F-словом — каноническое сравнение
+//!     1:1 теряло ассерт);
 //!  7. TOOL_CHANGE → `T<n> M6` одной строкой (детерминированно); STOP →
 //!     M0/M1; PEND → M2; WCS_DEFINE → `G10 L2 P<n> X.. Y.. Z..`;
 //!     WCS_SET_HERE → `G10 L20 P<n> X.. Y.. Z..`; DWELL → `G4 P<sec>`.
@@ -463,10 +467,12 @@ impl<'a> Writer<'a> {
 
     fn op(&mut self, op: &Op) -> Result<(), Vec<Diagnostic>> {
         match op {
-            Op::Rapid { end, state, .. } => {
+            Op::Rapid {
+                end, state, sub, ..
+            } => {
                 self.pre_state(state);
                 self.check_tool_jump(state);
-                let f = self.feed_word(state)?;
+                let f = self.feed_word(state, *sub)?;
                 let g = if state.frame == Frame::Machine {
                     "G53 G0"
                 } else {
@@ -480,10 +486,12 @@ impl<'a> Writer<'a> {
                 ));
                 Ok(())
             }
-            Op::Linear { end, state, .. } => {
+            Op::Linear {
+                end, state, sub, ..
+            } => {
                 self.pre_state(state);
                 self.check_tool_jump(state);
-                let f = self.feed_word(state)?;
+                let f = self.feed_word(state, *sub)?;
                 let g = if state.frame == Frame::Machine {
                     "G53 G1"
                 } else {
@@ -506,6 +514,7 @@ impl<'a> Writer<'a> {
                 sweep_deg,
                 pitch,
                 state,
+                sub,
                 ..
             } => {
                 self.pre_state(state);
@@ -533,7 +542,7 @@ impl<'a> Writer<'a> {
                         ),
                     );
                 }
-                let f = self.feed_word(state)?;
+                let f = self.feed_word(state, *sub)?;
                 // G53+дуга отсекается раньше — validate_linuxcnc
                 // (условие machine_frame_arc таблицы легальности); ветка
                 // здесь недостижима (аудит #6) — удалена.
@@ -646,8 +655,24 @@ impl<'a> Writer<'a> {
         }
     }
 
-    /// F-слово при отличии модального feed от текущего выведенного; иначе "".
-    fn feed_word(&mut self, state: &eid_core::ast::State) -> Result<String, Vec<Diagnostic>> {
+    /// F-слово: при отличии модального feed от текущего выведенного — всегда;
+    /// ПЛЮС на первом производном опе кадра цикла (sub=1, traverse — §7.7 #1)
+    /// F переизлучается даже при неизменном значении (SPEC §7.4a v0.18,
+    /// эмиссионное следствие: rs274 ассертит SET_FEED_RATE на каждом кадре
+    /// с F-словом; probe `g81_nof`: без F — повтора нет; каноническое
+    /// сравнение 1:1 — collapse дублей в компараторе отвергнут). Иначе "".
+    ///
+    /// Маркер «первый производный оп» — sub=Some(1): развёрнутые опы цикла
+    /// несут sub (SPEC §11), обычные кадры — sub=None. Кадры цикла с
+    /// наследованным (неявным) feed неотличимы от F-кадров на замороженном
+    /// AST — правило treating их как F-кадры принято сознательно (весь
+    /// корпус циклов несёт явное F; ложноположительный SET_FEED_RATE на
+    /// наследованном feed не производит ложных ходов).
+    fn feed_word(
+        &mut self,
+        state: &eid_core::ast::State,
+        sub: Option<u32>,
+    ) -> Result<String, Vec<Diagnostic>> {
         match &state.feed {
             Some(f) => {
                 if !f.value.is_finite() {
@@ -657,7 +682,8 @@ impl<'a> Writer<'a> {
                     None => true,
                     Some(c) => c.value != f.value,
                 };
-                if changed {
+                let first_derived = sub == Some(1);
+                if changed || first_derived {
                     self.cur_feed = Some(f.clone());
                     Ok(format!(" F{}", num_text(f)))
                 } else {

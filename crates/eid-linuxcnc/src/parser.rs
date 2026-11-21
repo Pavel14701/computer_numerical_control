@@ -94,11 +94,14 @@ enum CycleKind {
     DrillDwell,
     /// G83 — пекерование с полным отводом на R после каждого пика.
     Peck,
-    /// G73 — chip-break: отвод на Q над последней глубиной.
+    /// G73 — chip-break (§7.4a v0.18): то же расписание депеков R−kQ, что
+    /// у G83, но после каждого промежуточного пека — одиночный rapid на
+    /// d+клиренс (без полного отвода на R).
     ChipBreak,
     /// G85 — расточка: feed-out (отвод на подаче).
     BoreFeedOut,
-    /// G86 — расточка: dwell P?, шпиндель off, rapid out, рестарт шпинделя.
+    /// G86 — расточка: dwell P (обязателен, v0.18), шпиндель off, rapid out,
+    /// рестарт шпинделя.
     BoreStop,
     /// G89 — расточка + dwell P: feed-out.
     BoreDwell,
@@ -1789,16 +1792,17 @@ fn m_dwell(st: &St, seconds: &Num, src: SrcSpan, sub: u32) -> Op {
     }
 }
 
-/// Промежуточная высота подхода после полного отвода пека (LinuxCNC
-/// gcode.html G83/G73: «rapid to a point 0.5 mm (0.05 inch) above the last
-/// depth») — в единицах программы. Интерпретация отчёта итерации 3-4:
-/// правило ОБЯЗАНО быть единым с eid-grbl (R3); константу сверить с
-/// source LinuxCNC в COVERAGE-проходе.
+/// Клиренс пека (SPEC §7.4a v0.18, зонд-сверка rs274): расстояние подхода
+/// над последней глубиной — **0.01in unit-scaled**: 0.254mm в G21, ровно
+/// 0.0100 in в G20. Прежние 0.5mm/0.05in (gcode.html-шликер) интерпретатором
+/// не подтверждаются: probe `g83_inch` — RETRACT_CLEARANCE ровно 0.0100 in.
+/// Константа канонизатора, профилем НЕ переопределяется (v0.14.1 в силе).
+/// Единая с eid-grbl (R3-зеркало — следующий бриф).
 fn approach_clearance(units: Units) -> f64 {
     if units == Units::In {
-        0.05
+        0.01
     } else {
-        0.5
+        0.254
     }
 }
 
@@ -1882,7 +1886,8 @@ fn expand_cycle(
     })?;
     let _ = &feed;
 
-    // Dwell: G82/G89 — P обязателен (LinuxCNC), G86 — опционален.
+    // Dwell: G82/G89/G86 — P обязателен (SPEC §7.4a v0.18: rs274 отказывает
+    // на G86 без P — exit 1, сообщение зеркалируется дословно).
     let dwell = match kind {
         CycleKind::DrillDwell | CycleKind::BoreDwell => Some(p_word.clone().ok_or_else(|| {
             fl!(
@@ -1890,7 +1895,12 @@ fn expand_cycle(
                 "цикл G82/G89 без P-слова (dwell, секунды)"
             )
         })?),
-        CycleKind::BoreStop => p_word.clone(),
+        CycleKind::BoreStop => Some(p_word.clone().ok_or_else(|| {
+            fl!(
+                ErrorCode::InvalidInput,
+                "Dwell time p word missing with g86"
+            )
+        })?),
         _ => None,
     };
     // Q: G83/G73 — обязателен, строго > 0 (иначе бесконечные пеки).
@@ -1976,18 +1986,28 @@ fn expand_cycle(
                 }
             }
             CycleKind::Peck | CycleKind::ChipBreak => {
-                // §7.4: порядок пиков точный. Глубины пеков — от R-плоскости
-                // вниз шагами Q (LinuxCNC «move down by Q»): d_k =
-                // max(z_bottom, r_cur − k·q); G83 — полный отвод на R после
-                // каждого пека; G73 — отвод на Q над последней глубиной;
-                // подход — rapid на clr над последней глубиной (≤ R).
+                // §7.4a (v0.18, зонд-сверка rs274): порядок пиков точный.
+                // Депеки ОБА цикла — расписание G83: глубины от R-плоскости
+                // вниз шагами Q до z_bottom: d_k = max(z_bottom, r_cur − k·q).
+                // Промежуточный отвод: G83 — полный отвод на R, затем подход
+                // rapid на d+клиренс; G73 — ОДИН rapid на d+клиренс (модели
+                // «de-retract min(R, d+Q) + отдельный подход» в интерпретаторе
+                // НЕТ; probe `g73_r2`: депеки R−Q…, отводы d+0.254, финал на
+                // R; −2 опа на цикл против прежней модели). Финальный отвод —
+                // общий ниже (G99 → R, G98 → initZ).
                 let q = q.expect("пекерующий цикл без Q (проверено выше)");
                 let t = r_cur - z_bottom;
                 let mut n = if t > 0.0 { (t / q).ceil() as u64 } else { 0 };
                 if n == 0 {
                     n = 1;
                 }
-                let est = 2 + 3 * n as usize + 1;
+                // est: traverse+подход (2) + на пек: feed + отводы (G83 —
+                // retract R и подход: 3; G73 — одиночный rapid: 2) + финал (1).
+                let ops_per_peck = match kind {
+                    CycleKind::Peck => 3,
+                    _ => 2,
+                };
+                let est = 2 + ops_per_peck * n as usize + 1;
                 est_total += est;
                 if est_total > crate::lexer::MAX_UNROLL_ITERATIONS {
                     return Err(vec![crate::lexer::limit_diag(
@@ -2008,28 +2028,15 @@ fn expand_cycle(
                     if k == n {
                         break; // финальный отвод — общий ниже (§7.1)
                     }
-                    match kind {
-                        CycleKind::Peck => {
-                            // полный отвод на R (SPEC §7 таблица)
-                            pending.push(m_rapid(
-                                st,
-                                [cx, cy, cz],
-                                [cx, cy, r_cur],
-                                src.clone(),
-                                sub,
-                            ));
-                            sub += 1;
-                            cz = r_cur;
-                        }
-                        _ => {
-                            // G73: отвод на Q над последней глубиной (≤ R)
-                            let up = (d + q).min(r_cur);
-                            pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, up], src.clone(), sub));
-                            sub += 1;
-                            cz = up;
-                        }
+                    if kind == CycleKind::Peck {
+                        // G83: полный отвод на R (SPEC §7.4a)
+                        pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+                        sub += 1;
+                        cz = r_cur;
                     }
-                    // подход: rapid на clr над последней глубиной (≤ R)
+                    // подход: одиночный rapid на клиренс над последней
+                    // глубиной (≤ R); для G73 — единственный промежуточный
+                    // отвод; для G83 — второй ход после отвода на R.
                     let appr = (d + clr).min(r_cur);
                     pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, appr], src.clone(), sub));
                     sub += 1;

@@ -526,6 +526,7 @@ fn cycle_g81_round_trip_and_text() {
 fn cycle_g86_restart_emits_m5_then_m3() {
     // G86: шпиндель off на rapid-out, рестарт в state последующего опа —
     // эмиссия: M5 перед отводом, M3 S8000 перед следующим ходом (Q9).
+    // Развёртка с DWELL-опом (SPEC §7.4a v0.18): G4 P0.3000 между дном и M5.
     let src = concat!(
         "G21 G90 G94 G17\n",
         "M3 S8000\n",
@@ -536,6 +537,14 @@ fn cycle_g86_restart_emits_m5_then_m3() {
     );
     let text = assert_rt(src, "cycle G86");
     let lines: Vec<&str> = text.lines().collect();
+    let dwell = lines
+        .iter()
+        .position(|l| *l == "G4 P0.3000")
+        .expect("G4 P0.3000 (DWELL-оп, v0.18)");
+    let feed_bottom = lines
+        .iter()
+        .position(|l| *l == "G1 X10.0000 Y0.0000 Z-3.0000")
+        .expect("feed на дно");
     let m5 = lines
         .iter()
         .position(|l| *l == "M5")
@@ -553,9 +562,160 @@ fn cycle_g86_restart_emits_m5_then_m3() {
         .position(|l| l.starts_with("G1 X20.0000"))
         .expect("следующий ход");
     assert!(
-        m5 < rapid_out && rapid_out < m3 && m3 < g1,
-        "порядок M5 → rapid-out → M3 → ход:\n{text}"
+        feed_bottom < dwell && dwell < m5 && m5 < rapid_out && rapid_out < m3 && m3 < g1,
+        "порядок feed → DWELL → M5 → rapid-out → M3 → ход:\n{text}"
     );
+}
+
+#[test]
+fn cycle_f_word_reemitted_on_each_f_frame() {
+    // SPEC §7.4a v0.18, эмиссионное следствие: rs274 ассертит SET_FEED_RATE
+    // на каждом кадре с F-словом — эмиттер переизлучает F на ПЕРВОМ
+    // производном опе (sub=1) каждого F-кадра, даже при неизменном значении.
+    // Golden-тест: 2 подряд G81 F120 → ОБА блока с F (probe g81_nof: без
+    // F-слова повтора нет; при эмиссии F только по смене значения второй
+    // блок терял SET_FEED_RATE — e2e48 #25).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G81 X10.0000 Y0.0000 Z-3.0000 R2.0000 F120.0\n",
+        "G81 X20.0000 Y0.0000 Z-3.0000 R3.0000 F120.0\n",
+        "G80\n",
+        "M2\n",
+    );
+    let text = assert_rt(src, "2× G81 F120");
+    // Второй блок: traverse с F (sub=1), подход/отвод без F (sub=2/4).
+    let second_block: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("G0 X20.0000"))
+        .collect();
+    assert_eq!(
+        second_block.first(),
+        Some(&"G0 X20.0000 Y0.0000 Z2.0000 F120.0000"),
+        "первый производный оп блока с F:\n{text}"
+    );
+    assert_eq!(
+        second_block.len(),
+        3,
+        "traverse + подход + отвод (только traverse с F):\n{text}"
+    );
+    let f_count = text.lines().filter(|l| l.contains(" F120.0000")).count();
+    assert_eq!(f_count, 2, "оба блока с F:\n{text}");
+}
+
+#[test]
+fn regen_cycle_goldens_spec_v018() {
+    // Регенерация cycle-goldens #19/#20/#21 из D-conformant parse (SPEC
+    // §7.7 v0.15: golden = детерминированная функция файла; прецедент §1
+    // closure / regen_v1_13). SPEC v0.18: клиренс пека 0.01in unit-scaled
+    // (0.254mm в G21 — #19), G73 = G83 без полного отвода (#20), G86 P
+    // обязателен + DWELL-оп (#21, source дополнен P1.0). НЕ редактируются
+    // вручную. Проверки на каждом regen: R1 байт-в-байт
+    // (emit(parse(golden)) == golden) + semantic_diff ≡ 0.
+    const CYCLE_GOLDENS: [(&str, &str); 3] = [
+        ("19_peck_G83_retract", "peck_G83_retract.linuxcnc.ngc"),
+        ("20_chipbreak_G73", "chipbreak_G73.linuxcnc.ngc"),
+        ("21_bore_G86_restart", "bore_G86_restart.linuxcnc.ngc"),
+    ];
+    for (dir, file) in CYCLE_GOLDENS {
+        let src = read(&format!("{dir}/{file}"));
+        // D-conformant parse (LinuxCnc-канонизатор, SPEC v0.18).
+        let p1 = adapter()
+            .parse(&src, &format!("{file} regen-src"))
+            .expect("v0 source parses (D-conformant)");
+        let golden_text = EidTextAdapter::new()
+            .emit(&p1)
+            .expect("golden.eid emit (eid-text канон)");
+        let golden_path = corpus(&format!("{dir}/golden.eid"));
+        std::fs::write(&golden_path, &golden_text).expect("golden regen write");
+        // R1 байт-в-байт: emit(parse(golden)) == golden-файл.
+        let eid = EidTextAdapter::new();
+        let g1 = eid
+            .parse(&golden_text, "golden.eid")
+            .expect("golden parses");
+        let again = eid.emit(&g1).expect("re-emit golden");
+        assert_eq!(
+            golden_text, again,
+            "{dir}: emit(parse(golden)) != golden — R1 байт-в-байт сломан"
+        );
+        // semantic_diff ≡ 0: parse(v0) ≡ parse(golden).
+        let d = semantic_diff(&p1, &g1, &DiffConfig::default());
+        assert!(d.is_empty(), "{dir}: regen divergences: {d:?}");
+        // Специфика v0.18 в тексте golden'а:
+        // #19 — подходы 0.2540/-1.7460/-3.7460 (клиренс 0.254mm);
+        // #20 — одиночные отводы -1.7460/-3.7460 (G73 = G83 без отвода на R);
+        // #21 — DWELL-оп (P1.0) между дном и rapid-out.
+        if dir == "19_peck_G83_retract" {
+            for z in ["0.2540", "-1.7460", "-3.7460"] {
+                assert!(
+                    golden_text.contains(&format!("end=10.0000,5.0000,{z}")),
+                    "{dir}: подход {z} (клиренс 0.254) отсутствует:\n{golden_text}"
+                );
+            }
+            for old in [
+                "end=10.0000,5.0000,0.5000",
+                "end=10.0000,5.0000,-1.5000",
+                "end=10.0000,5.0000,-3.5000",
+            ] {
+                assert!(
+                    !golden_text.contains(old),
+                    "{dir}: прежний клиренс 0.5 не должен оставаться ({old}):\n{golden_text}"
+                );
+            }
+        }
+        if dir == "20_chipbreak_G73" {
+            assert!(
+                golden_text.contains("end=10.0000,5.0000,-1.7460")
+                    && golden_text.contains("end=10.0000,5.0000,-3.7460"),
+                "{dir}: одиночные отводы d+0.254 отсутствуют:\n{golden_text}"
+            );
+            // Структура 1:1 с зонд-потоком rs274 g73_r2 (#20, R0/Q2/Z−5):
+            // (KIND, z) последовательность ПРОИЗВОДНЫХ ходов (sub=…).
+            let seq: Vec<(String, String)> = golden_text
+                .lines()
+                .filter(|l| {
+                    l.starts_with("OP ")
+                        && l.contains(" sub=")
+                        && (l.contains("RAPID") || l.contains("LINEAR"))
+                })
+                .map(|l| {
+                    let kind = l.split_whitespace().nth(2).unwrap_or("?").to_string();
+                    let z = l
+                        .split("end=")
+                        .nth(1)
+                        .and_then(|e| e.split(',').nth(2))
+                        .and_then(|t| t.split_whitespace().next())
+                        .unwrap_or("?")
+                        .to_string();
+                    (kind, z)
+                })
+                .collect();
+            assert_eq!(
+                seq,
+                vec![
+                    ("RAPID".to_string(), "5.0000".to_string()),   // traverse
+                    ("RAPID".to_string(), "0.0000".to_string()),   // подход R
+                    ("LINEAR".to_string(), "-2.0000".to_string()), // депек R−Q
+                    ("RAPID".to_string(), "-1.7460".to_string()),  // d+0.254
+                    ("LINEAR".to_string(), "-4.0000".to_string()), // депек R−2Q
+                    ("RAPID".to_string(), "-3.7460".to_string()),  // d+0.254
+                    ("LINEAR".to_string(), "-5.0000".to_string()), // депек z_bottom
+                    ("RAPID".to_string(), "0.0000".to_string()),   // финал на R
+                ],
+                "{dir}: структура опов 1:1 с зонд-потоком g73_r2:\n{golden_text}"
+            );
+        }
+        if dir == "21_bore_G86_restart" {
+            assert!(
+                golden_text.contains("OP 005 DWELL seconds=1.0000"),
+                "{dir}: DWELL-оп (P1.0) обязателен (v0.18):\n{golden_text}"
+            );
+            assert!(
+                golden_text.contains("sub=4 feed=120.0000") && golden_text.contains("spindle=off"),
+                "{dir}: DWELL sub=4 до rapid-out со шпинделем off:\n{golden_text}"
+            );
+        }
+    }
 }
 
 #[test]

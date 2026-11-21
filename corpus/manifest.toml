@@ -104,7 +104,7 @@ name = "drill_G82_dwell"
 tier = "A"
 kind = "positive"
 golden = "tier_a/v0/18_drill_G82_dwell/golden.eid"
-note = "G82: как G81 + dwell P на дне (SPEC §7); P в секундах — подтверждено LinuxCNC-doc"
+note = "G82: как G81 + dwell P на дне (SPEC §7); P в секундах — подтверждено LinuxCNC-doc; клиренс пека в развёртке не участвует (без пеков) — SPEC v0.18 не затрагивает"
 notice = false
 [[vectors.files]]
 path = "tier_a/v0/18_drill_G82_dwell/drill_G82_dwell.linuxcnc.ngc"
@@ -117,7 +117,7 @@ name = "peck_G83_retract"
 tier = "A"
 kind = "positive"
 golden = "tier_a/v0/19_peck_G83_retract/golden.eid"
-note = "G83 полный отвод: d_k = max(z_bottom, r - k·q) = 0/-2/-4/-6; полный отвод на R после каждого пика; rapid-подход 0.5mm над последней глубиной (§7 4a); порядок пиков сохранён (§7.4)"
+note = "G83 полный отвод: d_k = max(z_bottom, r - k·q) = 0/-2/-4/-6; полный отвод на R после каждого пика; rapid-подход = клиренс пека 0.01in unit-scaled (0.254mm в G21) над последней глубиной (SPEC v0.18 §7.4a, зонд rs274 g83_inch; прежде 0.5mm v0.14 — golden regen из D-conformant parse, прецедент §1 closure); порядок пиков сохранён (§7.4)"
 notice = false
 [[vectors.files]]
 path = "tier_a/v0/19_peck_G83_retract/peck_G83_retract.linuxcnc.ngc"
@@ -130,7 +130,7 @@ name = "chipbreak_G73"
 tier = "A"
 kind = "positive"
 golden = "tier_a/v0/20_chipbreak_G73/golden.eid"
-note = "G73 chip-break: de-retract min(R, d+Q): после -2 -> 0 (=R), после -4 -> -2 (< R); подход 0.5mm над последней глубиной (§7 4a); R0/Q2/Z-5 чтобы de-retract отличался от R"
+note = "G73 chip-break (SPEC v0.18 §7.4a): депеки R-kQ вниз до z_bottom (расписание как G83) = 0/-2/-4/-5; после каждого промежуточного пека ОДИН rapid на d+0.254 (клиренс 0.01in unit-scaled), финал на R (G99); модели «de-retract min(R, d+Q) + отдельный подход» в интерпретаторе НЕТ (probe rs274 g73_r2: депеки R-Q…, отводы d+0.254, финал на R; -2 опа на цикл) — golden regen из D-conformant parse"
 notice = false
 [[vectors.files]]
 path = "tier_a/v0/20_chipbreak_G73/chipbreak_G73.linuxcnc.ngc"
@@ -143,7 +143,7 @@ name = "bore_G86_restart"
 tier = "A"
 kind = "positive"
 golden = "tier_a/v0/21_bore_G86_restart/golden.eid"
-note = "G86: feed-in, spindle off в state rapid-out, рестарт шпинделя в state следующего хода (Q9/SPEC §7); ход после цикла в source — рестарт видим в AST"
+note = "G86: P обязателен — rs274 exit 1 без него («Dwell time p word missing with g86», SPEC v0.18 §7.4a; source дополнен P1.0); развёртка: feed-на-дно → DWELL(P) → STOP_SPINDLE → rapid-out (state spindle=off) → START_SPINDLE в state следующего хода (Q9); ход после цикла в source — рестарт видим в AST; хвостовое F120.0 удалено — rs274 ассертит SET_FEED_RATE на F-кадре, эмиттер (frozen AST) не отличает restated-F от наследованного — AST-флаг F-кадра в очереди разморозки API v0.2 (с #21-SrcSpan/#22-AdapterOutput)"
 notice = false
 [[vectors.files]]
 path = "tier_a/v0/21_bore_G86_restart/bore_G86_restart.linuxcnc.ngc"
