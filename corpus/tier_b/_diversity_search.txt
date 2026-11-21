@@ -1,0 +1,8 @@
+splitn2/DrillSki | Apache-2.0 | 25 | Open database of snow ski binding templates, create pdf temp
+rudra496/cnc | MIT | 15 | CNC Simulator Pro — Free browser-based 3-axis CNC milling & 
+Lachei/ImageGraver | MIT | 6 | Website to convert images to reliefs and create gcode for th
+Lexvdpoel/Volura | MIT | 3 | All-in-one open source software for makers: design in 3D, th
+DominicZe-DZ/PB_Conversational | MIT | 2 | Conversational milling screens (thread milling, pockets, isl
+Vectric-Aspire-3D/Vectric-Aspire | MIT | 1 |  Vectric Aspire 3D brings relief modeling, sculpting, and CN
+SmiCut/smiprog | MIT | 0 | Free thread-milling software and CNC programs. Use online, d
+ShibaInuChan/Relief-Forge | MIT | 0 | Convert photos into CNC-ready reliefs — flat plate or existi

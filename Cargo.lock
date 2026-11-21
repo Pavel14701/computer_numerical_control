@@ -9,6 +9,8 @@ dependencies = [
  "eid-core",
  "eid-harness",
  "eid-integration",
+ "serde",
+ "toml",
 ]
 
 [[package]]

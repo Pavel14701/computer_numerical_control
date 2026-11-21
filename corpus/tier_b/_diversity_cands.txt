@@ -1,0 +1,16 @@
+== it-ony/gcode-generator [MIT] gcode-files: 0
+== mahatrsna/gcode-mill-pocket [MIT] gcode-files: 0
+== DominicZe-DZ/PB_Conversational [MIT] gcode-files: 0
+== rudra496/cnc [MIT] gcode-files: 0
+== gmlewis/go-gcode [Apache-2.0] gcode-files: 0
+== FlashLukas/aaltoCAM [Apache-2.0] gcode-files: 0
+== roh6608/WingBlade-CAM [BSD-3-Clause] gcode-files: 0
+== Jackhammer88/Visu [Apache-2.0] gcode-files: 5
+       4715  Tests/Libraries/GcodeParserTests/TestFiles/invalid.nc
+    3540057  Tests/Libraries/GcodeParserTests/TestFiles/valid.nc
+    3540057  Visu/GcodeExamples/SmilinJack - ThreeAxisFlatMachine Relief.tap
+      13011  Visu/GcodeExamples/hse1p.tap
+     142599  Visu/GcodeExamples/knight.tap
+== alsliahona/gcode-optimizer [BSD-3-Clause] gcode-files: 0
+== lidonge/gerber2gcode [Apache-2.0] gcode-files: 0
+== GridSpace/carve-control [MIT] gcode-files: 0

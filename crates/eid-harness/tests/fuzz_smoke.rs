@@ -111,9 +111,21 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
                     let res = parser::parse_with_notices(&t, "fuzz-m");
                     Ok((t, res))
                 }));
+                // emit-отказ мутанта: для OkOrVerifyErr — валидная диспозиция,
+                // если код E_INVALID_INPUT (инварианты Verify работают — ruling
+                // refinement round 1); для прочих — находка.
                 let (t, res) = match outcome {
                     Ok(Ok(v)) => v,
                     Ok(Err(msg)) => {
+                        let verified = matches!(expect, Expect::OkOrVerifyErr)
+                            && msg.contains("InvalidInput");
+                        if verified {
+                            println!(
+                                "[verify-ok] op={} seed={} — мутант отклонён Verify-этапом (E_INVALID_INPUT), инвариант подтверждён",
+                                op_id, seed
+                            );
+                            continue;
+                        }
                         findings.push(Finding {
                             family: "panic",
                             operator: op_id,

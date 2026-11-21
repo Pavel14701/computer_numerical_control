@@ -111,20 +111,14 @@ fn exit_of(args: &[&str]) -> u8 {
 /// Документированные исключения (вербатим оркестратору, не фикс): возврат
 /// Some(причина) ⇒ расхождение классифицировано и не роняет матрицу.
 /// НОВЫЕ классы расхождений сюда не попадают → тест красный списком.
+/// #47 выведен из исключений (итерация 5, фикс raw_refusal в
+/// eid-integration::translate): r4_expect E_RAW_UNTRANSLATABLE выполняется.
 fn known_exception(id: &str, msg: &str) -> Option<String> {
     const CYCLES: [&str; 10] = ["17", "18", "19", "20", "21", "22", "23", "24", "25", "26"];
     if msg.contains(r#"field: "feed""#) && CYCLES.contains(&id) {
         return Some(
             "cycle-family feed@traverse/approach — известный список B (checkpoint v4); \
              поверхность: CLI round-trip эмиссии циклов (C/D, SPEC §7)"
-                .to_string(),
-        );
-    }
-    if id == "47" && (msg.contains("ожидался CLI-отказ") || msg.contains("output создан")) {
-        return Some(
-            "RAW '$$' проходит кросс-диалект молча: drop без диагностики, \
-             manifest r4_expect E_RAW_UNTRANSLATABLE не выполнен (SPEC §8 gap — адаптеры C/D); \
-             file↔manifest"
                 .to_string(),
         );
     }

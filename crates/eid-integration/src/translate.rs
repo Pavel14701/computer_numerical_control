@@ -1,6 +1,14 @@
 //! translate — live-конвейер CLI (итерация 4): registry адаптеров диалектов +
 //! parse(источник) → emit(цель). Реализует критерий MVP #9/#10 (demo round-trip).
 //!
+//! RAW-правило (SPEC §8.2, итерация 5 — фикс критический): AST с Raw-опом
+//! отказывает кросс-диалектной цели (`E_RAW_UNTRANSLATABLE`, все Raw-спаны в
+//! `options`, первый в `src`); same-dialect — plain emit (verbatim RAW
+//! легален, §8.1); golden/eid-l1-источник — любой Raw отказывает любой цели.
+//! Формат диагностики зеркален эталону: eid-harness::translate::raw_refusal
+//! (Агент B; приватен — здесь зеркальная копия с отсылкой, дрейф ловится
+//! e2e48 #47).
+//!
 //! Реальные адаптеры: GrblAdapter / LinuxCncAdapter / EidTextAdapter (eid-l1) —
 //! вызываются через trait object (`&dyn Adapter`, freeze v0.1). grbl-hal/fluidnc —
 //! pending (Агент C, семейство GRBL). Профиль станка в конвейер не входит:
@@ -8,8 +16,8 @@
 //! (structural-проверки) и CLI (display).
 
 use eid_core::adapter::Adapter;
-use eid_core::ast::Program;
-use eid_core::diag::{Diagnostic, Stage};
+use eid_core::ast::{Op, Program, SrcSpan};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_grbl::GrblAdapter;
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
@@ -181,6 +189,47 @@ pub fn format_diagnostic(d: &Diagnostic) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// RAW-правило (SPEC §8.2) — зеркально eid-harness::translate::raw_refusal
+// ---------------------------------------------------------------------------
+
+/// Все Raw-спаны AST (порядок опов).
+fn raw_spans(program: &Program) -> Vec<SrcSpan> {
+    program
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Raw { src, .. } => Some(src.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Одна диагностика отказа: `E_RAW_UNTRANSLATABLE`, все Raw-спаны перечислены
+/// (`options` + первый в `src`), количество — в message. Формат 1:1 с
+/// eid-harness::translate::raw_refusal (B) — см. модульный док.
+fn raw_refusal(raw_spans: &[SrcSpan]) -> Diagnostic {
+    Diagnostic {
+        stage: Stage::Emit,
+        code: ErrorCode::RawUntranslatable,
+        message: format!(
+            "cross-dialect translation of a program containing {} RAW op(s) is forbidden (SPEC §8.2: same-dialect only)",
+            raw_spans.len()
+        ),
+        src: raw_spans.first().cloned(),
+        options: raw_spans
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}:{}.{}-{}.{}",
+                    s.file, s.line_start, s.col_start, s.line_end, s.col_end
+                )
+            })
+            .collect(),
+        limit: None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Конвейер
 // ---------------------------------------------------------------------------
 
@@ -198,7 +247,7 @@ pub struct TranslateOutcome {
     pub emit_warnings: Vec<Diagnostic>,
 }
 
-/// Текст → текст: parse(источник) → emit(цель).
+/// Текст → текст: parse(источник) → RAW-правило → emit(цель).
 pub fn translate_text(
     from: &str,
     to: &str,
@@ -210,6 +259,16 @@ pub fn translate_text(
 
     let program = source.parse(src, file).map_err(TranslateError::Parse)?;
     let notices = source.take_notices();
+
+    // RAW-правило (SPEC §8.2): кросс-диалект + Raw → отказ; same-dialect
+    // machine-диалектов → plain emit (verbatim); golden/eid-l1-источник —
+    // отказ любой цели (диалектно-нейтральный источник, B translate.rs).
+    let spans = raw_spans(&program);
+    let cross = target.dialect_name() != source.dialect_name();
+    let golden = source.dialect_name() == EID_TEXT_DIALECT;
+    if !spans.is_empty() && (cross || golden) {
+        return Err(TranslateError::Emit(vec![raw_refusal(&spans)]));
+    }
 
     let emitted = target.emit(&program).map_err(TranslateError::Emit)?;
     let emit_warnings = target.take_emit_diagnostics();

@@ -1,0 +1,423 @@
+{
+ "files": [
+  [
+   "gcb_ContourHolesOnGrid_4x2y_A30_B20_22.5deg.ngc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "gcb_ContourHolesOnGrid_90deg.ngc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "gcb_ContourRect_G40.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "gcb_ContourRect_G41.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "gcb_TEST_DrillHolesGrid_45deg_T4.ngc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "gcb_TEST_MillPocketCircle_SO30.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "gcb_TEST_MillPocketCircle_SO50.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "gcb_contourMillHolesGrid_001.gcode.ngc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "gcb_pocketRRect_001_02.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "gcb_pocketRRect_001a.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "gcb_spiral.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "grbljs_Circle_Diamond_Square_Calibration.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "grbljs_arc-ijk.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_arc-xz-plane.gcode",
+   [
+    "F3: G18/G19 дуги"
+   ]
+  ],
+  [
+   "grbljs_arc-yz-plane.gcode",
+   [
+    "F3: G18/G19 дуги"
+   ]
+  ],
+  [
+   "grbljs_circle-inch.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_circle.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_full-circle-without-xyz.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_g2-arc.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_helical-thread-milling.gcode",
+   [
+    "F4: helical/thread (винтовые G2/G3 с Z)",
+    "F4: helical/thread (ключевое слово)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "grbljs_jsdc-laser.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_jsdc.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "grbljs_sample.gcode",
+   [
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "mit_cws_fresa.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_cws_torno.gcode",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F4: helical/thread (винтовые G2/G3 с Z)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "mit_ddp_buchse.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_ddp_dwell.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_ddp_eck3.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_ddp_ltr.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_ddp_m_retract.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_ddp_simple_square.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_hilbert_test.ngc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_pycnc_circles.gcode",
+   [
+    "F3: G18/G19 дуги",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "mit_pycnc_rects.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_pycnc_test_parser.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_shpk_MIT_EC_Logo.nc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "mit_shpk_ncdrill1.tap",
+   [
+    "F2: сверловка (G81/G83-класс / .tap)"
+   ]
+  ],
+  [
+   "mit_svg2g_circular_interpolation.gcode",
+   [
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "mit_svg2g_shapes.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_svg2g_square.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_tball_tball-engrave-laser.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_tball_tball-engrave.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "mit_tball_tball.gcode",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "olle_bricka_short_wall.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F3: G18/G19 дуги",
+    "F4: helical/thread (винтовые G2/G3 с Z)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "olle_bricka_slots.tap",
+   [
+    "F2: сверловка (G81/G83-класс / .tap)"
+   ]
+  ],
+  [
+   "olle_ivar_engraving_test.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "olle_top_cont.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F3: G18/G19 дуги",
+    "F4: helical/thread (винтовые G2/G3 с Z)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "olle_top_trace_finish.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "vince_BewareOfDog_v10.nc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "vince_BewareOfDog_v10_2_T2.nc",
+   [
+    "F4: helical/thread (винтовые G2/G3 с Z)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "vince_BewareOfDog_v10_3_T4.nc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "vince_BrushRabbitv4.nc",
+   [
+    "F0: 2D (без Z-проходов/дуг-классов)"
+   ]
+  ],
+  [
+   "vince_tictactoe1.nc",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)"
+   ]
+  ],
+  [
+   "vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ],
+  [
+   "vis_hse1p.tap",
+   [
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F6: радиусные цепочки (2+ разных радиуса)"
+   ]
+  ],
+  [
+   "vis_knight.tap",
+   [
+    "F1: multi-level Z (2+ отрицательных Z-глубин)",
+    "F2: сверловка (G81/G83-класс / .tap)",
+    "F5: 3D-контуры/Z-стуфинг (5+ Z-уровней)"
+   ]
+  ]
+ ],
+ "families": {
+  "F0": 29,
+  "F1": 22,
+  "F5": 20,
+  "F6": 14,
+  "F3": 5,
+  "F4": 6,
+  "F2": 9
+ }
+}

@@ -7,11 +7,12 @@
 //! (manifest r4_expect, COVERAGE §5) → CLI-маппинг = exit 1.
 
 use eid_core::adapter::Adapter;
+use eid_core::diag::ErrorCode;
 use eid_harness::diff::{semantic_diff, DiffConfig};
 use eid_integration::profile::MachineProfile;
 use eid_integration::sim::{check_program, mock_sim};
 use eid_integration::translate::{
-    format_diagnostic, translate_file, translate_text, AnyAdapter, TranslateError,
+    format_diagnostic, stage_tag, translate_file, translate_text, AnyAdapter, TranslateError,
 };
 use std::path::{Path, PathBuf};
 
@@ -216,6 +217,96 @@ fn e2e_pending_dialect_is_reported() {
         .expect_err("grbl-hal — pending");
     assert!(matches!(err, TranslateError::AdapterPending { .. }));
     assert_eq!(err.stage(), "config");
+}
+
+// ---------------------------------------------------------------------------
+// RAW-правило (SPEC §8.2, фикс критический, итерация 5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_47_raw_cross_refuses_both_directions() {
+    // grbl-файл с '$$' → linuxcnc: Err E_RAW_UNTRANSLATABLE (emit-стадия),
+    // все Raw-спаны в options (формат B raw_refusal, зеркально)
+    let grbl = std::fs::read_to_string(corpus_pilot(
+        "47_raw_crlf_fidelity",
+        "raw_crlf_fidelity.grbl.ngc",
+    ))
+    .unwrap();
+    let err = translate_text("grbl-1.1", "linuxcnc", &grbl, "raw_crlf_fidelity.grbl.ngc")
+        .expect_err("#47: кросс-диалект с RAW обязан отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags.len(), 1, "ровно одна диагностика: {diags:?}");
+            assert_eq!(diags[0].code, ErrorCode::RawUntranslatable);
+            assert_eq!(stage_tag(diags[0].stage), "emit");
+            assert!(
+                diags[0].message.contains("1 RAW op(s)"),
+                "количество RAW в message: {diags:?}"
+            );
+            assert!(diags[0].src.is_some(), "первый Raw-спан в src");
+            assert_eq!(diags[0].options.len(), 1, "все Raw-спаны в options");
+        }
+        other => panic!("#47: ожидался Err(Emit), фактический: {other:?}"),
+    }
+
+    // linuxcnc-файл с '$$' → grbl: то же правило (v1-генерация — v0-файла
+    // linuxcnc у #47 нет в regression_files)
+    let lnx_path = repo_root()
+        .join("corpus/tier_a/v1/47_raw_crlf_fidelity/raw_crlf_fidelity.linuxcnc.ngc")
+        .canonicalize()
+        .expect("v1 linuxcnc-файл #47");
+    let lnx = std::fs::read_to_string(&lnx_path).unwrap();
+    let err2 = translate_text("linuxcnc", "grbl-1.1", &lnx, "raw_crlf_fidelity.linuxcnc.ngc")
+        .expect_err("#47 reverse: кросс-диалект с RAW обязан отказать");
+    assert!(matches!(err2, TranslateError::Emit(_)));
+    assert_eq!(err2.stage(), "emit");
+}
+
+#[test]
+fn e2e_47_raw_golden_refuses_any_target() {
+    // golden/eid-l1 источник: любой Raw → отказ ЛЮБОЙ цели (включая eid-l1)
+    let golden = std::fs::read_to_string(corpus_pilot("47_raw_crlf_fidelity", "golden.eid"))
+        .unwrap();
+    for to in ["eid-l1", "grbl-1.1", "linuxcnc"] {
+        let err = translate_text("eid-l1", to, &golden, "golden.eid")
+            .expect_err("golden с Raw отказывает любой цели");
+        match &err {
+            TranslateError::Emit(diags) => {
+                assert_eq!(diags[0].code, ErrorCode::RawUntranslatable, "target={to}");
+            }
+            other => panic!("target={to}: ожидался Err(Emit), фактический: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn e2e_n3_same_dialect_raw_verbatim() {
+    // N3: same-dialect RAW вербатимен (SPEC §8.1) — без отказа
+    let grbl = std::fs::read_to_string(corpus_pilot(
+        "n3_raw_vendor_block",
+        "raw_vendor_block.grbl.ngc",
+    ))
+    .unwrap();
+    let out = translate_text("grbl-1.1", "grbl-1.1", &grbl, "n3.grbl.ngc")
+        .expect("same-dialect RAW легален");
+    assert!(
+        out.emitted.contains("$110=250.000"),
+        "RAW '$110=250.000' потерян при same-dialect: {:?}",
+        out.emitted
+    );
+
+    let lnx = std::fs::read_to_string(corpus_pilot(
+        "n3_raw_vendor_block",
+        "raw_vendor_block.linuxcnc.ngc",
+    ))
+    .unwrap();
+    let out2 = translate_text("linuxcnc", "linuxcnc", &lnx, "n3.linuxcnc.ngc")
+        .expect("same-dialect RAW легален");
+    assert!(
+        out2.emitted.contains("M123"),
+        "RAW 'M123' потерян при same-dialect: {:?}",
+        out2.emitted
+    );
 }
 
 // ---------------------------------------------------------------------------

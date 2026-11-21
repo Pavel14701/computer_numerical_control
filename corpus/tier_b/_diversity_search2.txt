@@ -1,0 +1,8 @@
+erpalma/grbl-tools | MIT | 5 | A collection (WIP) of gcode and GRBL related scripts and too
+sliptonic/hilbert_cnc | MIT | 3 | Generating gcode for hilbert curves with and without image s
+Twarner491/CNCmillingWorkflows | MIT | 3 | A guide for CNC milling, covering machinist jargon, material
+FABtotum/gcode-samples | CC0-1.0 | 1 | 
+vincedovy/CNC-files | MIT | 0 | NC files for cutting on the CNC
+clough42/masso-macros | MIT | 0 | Useful macros (.nc files) for the MASSO G3 CNC controller
+edelator/SCARA-Drawbot | MIT | 0 | A remix of this drawbot: https://www.thingiverse.com/thing:3
+ollema/gcode | MIT | 0 | collection of g-code used in various cnc-projects
