@@ -73,6 +73,7 @@ use eid_core::ast::{Op, Point3, Program, StartPoint, Units};
 use eid_core::diag::Diagnostic;
 use eid_core::diag::{ErrorCode, Stage};
 use eid_fanuc::canonicalize::{canonicalize, canonicalize_with_notices, NoticeKind};
+use eid_fanuc::FanucAdapter;
 
 const EPS: f64 = 0.001;
 
@@ -1410,9 +1411,11 @@ fn cycle_g81_unroll_template() {
 
 #[test]
 fn cycle_g82_dwell_p_ms() {
-    // G82: P dwell — ЦЕЛЫЕ МИЛЛИСЕКУНДЫ (§1.2) → секунды при канонизации.
+    // G82: P dwell — bare P = ЦЕЛЫЕ МИЛЛИСЕКУНДЫ (§1.2 Fanuc) → секунды;
+    // dotted P (сломанная Fanuc-форма) — секунды verbatim (v0.18 зеркало D:
+    // rs274/LinuxCNC-совместимое чтение, golden #21 P1.0 → 1.0 s).
     let p = parse(
-        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG81 X20. Y20. Z-5. R2. F100.;\nG82 X30. Y20. Z-6. R2. P500.;\nM30;\n",
+        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG81 X20. Y20. Z-5. R2. F100.;\nG82 X30. Y20. Z-6. R2. P500;\nM30;\n",
     )
     .expect("ok");
     // G81: 4 опа (1..4); G82: traverse + [approach — ZERO-LENGTH (cz == 2 ==
@@ -1420,9 +1423,17 @@ fn cycle_g82_dwell_p_ms() {
     // + retract = 4 опа (5..8) — dwell между feed и retract.
     assert!(
         matches!(&p.ops[7], Op::Dwell { seconds, .. } if (seconds.value() - 0.5).abs() <= EPS),
-        "P500 → 0.5 s"
+        "bare P500 → 0.5 s"
     );
     assert_eq!(end_of(&p.ops[8]), [30.0, 20.0, 2.0], "retract после dwell");
+    // dotted P → секунды verbatim (P1.0 = 1.0 s, не 1 мс).
+    let p =
+        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG82 X20. Y20. Z-5. R2. P1.0 F100.;\nM30;\n")
+            .expect("ok");
+    assert!(
+        matches!(&p.ops[4], Op::Dwell { seconds, .. } if (seconds.value() - 1.0).abs() <= EPS),
+        "dotted P1.0 → 1.0 s verbatim"
+    );
     // G82 без P — сломанный вход (паритет LinuxCNC-адаптера).
     assert_eq!(
         err_code(parse(
@@ -1435,16 +1446,17 @@ fn cycle_g82_dwell_p_ms() {
 #[test]
 fn cycle_g83_peck_full_retract() {
     // G83: полный отвод к R после каждого пика; подход rapid на δ над
-    // последней глубиной (δ = 0.5mm канон + W_CYCLE_PARAM_ASSUMED).
-    // R=2, Z=-10, Q=3: пеки d_k = max(-10, 2−3k): -1, -4, -7, -10.
-    let (p, notices) = notices_of(
-        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG83 X20. Y20. Z-10. R2. Q3. F100.;\nM30;\n",
-    );
+    // последней глубиной (δ = 0.254mm unit-scaled, SPEC §7.4a v0.18 —
+    // зонд rs274; прежде 0.5mm v0.14). R=2, Z=-10, Q=3:
+    // пеки d_k = max(-10, 2−3k): -1, -4, -7, -10.
+    let p =
+        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG83 X20. Y20. Z-10. R2. Q3. F100.;\nM30;\n")
+            .expect("ok");
     // G0 + traverse + approach + [feed, rapid(R), rapid(d+δ)] × 3 +
     // feed(-10) + retract(R) + PEND = 15.
     assert_eq!(p.ops.len(), 15);
     let seq = [
-        -1.0f64, 2.0, -0.5, -4.0, 2.0, -3.5, -7.0, 2.0, -6.5, -10.0, 2.0,
+        -1.0f64, 2.0, -0.746, -4.0, 2.0, -3.746, -7.0, 2.0, -6.746, -10.0, 2.0,
     ];
     for (i, z) in seq.iter().enumerate() {
         let got = end_of(&p.ops[3 + i])[2];
@@ -1458,41 +1470,51 @@ fn cycle_g83_peck_full_retract() {
         "последний пек — feed"
     );
     assert!(matches!(&p.ops[13], Op::Rapid { .. }), "retract");
-    // Notice δ (ruling 2b): W_CYCLE_PARAM_ASSUMED на первый оп развёртки.
-    let cyc: Vec<_> = notices
-        .iter()
-        .filter(|n| n.kind == NoticeKind::CycleParamAssumed)
-        .collect();
-    assert_eq!(cyc.len(), 1);
-    assert!(cyc[0].message.contains("W_CYCLE_PARAM_ASSUMED"));
-    assert!(cyc[0].message.contains("0.5"));
-    assert_eq!(cyc[0].op_index, 1, "notice прицеплен к traverse развёртки");
 }
 
 #[test]
 fn cycle_g73_chip_break() {
-    // G73: de-retract на Q над последней глубиной (≤ R); подход на δ.
+    // G73 (SPEC §7.4a v0.18 — зеркало D, probe g73_r2): депеки R−kQ вниз до
+    // z_bottom (расписание как G83); после каждого промежуточного пека ОДИН
+    // rapid на d+δ (δ = 0.254mm); финал на R (G99). Модели «de-retract
+    // min(R, d+Q) + отдельный подход» в интерпретаторе НЕТ.
     // R=2, Z=-10, Q=2: d_k = max(-10, 2−2k): 0, -2, -4, -6, -8, -10.
-    let (p, notices) = notices_of(
-        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG73 X20. Y20. Z-10. R2. Q2. F100.;\nM30;\n",
-    );
-    // G0 + traverse + approach + [feed(d_k), rapid(min(R, d+Q)), rapid(d+0.5)]
-    // × 5 + feed(-10) + retract(R) + PEND = 21.
-    assert_eq!(p.ops.len(), 21);
+    let p =
+        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG73 X20. Y20. Z-10. R2. Q2. F100.;\nM30;\n")
+            .expect("ok");
+    // G0 + traverse + approach + [feed(d_k), rapid(d+0.254)] × 5 + feed(-10)
+    // + retract(R=2) + PEND = 16 (прежде 21 — −5 опов).
+    assert_eq!(p.ops.len(), 16);
     assert_eq!(end_of(&p.ops[3]), [20.0, 20.0, 0.0], "первый пик d1=0");
     assert_eq!(
         end_of(&p.ops[4]),
-        [20.0, 20.0, 2.0],
-        "de-retract min(R, d+Q)=2"
+        [20.0, 20.0, 0.254],
+        "отвод d1+δ=0.254 (ОДИН ход)"
     );
-    assert_eq!(end_of(&p.ops[5]), [20.0, 20.0, 0.5], "подход d1+δ");
-    assert_eq!(end_of(&p.ops[6]), [20.0, 20.0, -2.0], "второй пик");
-    assert_eq!(end_of(&p.ops[7]), [20.0, 20.0, 0.0], "de-retract d2+Q=0");
-    let cyc = notices
-        .iter()
-        .filter(|n| n.kind == NoticeKind::CycleParamAssumed)
-        .count();
-    assert_eq!(cyc, 1);
+    assert_eq!(end_of(&p.ops[5]), [20.0, 20.0, -2.0], "второй пик");
+    assert_eq!(end_of(&p.ops[6]), [20.0, 20.0, -1.746], "отвод d2+δ");
+    assert_eq!(
+        end_of(&p.ops[13]),
+        [20.0, 20.0, -10.0],
+        "последний пик d6=z_bottom"
+    );
+    assert_eq!(end_of(&p.ops[14]), [20.0, 20.0, 2.0], "финал на R (G99)");
+}
+
+#[test]
+fn cycle_g73_probe_structure_r2_q2() {
+    // Зонд-структура 1:1 (probe g73_r2, бриф зеркала v0.18):
+    // R2 Q2 Z−5 → R5,R2,F0,R0.254,F−2,R−1.746,F−4,R−3.746,F−5,R2.
+    // (R5 = traverse на текущем Z, R2 = подход к R-плоскости.)
+    let p = parse("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG73 X10. Y10. Z-5. R2. Q2. F100.;\nM30;\n")
+        .expect("ok");
+    let seq = [5.0, 2.0, 0.0, 0.254, -2.0, -1.746, -4.0, -3.746, -5.0, 2.0];
+    // G0 + 10 ходов развёртки + PEND.
+    assert_eq!(p.ops.len(), seq.len() + 2, "10 ходов зонда + G0 + PEND");
+    for (i, z) in seq.iter().enumerate() {
+        let got = end_of(&p.ops[1 + i])[2];
+        assert!((got - z).abs() <= EPS, "op{} z {got} vs {z}", 1 + i);
+    }
 }
 
 #[test]
@@ -1511,14 +1533,16 @@ fn cycle_g85_bore_feed_out() {
 
 #[test]
 fn cycle_g86_spindle_restart() {
-    // G86: шпиндель off на дне → rapid out при Off → рестарт в исходном
-    // направлении/оборотах (Q9) — в state последующих опов.
+    // G86 (SPEC §7.4a v0.18 — зеркало D): P ОБЯЗАТЕЛЕН (rs274 exit 1 без
+    // него); развёртка FEED → DWELL(P) → STOP_SPINDLE → RAPID-out → рестарт
+    // (Q9) в state последующих опов.
     let p = parse(
-        "G21 G90 G94 G17;\nS1000 M3;\nG0 X10. Y10. Z5.;\nG86 X20. Y20. Z-5. R2. F100.;\nG1 X30. F200.;\nM30;\n",
+        "G21 G90 G94 G17;\nS1000 M3;\nG0 X10. Y10. Z5.;\nG86 X20. Y20. Z-5. R2. P500 F100.;\nG1 X30. F200.;\nM30;\n",
     )
     .expect("ok");
-    // ops: G0, traverse, approach, feed(Cw), rapid-out(Off), linear(Cw), PEND.
-    assert_eq!(p.ops.len(), 7);
+    // ops: G0, traverse, approach, feed(Cw), DWELL(0.5s), rapid-out(Off),
+    // linear(Cw), PEND = 8.
+    assert_eq!(p.ops.len(), 8);
     match &p.ops[3] {
         Op::Linear { state, .. } => {
             assert!(
@@ -1528,6 +1552,14 @@ fn cycle_g86_spindle_restart() {
         _ => panic!("op3 не Linear"),
     }
     match &p.ops[4] {
+        Op::Dwell { seconds, state, .. } => {
+            // bare P500 = 500 мс = 0.5 s; dwell ДО останова шпинделя (Cw).
+            assert!((seconds.value() - 0.5).abs() <= EPS);
+            assert!(matches!(state.spindle, eid_core::ast::Spindle::Cw(_)));
+        }
+        other => panic!("op4 не Dwell: {other:?}"),
+    }
+    match &p.ops[5] {
         Op::Rapid { state, .. } => {
             assert_eq!(
                 state.spindle,
@@ -1535,30 +1567,32 @@ fn cycle_g86_spindle_restart() {
                 "rapid-out при off"
             );
         }
-        _ => panic!("op4 не Rapid"),
+        _ => panic!("op5 не Rapid"),
     }
-    match &p.ops[5] {
+    match &p.ops[6] {
         Op::Linear { state, .. } => {
             assert!(
                 matches!(state.spindle, eid_core::ast::Spindle::Cw(ref n) if (n.value() - 1000.0).abs() <= EPS),
                 "рестарт в исходном направлении+оборотах (Q9)"
             );
         }
-        _ => panic!("op5 не Linear"),
+        _ => panic!("op6 не Linear"),
     }
-    // P dwell в G86 опционален (`?` §10(6)) — легален.
-    let p = parse(
-        "G21 G90 G94 G17;\nS500 M3;\nG0 X10. Y10. Z5.;\nG86 X20. Y20. Z-5. R2. P250. F100.;\nM30;\n",
-    )
-    .expect("G86 с P легален");
-    assert!(matches!(&p.ops[4], Op::Dwell { .. }));
+    // G86 без P — отказ (rs274-сообщение зеркалируется дословно).
+    let Err(d) =
+        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG86 X20. Y20. Z-5. R2. F100.;\nM30;\n")
+    else {
+        panic!("ожидался Err");
+    };
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
+    assert_eq!(d[0].message, "Dwell time p word missing with g86");
 }
 
 #[test]
 fn cycle_g89_bore_dwell() {
     // G89: dwell + отвод на подаче.
     let p =
-        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG89 X20. Y20. Z-5. R2. P100. F100.;\nM30;\n")
+        parse("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG89 X20. Y20. Z-5. R2. P100 F100.;\nM30;\n")
             .expect("ok");
     assert_eq!(p.ops.len(), 7); // G0 + traverse/approach/feed/dwell/feed-out + PEND
     assert!(matches!(&p.ops[4], Op::Dwell { .. }));
@@ -2657,5 +2691,39 @@ fn g92_and_g10_absorb_on_raw_frames() {
             assert!((s[1] - 10.0).abs() <= EPS);
         }
         other => panic!("ops[3] не Rapid: {other:?}"),
+    }
+}
+
+// ===========================================================================
+// Зеркало SPEC §7.4a v0.18 — главный конфирм (бриф п.6)
+// ===========================================================================
+
+#[test]
+fn mirror_v018_golden_cross_check_19_20_21() {
+    // fanuc-парсер обязан давать на v0-файлах #19/#20/#21 те же AST, что
+    // golden.eid (regen от D, rs274-конформный, commit 4705480) —
+    // semantic_diff = 0. Golden-файлы НЕ трогаются (общие, уже v0.18);
+    // источники — linuxcnc-диалект, значения с десятичными точками →
+    // fanuc-DPI verbatim; dotted P → секунды verbatim (v0.18-правило).
+    use eid_core::adapter::{Adapter, EidTextAdapter};
+    use eid_harness::diff::{semantic_diff, DiffConfig};
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_a/v0");
+    for (dir, src_name) in [
+        ("19_peck_G83_retract", "peck_G83_retract.linuxcnc.ngc"),
+        ("20_chipbreak_G73", "chipbreak_G73.linuxcnc.ngc"),
+        ("21_bore_G86_restart", "bore_G86_restart.linuxcnc.ngc"),
+    ] {
+        let source =
+            std::fs::read_to_string(root.join(dir).join(src_name)).expect("v0 source readable");
+        let golden =
+            std::fs::read_to_string(root.join(dir).join("golden.eid")).expect("golden readable");
+        let a = FanucAdapter::new()
+            .parse(&source, src_name)
+            .expect("fanuc parse ok");
+        let b = EidTextAdapter::new()
+            .parse(&golden, "golden.eid")
+            .expect("golden parses");
+        let d = semantic_diff(&a, &b, &DiffConfig::default());
+        assert!(d.is_empty(), "{dir}: divergences: {d:?}");
     }
 }

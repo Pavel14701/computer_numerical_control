@@ -615,10 +615,15 @@ impl<'a> Writer<'a> {
 
     fn op(&mut self, op: &Op, warnings: &mut Vec<String>) -> Result<(), Vec<Diagnostic>> {
         match op {
-            Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
+            Op::Rapid {
+                end, state, sub, ..
+            }
+            | Op::Linear {
+                end, state, sub, ..
+            } => {
                 self.pre_state(state)?;
                 self.check_tool_jump(state, warnings);
-                let f = self.feed_word(state, warnings)?;
+                let f = self.feed_word(state, *sub, warnings)?;
                 let g = match (op, state.frame) {
                     (_, Frame::Machine) => {
                         if matches!(op, Op::Rapid { .. }) {
@@ -647,6 +652,7 @@ impl<'a> Writer<'a> {
                 sweep_deg,
                 pitch,
                 state,
+                sub,
                 ..
             } => {
                 self.pre_state(state)?;
@@ -673,7 +679,7 @@ impl<'a> Writer<'a> {
                         "arc: normal-компонента центра {dn:+.4} не эмитится (каноническая форма требует center ⟂-компоненту = старта); геометрия дуги не меняется"
                     ));
                 }
-                let f = self.feed_word(state, warnings)?;
+                let f = self.feed_word(state, *sub, warnings)?;
                 let g = if *dir == Dir::Cw { "G2" } else { "G3" };
                 // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
                 // grbl/linuxcnc; I/J/K literal X/Y/Z): ровно две in-plane
@@ -792,6 +798,7 @@ impl<'a> Writer<'a> {
     fn feed_word(
         &mut self,
         state: &eid_core::ast::State,
+        sub: Option<u32>,
         warnings: &mut Vec<String>,
     ) -> Result<String, Vec<Diagnostic>> {
         match &state.feed {
@@ -803,7 +810,12 @@ impl<'a> Writer<'a> {
                     None => true,
                     Some(c) => c.value != f.value,
                 };
-                if changed {
+                // F-кадр развёртки (SPEC §7.7-1, зеркало D feed_word): F также
+                // на ПЕРВОМ производном опе каждого цикла (sub == Some(1)) —
+                // иначе повторный F-кадр с тем же значением (G81 F120; G81
+                // F120) теряет маркер кадра при reparse.
+                let first_derived = sub == Some(1);
+                if changed || first_derived {
                     self.cur_feed = Some(f.clone());
                     Ok(format!(" F{}", fmt_num(f.value)))
                 } else {

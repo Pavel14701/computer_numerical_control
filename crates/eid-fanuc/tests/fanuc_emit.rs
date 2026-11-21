@@ -153,6 +153,28 @@ fn golden_feed_delta_on_rapid() {
 }
 
 #[test]
+fn golden_feed_frame_each_cycle_first_op() {
+    // SPEC §7.7-1 (v0.18, зеркало D feed_word `changed || sub==Some(1)`):
+    // F эмитится на ПЕРВОМ производном опе КАЖДОГО цикла — повторный F-кадр
+    // с тем же значением (G81 F120; G81 F120) не теряет маркер кадра при
+    // reparse (оба traverse с F, не только первый).
+    let text = emit_fanuc(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG81 X10. Y0. Z-5. R1. F120.;\nG81 X20. Y0. Z-5. R1. F120.;\nM30;\n",
+    );
+    // traverse второго цикла — на ТЕКУЩЕМ Z (1, не 2; §7.7); маркер F-кадра:
+    // только traverse-строки несут F (отводы/подходы — не first-derived).
+    let traverses: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("G0 X10.") || l.starts_with("G0 X20."))
+        .filter(|l| l.ends_with("F120.0000"))
+        .collect();
+    assert_eq!(traverses.len(), 2, "оба traverse: {text:?}");
+    for t in &traverses {
+        assert!(t.ends_with("F120.0000"), "{t}");
+    }
+}
+
+#[test]
 fn golden_decimal_point_always() {
     // DPI-ловушка: bare-integer источник X25 (DPI=0 → 0.025 mm) эмитится
     // С ТОЧКОЙ ВСЕГДА — `X0.0250`, не `X25` (bare X25 Fanuc прочитал бы
@@ -728,7 +750,6 @@ fn illegal_program_end_not_last() {
     // НЕ-Raw опыт после PEND → отказ (SPEC §3; порядок: core-verify первый —
     // E_INVALID_INPUT; условие program_end_not_last в таблице — defensive).
     // Raw-хвост после PEND, напротив, легален (legal_raw_tail_after_pend).
-    let p = parse_fanuc("G21 G90 G94 G17;\nM30;\nG0 X0. Y0. Z5.;\n");
     // Парсер: хвост после PEND → Raw-хвост (ruling 1) — этот случай теперь
     // ЛЕГАЛЕН; для негатива — hand-built AST с Rapid после PEND.
     let mut p2 = parse_fanuc("G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nM30;\n");
@@ -819,7 +840,7 @@ fn roundtrip_full_fixed_point() {
 #[test]
 fn roundtrip_cycle_unroll() {
     roundtrip(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG83 X10. Y0. Z-15. R1. Q3. F150.;\nG82 X20. Y0. Z-10. R1. P400. F120.;\nM30;\n",
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG83 X10. Y0. Z-15. R1. Q3. F150.;\nG82 X20. Y0. Z-10. R1. P400 F120.;\nM30;\n",
         "cycles",
     );
 }

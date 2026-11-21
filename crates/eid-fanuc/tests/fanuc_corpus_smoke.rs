@@ -98,10 +98,10 @@ fn smoke_17_fanuc_corpus_files() {
                 let ad = FanucAdapter::new();
                 let t1 = ad
                     .emit(&program)
-                    .expect(&format!("{}: emit crashed", e.path));
+                    .unwrap_or_else(|diags| panic!("{}: emit crashed: {diags:?}", e.path));
                 let t2 = ad
                     .emit(&program)
-                    .expect(&format!("{}: emit#2 crashed", e.path));
+                    .unwrap_or_else(|diags| panic!("{}: emit#2 crashed: {diags:?}", e.path));
                 assert_eq!(t1, t2, "{}: emit недетерминирован", e.path);
                 ok += 1;
                 println!(

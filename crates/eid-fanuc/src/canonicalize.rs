@@ -19,7 +19,9 @@
 //! * циклы (§5 отчёта — Fanuc-семантика, НЕ LinuxCNC-константы):
 //!   развёртка G81/G82/G83/G73/G85/G86/G89 по канон-шаблону §7.7 SPEC
 //!   (traverse+approach НЕ сливать; F кадра — на все производные опы);
-//!   P dwell = целые мс → секунды; G73/G83 δ = 0.5mm + W_CYCLE_PARAM_ASSUMED;
+//!   P dwell = целые мс → секунды (dotted P → секунды verbatim, v0.18);
+//!   G73/G83 δ = 0.254mm/0.01in unit-scaled (SPEC §7.4a v0.18, зонд rs274 —
+//!   зеркало D; прежде 0.5mm + W_CYCLE_PARAM_ASSUMED — упразднено);
 //!   G86 — шпиндель off на дне + рестарт в исходном направлении (Q9);
 //!   G84/G74/G76/G87/G88 → Raw{SEMANTICS}; K/L-повторы; K0/L0 в G91 →
 //!   Raw{SEMANTICS}; дефолт retract = G99 (§7.5a); G98/цикл требует
@@ -95,9 +97,6 @@ pub enum NoticeKind {
     /// W_DPI_ASSUMED (анализ §1.2 ловушка №1): bare-integer в слове дробного
     /// домена прочитан по DPI=0 (× least increment); F — verbatim (ruling 2).
     DpiAssumed,
-    /// W_CYCLE_PARAM_ASSUMED (анализ §5.3/§5.4): δ (clearance G73/G83) —
-    /// станочный параметр вне текста; канон-константа 0.5mm (SPEC §7.4a).
-    CycleParamAssumed,
     /// W_MODAL_ON_RAW (SPEC §8.6 правило 6, v0.17 — критический аудит #33):
     /// raw-motion-G (G33/G84/G28…) с осями — модальное состояние абсорбировано,
     /// но motion-режим НЕ продолжается (ход не представим) — notice.
@@ -159,14 +158,18 @@ fn least_increment(units: Units) -> f64 {
     }
 }
 
-/// Константа подхода пеков δ (SPEC §7.4a v0.14.1 — профиль НЕ переопределяет;
-/// Fanuc: станочный параметр 5100-серии → канон-константа + notice, ruling 3
-/// брифа этап 2b). 0.5 mm / 0.05 inch — как LinuxCNC-канон.
+/// Клиренс пека (SPEC §7.4a v0.18, зонд-сверка rs274 — зеркало референса D,
+/// eid-linuxcnc parser.rs commit 4705480): 0.01in unit-scaled — **0.254 mm**
+/// в G21, ровно **0.0100 in** в G20. Прежние 0.5mm/0.05in (v0.14) не
+/// подтверждаются интерпретатором (probe `g83_inch` — RETRACT_CLEARANCE
+/// ровно 0.0100 in). Константа канонизатора, профилем НЕ переопределяется
+/// (v0.14.1 в силе); notice W_CYCLE_PARAM_ASSUMED упразднён вместе с
+/// «параметр-пресумпцией» — константа зонда-подтверждена.
 fn approach_clearance(units: Units) -> f64 {
     if units == Units::In {
-        0.05
+        0.01
     } else {
-        0.5
+        0.254
     }
 }
 
@@ -2202,8 +2205,15 @@ fn cycle_block(
         cyc.q = Some(ctx.dpi_num('Q', w).value());
     }
     if let Some(w) = b.word('P') {
-        // P dwell — целые миллисекунды (§1.2) → секунды при канонизации.
-        cyc.p_s = Some(w.value / 1000.0);
+        // P dwell цикла: bare P — целые МИЛЛИСЕКУНДЫ (Fanuc-контракт, §1.2:
+        // P500 = 0.5 s); dotted P (сломанная для Fanuc форма, alarm на
+        // контроллере) — СЕКУНДЫ verbatim — rs274/LinuxCNC-совместимое
+        // чтение (SPEC §7.4a v0.18, зеркало D: golden #21 P1.0 → 1.0 s).
+        cyc.p_s = Some(if w.has_point {
+            w.value
+        } else {
+            w.value / 1000.0
+        });
     }
     let k = repeat_count(ctx, b)?;
     ctx.cycle = Some(cyc.clone());
@@ -2234,12 +2244,14 @@ fn repeat_count(ctx: &Ctx, b: &Block) -> Result<u32, Vec<Diagnostic>> {
     Ok(w.value as u32)
 }
 
-/// Развёртывание цикла (SPEC §7.7 канон-шаблон; Fanuc-семантика §5 отчёта).
+/// Развёртывание цикла (SPEC §7.7 канон-шаблон; SPEC §7.4a v0.18 — зеркало D).
 /// Последовательность на отверстие (L/K → повтор всей последовательности):
 /// 1. RAPID traverse к отверстию НА ТЕКУЩЕМ Z (не сливать с подходом);
 /// 2. RAPID подход к R-плоскости;
-/// 3. LINEAR feed на дно; [DWELL P-мс]; [пеки G83/G73: δ = 0.5mm + notice];
-///    [G86: шпиндель off];
+/// 3. LINEAR feed на дно; [DWELL P (G82/G86/G89 — обязателен)];
+///    [пеки G83/G73: депеки R−kQ; G83 — отвод на R + подход d+δ;
+///    G73 — одиночный rapid d+δ; δ = 0.254mm/0.01in unit-scaled];
+///    [G86: DWELL перед отводом, шпиндель off];
 /// 4. retract: G99 → RAPID (R); G98 → RAPID (initial Z); G85/G89 — отвод на
 ///    подаче; G86 — rapid при шпинделе off, рестарт в исходном направлении
 ///    (Q9) — в state последующих опов.
@@ -2305,7 +2317,9 @@ fn unroll_cycle(
         )
     })?;
 
-    // Dwell: G82/G89 — P обязателен; G86 — опционален (`?` §10(6)).
+    // Dwell: G82/G89 — P обязателен; G86 — P обязателен (SPEC §7.4a v0.18:
+    // rs274 отказывает на G86 без P — exit 1, сообщение зеркалируется
+    // дословно; прежнее «опционален `?` §10(6)» — закрыто).
     let dwell = match cyc.kind {
         CycleKind::DrillDwell | CycleKind::BoreDwell => Some(cyc.p_s.ok_or_else(|| {
             fl(
@@ -2313,7 +2327,12 @@ fn unroll_cycle(
                 "cycle G82/G89 without P word (dwell, integer ms per Fanuc)".into(),
             )
         })?),
-        CycleKind::BoreStop => cyc.p_s,
+        CycleKind::BoreStop => Some(cyc.p_s.ok_or_else(|| {
+            fl(
+                ErrorCode::InvalidInput,
+                "Dwell time p word missing with g86".into(),
+            )
+        })?),
         _ => None,
     };
     // Q: G73/G83 — обязателен, строго > 0 (иначе бесконечные пеки).
@@ -2348,10 +2367,6 @@ fn unroll_cycle(
     let spindle_before = ctx.spindle.clone(); // рестарт G86 (Q9)
     let units = ctx.modal.units;
     let mut est_total = 0usize; // guard blowup развёртки (COVERAGE §1.2)
-
-    // δ notice (ruling 2b-брифа): станочный параметр вне текста → константа.
-    let peck = matches!(cyc.kind, CycleKind::Peck | CycleKind::ChipBreak);
-    let mut first_pushed: Option<(usize, Op)> = None;
 
     for _ in 0..k {
         let (fx, fy) = (cx, cy); // позиция ДО шага — оттуда traverse
@@ -2389,9 +2404,6 @@ fn unroll_cycle(
             sub: Some(sub),
         };
         push_cycle_move(ctx, traverse.clone());
-        if first_pushed.is_none() {
-            first_pushed = Some((ctx.ops.len() - 1, traverse));
-        }
         sub += 1;
         // 2. подход к R-плоскости — отдельный оп (§7.7 #2); при cz == r_cur
         // (после отвода предыдущего отверстия) — zero-length → drop+notice.
@@ -2447,18 +2459,26 @@ fn unroll_cycle(
                 }
             }
             CycleKind::Peck | CycleKind::ChipBreak => {
-                // §7.4a: порядок пиков точный. Глубины пеков — от R-плоскости
-                // вниз шагами Q: d_k = max(z_bottom, r_cur − k·q); G83 —
-                // полный отвод на R после каждого пека; G73 — отвод на Q над
-                // последней глубиной; подход — rapid на δ над последней
-                // глубиной (δ = станочный параметр → 0.5mm + notice).
+                // §7.4a (v0.18, зонд-сверка rs274 — зеркало D): порядок пиков
+                // точный. Депеки ОБА цикла — расписание G83: глубины от
+                // R-плоскости вниз шагами Q до z_bottom:
+                // d_k = max(z_bottom, r_cur − k·q). Промежуточный отвод:
+                // G83 — полный отвод на R, затем подход rapid на d+клиренс;
+                // G73 — ОДИН rapid на d+клиренс (модели «de-retract
+                // min(R, d+Q) + отдельный подход» в интерпретаторе НЕТ;
+                // probe `g73_r2`: депеки R−Q…, отводы d+0.254, финал на R;
+                // −2 опа на цикл против прежней модели). Финальный отвод —
+                // общий ниже (G99 → R, G98 → initZ).
                 let q = q.expect("пекерующий цикл без Q (проверено выше)");
                 let t = r_cur - z_bottom;
                 let mut n = if t > 0.0 { (t / q).ceil() as u64 } else { 0 };
                 if n == 0 {
                     n = 1;
                 }
-                let est = 2 + 3 * n as usize + 1;
+                // est: traverse+подход (2) + на пек: feed + отводы (G83 —
+                // retract R и подход: 3; G73 — одиночный rapid: 2) + финал (1).
+                let ops_per_peck = if cyc.kind == CycleKind::Peck { 3 } else { 2 };
+                let est = 2 + ops_per_peck * n as usize + 1;
                 est_total += est;
                 if est_total as u64 > MAX_UNROLL_ITERATIONS {
                     return Err(vec![limit_err(
@@ -2481,36 +2501,24 @@ fn unroll_cycle(
                     if kk == n {
                         break; // финальный отвод — общий ниже (§7.1)
                     }
-                    match cyc.kind {
-                        CycleKind::Peck => {
-                            // полный отвод на R (SPEC §7 таблица)
-                            let op = Op::Rapid {
-                                start: StartPoint::Known(pt(cx, cy, cz)),
-                                end: pt(cx, cy, r_cur),
-                                state: ctx.state(),
-                                src: src.clone(),
-                                sub: Some(sub),
-                            };
-                            push_cycle_move(ctx, op);
-                            sub += 1;
-                            cz = r_cur;
-                        }
-                        _ => {
-                            // G73: отвод на Q над последней глубиной (≤ R)
-                            let up = (d + q).min(r_cur);
-                            let op = Op::Rapid {
-                                start: StartPoint::Known(pt(cx, cy, cz)),
-                                end: pt(cx, cy, up),
-                                state: ctx.state(),
-                                src: src.clone(),
-                                sub: Some(sub),
-                            };
-                            push_cycle_move(ctx, op);
-                            sub += 1;
-                            cz = up;
-                        }
+                    // G83: полный отвод на R (SPEC §7.4a). G73 (v0.18):
+                    // единственный промежуточный ход — подход ниже;
+                    // «de-retract min(R, d+Q)» в интерпретаторе не существует.
+                    if cyc.kind == CycleKind::Peck {
+                        let op = Op::Rapid {
+                            start: StartPoint::Known(pt(cx, cy, cz)),
+                            end: pt(cx, cy, r_cur),
+                            state: ctx.state(),
+                            src: src.clone(),
+                            sub: Some(sub),
+                        };
+                        push_cycle_move(ctx, op);
+                        sub += 1;
+                        cz = r_cur;
                     }
-                    // подход: rapid на δ над последней глубиной (≤ R)
+                    // подход: одиночный rapid на клиренс над последней
+                    // глубиной (≤ R); для G73 — единственный промежуточный
+                    // отвод; для G83 — второй ход после отвода на R.
                     let appr = (d + clr).min(r_cur);
                     let op = Op::Rapid {
                         start: StartPoint::Known(pt(cx, cy, cz)),
@@ -2576,22 +2584,6 @@ fn unroll_cycle(
             }
         }
         cz = retract;
-    }
-
-    // δ-notice (ruling 2b): W_CYCLE_PARAM_ASSUMED на первый оп развёртки.
-    if peck {
-        if let Some((idx, op)) = first_pushed {
-            ctx.notices.push(Notice {
-                kind: NoticeKind::CycleParamAssumed,
-                message: format!(
-                    "W_CYCLE_PARAM_ASSUMED: {} approach clearance δ = machine parameter (5100-series `?`) assumed {} mm — value outside program text (analysis §5.3/§5.4; affects traverse only, cut geometry identical)",
-                    if cyc.kind == CycleKind::Peck { "G83" } else { "G73" },
-                    approach_clearance(units)
-                ),
-                op_index: idx,
-                op,
-            });
-        }
     }
 
     // last: конечная позиция развёртки (связывание следующего опа).
