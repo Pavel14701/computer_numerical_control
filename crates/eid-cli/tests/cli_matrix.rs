@@ -527,15 +527,19 @@ fn cli_verify_zero_flood_ok() {
 }
 
 #[test]
-fn cli_verify_program_end_missing() {
-    // программа без M2: stage отказа — parse или mock-sim (парсер вправе
-    // отвергнуть раньше), контракт CLI — exit 1
+fn cli_verify_program_end_autopend_ok() {
+    // SPEC v0.16: программа без M2/M30 валидна — canonicalizer auto-PEND +
+    // W_MISSING_PROGRAM_END notice; verify проходит (0)
     let no_end = write_tmp(
         "no_end.ngc",
         "G21 G90 G94 G17\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X2.0000 F100.0\n",
     );
     let prof = grbl_profile();
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&no_end)]), 1);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&no_end)]),
+        0,
+        "auto-PEND (SPEC v0.16): отсутствие program_end — notice, не отказ"
+    );
 }
 
 #[test]

@@ -59,7 +59,9 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
         ..SimReport::default()
     };
 
-    // --- program_end: ровно один и последний (SPEC §3) ----------------------
+    // --- program_end: ровно один и последний (SPEC §3 v0.16: auto-PEND —
+    // отсутствующий end canonicalizer вставляет сам; ветка defensive для
+    // hand-built/нормализованных AST, через parse недостижима) ---------------
     // Ошибки structural-проверок тегируются этапом verify (MLIR-урок,
     // interface v0.1.2: диагностика с привязкой к этапам).
     let end_count = program

@@ -3,7 +3,7 @@
 - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)
 - corpus: `v0.1-pilot` (векторов: 68)
 - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)
-- сводка runner: Pass = 346, Fail = 0, Pending = 0, Skipped = 2
+- сводка runner: Pass = 344, Fail = 2, Pending = 0, Skipped = 2
 
 ## Отказы по этапам (Diagnostic.stage, interface v0.1.2)
 
@@ -13,12 +13,12 @@
 | Canonicalize | 0 |
 | Verify | 0 |
 | Emit | 0 |
-| не-диагностический | 0 |
+| не-диагностический | 2 |
 
 ## Tier B — parse-or-diagnose
 
-- файлов: 92, Ok: 15, no-adapter: 6, panics: 0
-- отказы по классам: E_INVALID_INPUT × 39, E_RUNTIME_STATE × 7, E_UNSUPPORTED_SYNTAX × 25
+- файлов: 92, Ok: 29, no-adapter: 6, panics: 0
+- отказы по классам: E_INVALID_INPUT × 25, E_RUNTIME_STATE × 7, E_UNSUPPORTED_SYNTAX × 25
 - crash-free: true
 
 ## Счётчики по отношениям
@@ -31,7 +31,7 @@
 | R3-consistency | 35 | 0 | 0 | 0 |
 | R1-text | 8 | 0 | 0 | 0 |
 | R4 | 8 | 0 | 0 | 2 |
-| parse | 116 | 0 | 0 | 0 |
+| parse | 114 | 2 | 0 | 0 |
 
 ## Покрытие R3 (CORPUS v0.6)
 
@@ -47,18 +47,10 @@ R3 (any-to-any) доказывается ТОЛЬКО на материализ�
 - `R4` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc→grbl-1.1` | ожидалось: emit отказ E_RAW_UNTRANSLATABLE | фактически: Skipped: same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)
 - `R4` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc→linuxcnc` | ожидалось: emit отказ E_RAW_UNTRANSLATABLE | фактически: Skipped: same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)
 
+### N14 — program_end_missing
 
-## ФОРМАЛЬНОЕ ЗАКРЫТИЕ — ИТЕРАЦИЯ 5 ЗАКРЫТА
-
-- 68 векторов: 48 позитивов / 20 негативов (invalid_cases);
-- R3 (any-to-any) — 48/48 (покрытие полное, отсутствующих нет);
-- two-class negatives — 20/20 (Err-класс: код == expect; line-level: Ok + diagnostics);
-- R1-text — 8 Pass, включая #47 (payload 24240D0A, D9-терминатор) и N3/N9;
-- Tier B — 92 файла parse-or-diagnose, crash=0, отказы по классам;
-- фаззер итерации 5: 0 паник (byte-level), 18 находок — уточнения мутаторов/метаморфные кандидаты (CORPUS §2.1);
-- eq4-матрица — 15 тестов EQUIVALENCE §4 × within/out;
-- R4-ожидания (r4-отказы #27/#47, warning-цели #40/#41/#45, lossy-класс #41/#45) — зелёные;
-- красных нет.
+- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n14_program_end_missing/program_end_missing.grbl.ngc` | ожидалось: отказ E_INVALID_INPUT | фактически: Fail: expected refusal E_INVALID_INPUT, parsed ok (правило двух классов: структурный негатив не может быть Ok)
+- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n14_program_end_missing/program_end_missing.linuxcnc.ngc` | ожидалось: отказ E_INVALID_INPUT | фактически: Fail: expected refusal E_INVALID_INPUT, parsed ok (правило двух классов: структурный негатив не может быть Ok)
 
 === EXTENDED FUZZ RUN (итерация 5) ===
 M-петля: 20 seeds (200–219) × 17 операторов; находок 87
