@@ -90,16 +90,25 @@ fn emit_state(st: &State, errors: &mut Vec<Diagnostic>) -> String {
         (false, true) => "mist",
         (true, true) => "flood+mist",
     };
-    let tool = st.tool.map(|t| t.to_string()).unwrap_or_else(|| "none".into());
+    let tool = st
+        .tool
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| "none".into());
     let frame = match st.frame {
         Frame::Wcs => "wcs",
         Frame::Machine => "machine",
     };
-    format!("feed={feed} spindle={spindle} coolant={coolant} tool={tool} frame={frame} wcs={}", parser::wcs_to_str(st.wcs))
+    format!(
+        "feed={feed} spindle={spindle} coolant={coolant} tool={tool} frame={frame} wcs={}",
+        parser::wcs_to_str(st.wcs)
+    )
 }
 
 fn emit_src(src: &SrcSpan) -> String {
-    format!("{}.{}-{}.{}", src.line_start, src.col_start, src.line_end, src.col_end)
+    format!(
+        "{}.{}-{}.{}",
+        src.line_start, src.col_start, src.line_end, src.col_end
+    )
 }
 
 fn emit_sub(sub: &Option<u32>) -> String {
@@ -147,9 +156,10 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
         PathMode::ExactStop => out.push_str("PATH_MODE exact_stop\n"),
         // grammar v0.3: blend [ SP "t=" number ] — bare G64 легален (A1)
         PathMode::Blend { t: None } => out.push_str("PATH_MODE blend\n"),
-        PathMode::Blend { t: Some(n) } => {
-            out.push_str(&format!("PATH_MODE blend t={}\n", emit_num(n, &mut errors, "path_mode.t")))
-        }
+        PathMode::Blend { t: Some(n) } => out.push_str(&format!(
+            "PATH_MODE blend t={}\n",
+            emit_num(n, &mut errors, "path_mode.t")
+        )),
     }
 
     match &program.frame_preset {
@@ -185,7 +195,13 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
 
 fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
     match op {
-        Op::Rapid { start, end, state, src, sub } => {
+        Op::Rapid {
+            start,
+            end,
+            state,
+            src,
+            sub,
+        } => {
             out.push_str("RAPID start=");
             emit_start(start, out, errors);
             out.push_str(&format!(
@@ -196,7 +212,13 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             ));
             out.push_str(&emit_state(state, errors));
         }
-        Op::Linear { start, end, state, src, sub } => {
+        Op::Linear {
+            start,
+            end,
+            state,
+            src,
+            sub,
+        } => {
             out.push_str("LINEAR start=");
             emit_start(start, out, errors);
             out.push_str(&format!(
@@ -207,7 +229,18 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             ));
             out.push_str(&emit_state(state, errors));
         }
-        Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state, src, sub } => {
+        Op::Arc {
+            start,
+            end,
+            center,
+            normal,
+            dir,
+            sweep_deg,
+            pitch,
+            state,
+            src,
+            sub,
+        } => {
             out.push_str("ARC start=");
             emit_start(start, out, errors);
             out.push_str(&format!(
@@ -215,7 +248,10 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
                 emit_vec(end, errors, "arc.end"),
                 emit_vec(center, errors, "arc.center"),
                 emit_vec(normal, errors, "arc.normal"),
-                match dir { Dir::Cw => "cw", Dir::Ccw => "ccw" },
+                match dir {
+                    Dir::Cw => "cw",
+                    Dir::Ccw => "ccw",
+                },
                 emit_num(sweep_deg, errors, "arc.sweep"),
                 emit_num(pitch, errors, "arc.pitch"),
                 emit_src(src),
@@ -223,7 +259,12 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             ));
             out.push_str(&emit_state(state, errors));
         }
-        Op::Dwell { seconds, state, src, sub } => {
+        Op::Dwell {
+            seconds,
+            state,
+            src,
+            sub,
+        } => {
             out.push_str(&format!(
                 "DWELL seconds={} src={}{} ",
                 emit_num(seconds, errors, "dwell.seconds"),
@@ -237,7 +278,11 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             out.push_str(&format!("TOOL_CHANGE tool={tool} src={} ", emit_src(src)));
             out.push_str(&emit_state(state, errors));
         }
-        Op::ProgramStop { optional, state, src } => {
+        Op::ProgramStop {
+            optional,
+            state,
+            src,
+        } => {
             out.push_str(&format!(
                 "STOP optional={} src={} ",
                 if *optional { "yes" } else { "no" },
@@ -248,7 +293,12 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
         Op::ProgramEnd { .. } => {
             out.push_str("PEND"); // state нет — D6
         }
-        Op::WcsDefine { p, origin, state, src } => {
+        Op::WcsDefine {
+            p,
+            origin,
+            state,
+            src,
+        } => {
             out.push_str(&format!(
                 "WCS_DEFINE p={p} origin={} src={} ",
                 emit_vec(origin, errors, "wcs_define.origin"),
@@ -256,7 +306,12 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             ));
             out.push_str(&emit_state(state, errors));
         }
-        Op::WcsSetHere { p, delta, state, src } => {
+        Op::WcsSetHere {
+            p,
+            delta,
+            state,
+            src,
+        } => {
             out.push_str(&format!(
                 "WCS_SET_HERE p={p} delta={} src={} ",
                 emit_vec(delta, errors, "wcs_set_here.delta"),
@@ -264,7 +319,12 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
             ));
             out.push_str(&emit_state(state, errors));
         }
-        Op::Raw { payload_hex, reason, code, src } => {
+        Op::Raw {
+            payload_hex,
+            reason,
+            code,
+            src,
+        } => {
             // D6: state нет. D9: payload hex, lossless, чётная длина.
             // grammar v0.4: экранирование \" и \\ (аудит #12); NL/CR в quoted
             // непредставимы (одна физическая строка на оп) — отказ.

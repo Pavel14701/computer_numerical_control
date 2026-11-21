@@ -16,16 +16,29 @@ fn n(v: f64) -> Num {
     Num::new(fmt_num(v), v)
 }
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 { x: n(x), y: n(y), z: n(z) }
+    Point3 {
+        x: n(x),
+        y: n(y),
+        z: n(z),
+    }
 }
 fn src() -> SrcSpan {
-    SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }
+    SrcSpan {
+        file: "t".into(),
+        line_start: 0,
+        col_start: 1,
+        line_end: 0,
+        col_end: 0,
+    }
 }
 fn st(feed: Option<f64>, wcs: Wcs, frame: Frame) -> State {
     State {
         feed: feed.map(n),
         spindle: Spindle::Off,
-        coolant: Coolant { flood: false, mist: false },
+        coolant: Coolant {
+            flood: false,
+            mist: false,
+        },
         tool: None,
         frame,
         wcs,
@@ -44,13 +57,34 @@ fn pend() -> Op {
     Op::ProgramEnd { src: src() }
 }
 fn rapid(start: StartPoint, end: Point3, s: State) -> Op {
-    Op::Rapid { start, end, state: s, src: src(), sub: None }
+    Op::Rapid {
+        start,
+        end,
+        state: s,
+        src: src(),
+        sub: None,
+    }
 }
 fn linear(start: StartPoint, end: Point3, s: State) -> Op {
-    Op::Linear { start, end, state: s, src: src(), sub: None }
+    Op::Linear {
+        start,
+        end,
+        state: s,
+        src: src(),
+        sub: None,
+    }
 }
 #[allow(clippy::too_many_arguments)]
-fn arc(start: StartPoint, end: Point3, center: Point3, normal: Point3, dir: Dir, sweep: f64, pitch: f64, s: State) -> Op {
+fn arc(
+    start: StartPoint,
+    end: Point3,
+    center: Point3,
+    normal: Point3,
+    dir: Dir,
+    sweep: f64,
+    pitch: f64,
+    s: State,
+) -> Op {
     Op::Arc {
         start,
         end,
@@ -89,7 +123,11 @@ fn spec_3_pend_invariants_three_modes() {
         // режим 1: текст → parse
         let ds = parser::parse(&text, "t").unwrap_err();
         assert!(!ds.is_empty(), "{ctx}");
-        assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify), "{ctx}: {ds:?}");
+        assert!(
+            ds.iter()
+                .all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify),
+            "{ctx}: {ds:?}"
+        );
         // режим 2: AST → validate
         let raw = parser::parse_raw(&text, "t").unwrap();
         let ds2 = verify::validate(&raw);
@@ -98,16 +136,24 @@ fn spec_3_pend_invariants_three_modes() {
         // (мутант-инверсия !ops.is_empty() иначе переживает общий не-empty).
         if *ctx == "no PEND" {
             assert!(
-                ds2.iter().any(|d| d.message.contains("missing program_end")),
+                ds2.iter()
+                    .any(|d| d.message.contains("missing program_end")),
                 "{ctx}: нет missing-PEND диагностики: {ds2:?}"
             );
         }
-        assert!(ds2.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify), "{ctx}");
+        assert!(
+            ds2.iter()
+                .all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify),
+            "{ctx}"
+        );
         // режим 3: AST → validate_with_notices (diagnostics, notices пусты —
         // PEND-нарушения не drop)
         let rep = verify::validate_with_notices(&raw);
         assert!(!rep.diagnostics.is_empty(), "{ctx}");
-        assert!(rep.notices.is_empty(), "{ctx}: PEND violations must not drop ops");
+        assert!(
+            rep.notices.is_empty(),
+            "{ctx}: PEND violations must not drop ops"
+        );
     }
     // позитив: минимальная программа валидна во всех 3 режимах
     let ok_text = format!("{HDR}OP 001 PEND\nEND\n");
@@ -135,23 +181,40 @@ fn spec_3_feed_final_ast() {
         pend(),
     ]);
     let ds = verify::validate(&p);
-    assert!(ds.iter().any(|d| d.message.contains("linear with feed=none")), "{ds:?}");
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("linear with feed=none")),
+        "{ds:?}"
+    );
     // позитив: тот же оп с feed — чисто
-    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), feed_st.clone()), pend()]);
+    let p = program(vec![
+        linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), feed_st.clone()),
+        pend(),
+    ]);
     assert!(verify::validate(&p).is_empty());
     // позитив (после отбрасывания): zero-length linear feed=none → drop+notice,
     // feed-ошибки НЕТ (проверка feed — по итоговому AST)
     let p = program(vec![
-        linear(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), nofeed_st.clone()),
+        linear(
+            StartPoint::Known(p3(1.0, 0.0, 0.0)),
+            p3(1.0, 0.0, 0.0),
+            nofeed_st.clone(),
+        ),
         pend(),
     ]);
     let rep = verify::validate_with_notices(&p);
-    assert!(rep.diagnostics.is_empty(), "feed must not fire on dropped op: {:#?}", rep.diagnostics);
+    assert!(
+        rep.diagnostics.is_empty(),
+        "feed must not fire on dropped op: {:#?}",
+        rep.diagnostics
+    );
     assert_eq!(rep.notices.len(), 1);
     // reject-режим (эмиссия): zero-length диагностика + (оп оставлен →) feed
     let ds = verify::validate(&p);
     assert!(ds.iter().any(|d| d.message.contains("must be dropped")));
-    assert!(ds.iter().any(|d| d.message.contains("linear with feed=none")));
+    assert!(ds
+        .iter()
+        .any(|d| d.message.contains("linear with feed=none")));
 }
 
 // ===========================================================================
@@ -162,8 +225,16 @@ fn spec_3_feed_final_ast() {
 fn spec_3_zero_length_all_kinds_with_preset() {
     // программа с G92-пресеткой: drop-семантика не зависит от пресетки
     let mut p = program(vec![
-        rapid(StartPoint::Known(p3(1.0, 0.0, 5.0)), p3(1.0, 0.0, 5.0), st(None, Wcs::G54, Frame::Wcs)),
-        linear(StartPoint::Known(p3(1.0, 0.0, 5.0)), p3(1.0, 0.0, 5.0), st(Some(100.0), Wcs::G54, Frame::Wcs)),
+        rapid(
+            StartPoint::Known(p3(1.0, 0.0, 5.0)),
+            p3(1.0, 0.0, 5.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        linear(
+            StartPoint::Known(p3(1.0, 0.0, 5.0)),
+            p3(1.0, 0.0, 5.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
         arc(
             StartPoint::Known(p3(1.0, 0.0, 5.0)),
             p3(1.0, 0.0, 5.0),
@@ -174,10 +245,18 @@ fn spec_3_zero_length_all_kinds_with_preset() {
             0.0,
             st(Some(100.0), Wcs::G54, Frame::Wcs),
         ),
-        Op::Dwell { seconds: n(0.0), state: st(None, Wcs::G54, Frame::Wcs), src: src(), sub: None },
+        Op::Dwell {
+            seconds: n(0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
         pend(),
     ]);
-    p.frame_preset = Some(FramePreset { values: p3(0.0, 0.0, 5.0), wcs: Wcs::G54 });
+    p.frame_preset = Some(FramePreset {
+        values: p3(0.0, 0.0, 5.0),
+        wcs: Wcs::G54,
+    });
     let rep = verify::validate_with_notices(&p);
     assert!(rep.diagnostics.is_empty(), "{:#?}", rep.diagnostics);
     assert_eq!(rep.notices.len(), 4, "{:#?}", rep.notices);
@@ -189,7 +268,12 @@ fn spec_3_zero_length_all_kinds_with_preset() {
     assert_eq!(rep.kept_ops.len(), 1);
     // reject-режим: 4 диагностики zero-length
     let ds = verify::validate(&p);
-    assert_eq!(ds.iter().filter(|d| d.message.contains("must be dropped")).count(), 4);
+    assert_eq!(
+        ds.iter()
+            .filter(|d| d.message.contains("must be dropped"))
+            .count(),
+        4
+    );
     // parse-путь (текст) даёт те же notices
     let _ = &mut p;
 }
@@ -203,7 +287,11 @@ fn spec_3_full_circle_sweep360_kept() {
     // Позиция якорится первым rapid (unknown → (0,0,0)), иначе Known-старт
     // дуги — вне точки разрыва. Позитив: start == end, sweep = 360°, pitch = 0
     // → полный круг, kept, геометрия сходится (Rot(360°) = identity)
-    let anchor = rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs));
+    let anchor = rapid(
+        StartPoint::Unknown,
+        p3(0.0, 0.0, 0.0),
+        st(None, Wcs::G54, Frame::Wcs),
+    );
     let p = program(vec![
         anchor.clone(),
         arc(
@@ -219,7 +307,11 @@ fn spec_3_full_circle_sweep360_kept() {
         pend(),
     ]);
     let rep = verify::validate_with_notices(&p);
-    assert!(rep.notices.is_empty(), "sweep=360 must NOT be dropped: {:#?}", rep.notices);
+    assert!(
+        rep.notices.is_empty(),
+        "sweep=360 must NOT be dropped: {:#?}",
+        rep.notices
+    );
     assert!(rep.diagnostics.is_empty(), "{:#?}", rep.diagnostics);
     assert_eq!(rep.kept_ops.len(), 3);
     // негатив: тот же ход при sweep = 359° — нулевой ход → drop+notice
@@ -266,11 +358,17 @@ fn spec_3_q11_breakpoint_matrix() {
         let pr = preset.unwrap_or("FRAME_PRESET none");
         format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\n{pr}\n{ops}END\n")
     };
-    let ok = |text: &str, ctx: &str| parser::parse(text, "t").unwrap_or_else(|ds| panic!("{ctx}: {ds:#?}"));
+    let ok = |text: &str, ctx: &str| {
+        parser::parse(text, "t").unwrap_or_else(|ds| panic!("{ctx}: {ds:#?}"))
+    };
     let err = |text: &str, ctx: &str| {
         let ds = parser::parse(text, "t").unwrap_err();
         assert!(!ds.is_empty(), "{ctx}");
-        assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify), "{ctx}: {ds:?}");
+        assert!(
+            ds.iter()
+                .all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify),
+            "{ctx}: {ds:?}"
+        );
     };
 
     // (a) первый motion без якоря
@@ -326,14 +424,34 @@ fn spec_3_q11_breakpoint_matrix() {
 fn spec_5_d4_tool_mismatch() {
     // негатив: op-поле tool= != state.tool → E_INVALID_INPUT
     let p = program(vec![
-        Op::ToolChange { tool: 3, state: st(None, Wcs::G54, Frame::Wcs), src: src() },
+        Op::ToolChange {
+            tool: 3,
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
         pend(),
     ]);
     let ds = verify::validate(&p);
-    assert!(ds.iter().any(|d| d.message.contains("(D4)") && d.code == ErrorCode::InvalidInput));
+    assert!(ds
+        .iter()
+        .any(|d| d.message.contains("(D4)") && d.code == ErrorCode::InvalidInput));
     // позитив: согласованы — чисто
     let p = program(vec![
-        Op::ToolChange { tool: 3, state: State { feed: None, spindle: Spindle::Off, coolant: Coolant { flood: false, mist: false }, tool: Some(3), frame: Frame::Wcs, wcs: Wcs::G54 }, src: src() },
+        Op::ToolChange {
+            tool: 3,
+            state: State {
+                feed: None,
+                spindle: Spindle::Off,
+                coolant: Coolant {
+                    flood: false,
+                    mist: false,
+                },
+                tool: Some(3),
+                frame: Frame::Wcs,
+                wcs: Wcs::G54,
+            },
+            src: src(),
+        },
         pend(),
     ]);
     assert!(verify::validate(&p).is_empty());
@@ -343,16 +461,36 @@ fn spec_5_d4_tool_mismatch() {
 fn spec_5_d5_set_here_preset_only() {
     // негатив: L20 после motion-опа
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        Op::WcsSetHere { p: 2, delta: p3(1.0, 0.0, 0.0), state: st(None, Wcs::G55, Frame::Wcs), src: src() },
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        Op::WcsSetHere {
+            p: 2,
+            delta: p3(1.0, 0.0, 0.0),
+            state: st(None, Wcs::G55, Frame::Wcs),
+            src: src(),
+        },
         pend(),
     ]);
     let ds = verify::validate(&p);
-    assert!(ds.iter().any(|d| d.message.contains("D5") && d.code == ErrorCode::InvalidInput));
+    assert!(ds
+        .iter()
+        .any(|d| d.message.contains("D5") && d.code == ErrorCode::InvalidInput));
     // позитив: L20 до motion-опа (якорь) — чисто
     let p = program(vec![
-        Op::WcsSetHere { p: 2, delta: p3(1.0, 0.0, 0.0), state: st(None, Wcs::G55, Frame::Wcs), src: src() },
-        rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(2.0, 0.0, 0.0), st(None, Wcs::G55, Frame::Wcs)),
+        Op::WcsSetHere {
+            p: 2,
+            delta: p3(1.0, 0.0, 0.0),
+            state: st(None, Wcs::G55, Frame::Wcs),
+            src: src(),
+        },
+        rapid(
+            StartPoint::Known(p3(1.0, 0.0, 0.0)),
+            p3(2.0, 0.0, 0.0),
+            st(None, Wcs::G55, Frame::Wcs),
+        ),
         pend(),
     ]);
     assert!(verify::validate(&p).is_empty());
@@ -365,7 +503,16 @@ fn spec_5_d7_domains() {
     // 0 при start≠end и 400 — нелегальны
     let mk_arc = |sweep: f64, normal: f64, end: Point3| {
         program(vec![
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), end, p3(0.0, 5.0, 0.0), p3(0.0, 0.0, normal), Dir::Ccw, sweep, 2.0, feed_st.clone()),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                end,
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, normal),
+                Dir::Ccw,
+                sweep,
+                2.0,
+                feed_st.clone(),
+            ),
             pend(),
         ])
     };
@@ -375,25 +522,65 @@ fn spec_5_d7_domains() {
     for sweep in [0.0, 400.0] {
         let ds = verify::validate(&mk_arc(sweep, 1.0, p3(5.0, 5.0, 2.0)));
         assert!(
-            ds.iter().any(|d| d.message.contains("out of domain (0°, 360°]") && d.code == ErrorCode::InvalidInput),
+            ds.iter()
+                .any(|d| d.message.contains("out of domain (0°, 360°]")
+                    && d.code == ErrorCode::InvalidInput),
             "sweep={sweep}: {ds:?}"
         );
     }
     // негатив: |normal| != 1
     let ds = verify::validate(&mk_arc(90.0, 2.0, p3(-5.0, 5.0, 2.0)));
-    assert!(ds.iter().any(|d| d.message.contains("|normal|") && d.code == ErrorCode::InvalidInput));
+    assert!(ds
+        .iter()
+        .any(|d| d.message.contains("|normal|") && d.code == ErrorCode::InvalidInput));
     // негатив: dwell < 0; позитив: dwell = 0-drop (не ошибка), dwell > 0 чисто
-    let neg = program(vec![Op::Dwell { seconds: n(-0.0001), state: st(None, Wcs::G54, Frame::Wcs), src: src(), sub: None }, pend()]);
-    assert!(verify::validate(&neg).iter().any(|d| d.message.contains("dwell seconds") && d.code == ErrorCode::InvalidInput));
-    let zero = program(vec![Op::Dwell { seconds: n(0.0), state: st(None, Wcs::G54, Frame::Wcs), src: src(), sub: None }, pend()]);
+    let neg = program(vec![
+        Op::Dwell {
+            seconds: n(-0.0001),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        pend(),
+    ]);
+    assert!(verify::validate(&neg)
+        .iter()
+        .any(|d| d.message.contains("dwell seconds") && d.code == ErrorCode::InvalidInput));
+    let zero = program(vec![
+        Op::Dwell {
+            seconds: n(0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        pend(),
+    ]);
     let rep = verify::validate_with_notices(&zero);
     assert!(rep.diagnostics.is_empty() && rep.notices.len() == 1);
-    let pos = program(vec![Op::Dwell { seconds: n(0.5), state: st(None, Wcs::G54, Frame::Wcs), src: src(), sub: None }, pend()]);
+    let pos = program(vec![
+        Op::Dwell {
+            seconds: n(0.5),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        pend(),
+    ]);
     assert!(verify::validate(&pos).is_empty());
     // p: 0 и 10 нелегальны (10 — лексически цифрой не является; тут AST-уровень
     // ловит 0; 10 отсекается парсером — см. grammar_conformance::p_domain_lexical_boundary)
-    let p0 = program(vec![Op::WcsDefine { p: 0, origin: p3(0.0, 0.0, 0.0), state: st(None, Wcs::G54, Frame::Wcs), src: src() }, pend()]);
-    assert!(verify::validate(&p0).iter().any(|d| d.message.contains("p=0 out of domain") && d.code == ErrorCode::InvalidInput));
+    let p0 = program(vec![
+        Op::WcsDefine {
+            p: 0,
+            origin: p3(0.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        pend(),
+    ]);
+    assert!(verify::validate(&p0)
+        .iter()
+        .any(|d| d.message.contains("p=0 out of domain") && d.code == ErrorCode::InvalidInput));
 }
 
 // ===========================================================================
@@ -408,22 +595,49 @@ fn spec_6_arc_direction_must_match_rotation() {
     //   ccw (+90° вокруг +Z): (0,-5) → (5,0) → end = (5,5,2) ✓
     //   cw  (−90°): (0,-5) → (−5,0) → end = (−5,5,2) ✗ (ложно-совпадающая дуга
     //   с тем же радиусом — ловится только уравнением)
-    let anchor = rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs));
+    let anchor = rapid(
+        StartPoint::Unknown,
+        p3(0.0, 0.0, 0.0),
+        st(None, Wcs::G54, Frame::Wcs),
+    );
     let st = st(Some(100.0), Wcs::G54, Frame::Wcs);
     let ok_p = program(vec![
         anchor.clone(),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 2.0, st.clone()),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(5.0, 5.0, 2.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            2.0,
+            st.clone(),
+        ),
         pend(),
     ]);
-    assert!(verify::validate(&ok_p).is_empty(), "ccw must match rotation equation");
+    assert!(
+        verify::validate(&ok_p).is_empty(),
+        "ccw must match rotation equation"
+    );
     let bad_p = program(vec![
         anchor,
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, st.clone()),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(5.0, 5.0, 2.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Cw,
+            90.0,
+            2.0,
+            st.clone(),
+        ),
         pend(),
     ]);
     let ds = verify::validate(&bad_p);
     assert!(
-        ds.iter().any(|d| d.message.contains("endpoint inconsistent") && d.code == ErrorCode::InvalidInput),
+        ds.iter()
+            .any(|d| d.message.contains("endpoint inconsistent")
+                && d.code == ErrorCode::InvalidInput),
         "mirrored arc must fail the rotation equation: {ds:?}"
     );
 }
@@ -434,13 +648,27 @@ fn spec_6_impossible_arc() {
     // расстоянии 10 → радиусы не сходятся → E_INVALID_INPUT (не unsupported).
     // Позиция якорится rapid'ом.
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(10.0, 0.0, 2.0), p3(0.0, 0.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 2.0, st(Some(100.0), Wcs::G54, Frame::Wcs)),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(10.0, 0.0, 2.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            2.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
         pend(),
     ]);
     let ds = verify::validate(&p);
     assert!(
-        ds.iter().any(|d| d.message.contains("radius mismatch") && d.code == ErrorCode::InvalidInput),
+        ds.iter()
+            .any(|d| d.message.contains("radius mismatch") && d.code == ErrorCode::InvalidInput),
         "{ds:?}"
     );
 }
@@ -451,12 +679,28 @@ fn spec_6_arc_units_agnostic_inch() {
     // units); inch-дуга с pitch (аналог R+pitch после канонизации) — валидна.
     // Позиция якорится rapid'ом.
     let mut p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, st(Some(100.0), Wcs::G54, Frame::Wcs)),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(-5.0, 5.0, 2.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Cw,
+            90.0,
+            2.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
         pend(),
     ]);
     p.units = Units::In;
-    assert!(verify::validate(&p).is_empty(), "units must not affect arc invariants");
+    assert!(
+        verify::validate(&p).is_empty(),
+        "units must not affect arc invariants"
+    );
 }
 
 // ===========================================================================
@@ -468,13 +712,34 @@ fn spec_6_arc_units_agnostic_inch() {
 #[test]
 fn spec_4_rapid_feed_no_constraint() {
     // rapid с feed — легален (переживает G0), и без feed — легален
-    let with = program(vec![rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(Some(500.0), Wcs::G54, Frame::Wcs)), pend()]);
-    let without = program(vec![rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)), pend()]);
+    let with = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(Some(500.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ]);
+    let without = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ]);
     assert!(verify::validate(&with).is_empty());
     assert!(verify::validate(&without).is_empty());
     // и rapid с feed=0 — БЕЗ ограничения (ход не использует feed; аудит #32
     // касается только linear/arc)
-    let zero = program(vec![rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(Some(0.0), Wcs::G54, Frame::Wcs)), pend()]);
+    let zero = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(Some(0.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ]);
     assert!(verify::validate(&zero).is_empty());
 }
 
@@ -490,49 +755,93 @@ fn spec_4_rapid_feed_no_constraint() {
 #[test]
 fn spec_3_feed_zero_on_move_refused() {
     let zero_st = st(Some(0.0), Wcs::G54, Frame::Wcs);
-    let neg0_st = State { feed: Some(Num { text: "-0.0000".into(), value: -0.0 }), ..st(Some(0.0), Wcs::G54, Frame::Wcs) };
+    let neg0_st = State {
+        feed: Some(Num {
+            text: "-0.0000".into(),
+            value: -0.0,
+        }),
+        ..st(Some(0.0), Wcs::G54, Frame::Wcs)
+    };
     let tiny_st = st(Some(0.0001), Wcs::G54, Frame::Wcs);
     let ok_st = st(Some(100.0), Wcs::G54, Frame::Wcs);
 
     // негатив: linear feed=0.0000
-    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), zero_st.clone()), pend()]);
-    let ds = verify::validate(&p);
-    assert!(
-        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.code == ErrorCode::InvalidInput),
-        "{ds:?}"
-    );
-    // негатив: arc feed=0.0000 (геометрия корректна — отказ именно по feed)
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 0.0, zero_st.clone()),
+        linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), zero_st.clone()),
         pend(),
     ]);
     let ds = verify::validate(&p);
     assert!(
-        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.code == ErrorCode::InvalidInput),
+        ds.iter()
+            .any(|d| d.message.contains("zero feed rate on move")
+                && d.code == ErrorCode::InvalidInput),
+        "{ds:?}"
+    );
+    // негатив: arc feed=0.0000 (геометрия корректна — отказ именно по feed)
+    let p = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(5.0, 5.0, 0.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            zero_st.clone(),
+        ),
+        pend(),
+    ]);
+    let ds = verify::validate(&p);
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("zero feed rate on move")
+                && d.code == ErrorCode::InvalidInput),
         "{ds:?}"
     );
     // негатив: -0.0000 ≡ 0 после квантования (G93-resolved feed → 0.0000)
-    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), neg0_st), pend()]);
+    let p = program(vec![
+        linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), neg0_st),
+        pend(),
+    ]);
     let ds = verify::validate(&p);
     assert!(
-        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.message.contains("-0.0000")),
+        ds.iter()
+            .any(|d| d.message.contains("zero feed rate on move") && d.message.contains("-0.0000")),
         "{ds:?}"
     );
     // позитив: минимальный ненулевой feed (0.0001) — чисто; обычный feed — чисто
-    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), tiny_st), pend()]);
+    let p = program(vec![
+        linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), tiny_st),
+        pend(),
+    ]);
     assert!(verify::validate(&p).is_empty());
-    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st), pend()]);
+    let p = program(vec![
+        linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st),
+        pend(),
+    ]);
     assert!(verify::validate(&p).is_empty());
     // rapid feed=0 — не ход под feed (spec_4_rapid_feed_no_constraint выше)
     // drop-путь: zero-length linear с feed=0 отбрасывается канонизацией —
     // feed-диагностики НЕТ (правило — по итоговому AST, как feed=none)
     let p = program(vec![
-        linear(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), zero_st.clone()),
+        linear(
+            StartPoint::Known(p3(1.0, 0.0, 0.0)),
+            p3(1.0, 0.0, 0.0),
+            zero_st.clone(),
+        ),
         pend(),
     ]);
     let rep = verify::validate_with_notices(&p);
-    assert!(rep.diagnostics.is_empty(), "feed=0 must not fire on dropped op: {:#?}", rep.diagnostics);
+    assert!(
+        rep.diagnostics.is_empty(),
+        "feed=0 must not fire on dropped op: {:#?}",
+        rep.diagnostics
+    );
     assert_eq!(rep.notices.len(), 1);
     // reject-режим (эмиссия): zero-length диагностика присутствует
     let ds = verify::validate(&p);
@@ -541,7 +850,8 @@ fn spec_3_feed_zero_on_move_refused() {
     let text = format!("{HDR}OP 001 LINEAR start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 feed=0.0000 spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 002 PEND\nEND\n");
     let ds = parser::parse(&text, "t").unwrap_err();
     assert!(
-        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.stage == Stage::Verify),
+        ds.iter()
+            .any(|d| d.message.contains("zero feed rate on move") && d.stage == Stage::Verify),
         "{ds:?}"
     );
 }
@@ -555,9 +865,8 @@ fn spec_10_quantized_zero_check() {
     // zero-check применяется ПОСЛЕ квантования к 4dp: -0.0000 ≡ 0.0000.
     // Позиция якорится первым rapid'ом (unknown → (1,0,0)); второй rapid с
     // Known-стартом легален (точное равенство prev_end).
-    let anchor = format!(
-        "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\n"
-    );
+    let anchor =
+        format!("OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\n");
     // квантовали в старт → drop: start (1,0,0), end (1,0,0) — нулевой ход
     let text_zero = format!(
         "{HDR}{anchor}OP 002 RAPID start=1.0000,0.0000,0.0000 end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\nOP 003 PEND\nEND\n"
@@ -571,14 +880,23 @@ fn spec_10_quantized_zero_check() {
         "{HDR}{anchor}OP 002 RAPID start=1.0000,0.0000,0.0000 end=1.0001,0.0000,0.0000 src=0.1-0.0 {ST_G54}\nOP 003 PEND\nEND\n"
     );
     let out = parser::parse_with_notices(&text_small, "t").expect("parse ok");
-    assert!(out.notices.is_empty(), "1.0001 ≠ 1.0000 at 4dp: {:#?}", out.notices);
+    assert!(
+        out.notices.is_empty(),
+        "1.0001 ≠ 1.0000 at 4dp: {:#?}",
+        out.notices
+    );
     assert_eq!(out.program.ops.len(), 3);
     // знаковый ноль квантуется в тот же ноль (−0.0000 ≡ 0.0000 → drop):
     let text_neg0 = format!(
         "{HDR}{anchor}OP 002 RAPID start=1.0000,-0.0000,0.0000 end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\nOP 003 PEND\nEND\n"
     );
     let out = parser::parse_with_notices(&text_neg0, "t").expect("parse ok");
-    assert_eq!(out.notices.len(), 1, "-0.0000 ≡ 0.0000 after quantization: {:#?}", out.notices);
+    assert_eq!(
+        out.notices.len(),
+        1,
+        "-0.0000 ≡ 0.0000 after quantization: {:#?}",
+        out.notices
+    );
     assert_eq!(out.notices[0].kind, NoticeKind::ZeroLengthMotion);
 }
 
@@ -590,7 +908,11 @@ fn spec_10_quantized_zero_check() {
 fn spec_3_notices_consistent_across_entry_points() {
     let mk_zero = || {
         program(vec![
-            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+            rapid(
+                StartPoint::Known(p3(1.0, 0.0, 0.0)),
+                p3(1.0, 0.0, 0.0),
+                st(None, Wcs::G54, Frame::Wcs),
+            ),
             pend(),
         ])
     };
@@ -615,7 +937,6 @@ fn spec_3_notices_consistent_across_entry_points() {
     let _ = (ST_G55, ST_MACHINE);
 }
 
-
 // ===========================================================================
 // Итерация 5 (cargo-mutants усиление): границы grammar и wrappers
 // ===========================================================================
@@ -626,15 +947,17 @@ fn spec_3_notices_consistent_across_entry_points() {
 fn mutants_validate_wrapper_rejects_canon_violation() {
     let text = format!(
         "{HDR}OP 001 PEND
-OP 002 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}
+OP 002 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}
 END
-",
-        ST_G54
+"
     );
     let raw = parser::parse_raw(&text, "t").unwrap(); // PEND НЕ последний
-    // Порядок PEND — гейт verify; parser::validate ловим пустой программой
-    // ("program has no ops") — заглушка Ok(()) в wrapper'е обнаруживается.
-    assert!(!verify::validate(&raw).is_empty(), "not-last PEND ловит verify");
+                                                      // Порядок PEND — гейт verify; parser::validate ловим пустой программой
+                                                      // ("program has no ops") — заглушка Ok(()) в wrapper'е обнаруживается.
+    assert!(
+        !verify::validate(&raw).is_empty(),
+        "not-last PEND ловит verify"
+    );
     let empty = Program {
         eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
@@ -645,29 +968,45 @@ END
     let Err(ds) = parser::validate(&empty) else {
         panic!("validate-заглушка Ok(()) — wrapper не проверяет канон-форму")
     };
-    assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify));
+    assert!(ds
+        .iter()
+        .all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify));
 }
 
 /// Нумерация опов (grammar v0.4 — 3+ цифр, back-compat superset, аудит #3):
 /// OP 999 и OP 1000 легальны; меньше 3 цифр — Err (zero-pad min 3).
 #[test]
 fn mutants_op_numbering_boundary_999_1000() {
-    let ok_text = format!("{HDR}OP 999 PEND
+    let ok_text = format!(
+        "{HDR}OP 999 PEND
 END
-");
+"
+    );
     assert!(parser::parse(&ok_text, "t").is_ok(), "OP 999 легален");
     // 1000+ легальны с grammar v0.4 (прежде: Err «ровно 3 цифры»)
-    let v4_text = format!("{HDR}OP 1000 PEND
+    let v4_text = format!(
+        "{HDR}OP 1000 PEND
 END
-");
-    assert!(parser::parse(&v4_text, "t").is_ok(), "OP 1000 легален (grammar v0.4)");
-    let pad_text = format!("{HDR}OP 0999 PEND
+"
+    );
+    assert!(
+        parser::parse(&v4_text, "t").is_ok(),
+        "OP 1000 легален (grammar v0.4)"
+    );
+    let pad_text = format!(
+        "{HDR}OP 0999 PEND
 END
-");
-    assert!(parser::parse(&pad_text, "t").is_ok(), "OP 0999 легален (3+ цифр)");
-    let short_text = format!("{HDR}OP 99 PEND
+"
+    );
+    assert!(
+        parser::parse(&pad_text, "t").is_ok(),
+        "OP 0999 легален (3+ цифр)"
+    );
+    let short_text = format!(
+        "{HDR}OP 99 PEND
 END
-");
+"
+    );
     let ds = parser::parse(&short_text, "t").unwrap_err();
     assert!(ds.iter().any(|d| d.message.contains("3+ digits")), "{ds:?}");
 }
@@ -678,15 +1017,25 @@ END
 #[test]
 fn mutants_quoted_boundaries_rejected() {
     // голая кавычка: quoted(`"`) — len < 2
-    let t1 = format!("{HDR}OP 001 RAW reason=\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
+    let t1 = format!(
+        "{HDR}OP 001 RAW reason=\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
 END
-");
-    assert!(parser::parse(&t1, "t").is_err(), "голая кавычка отклоняется");
+"
+    );
+    assert!(
+        parser::parse(&t1, "t").is_err(),
+        "голая кавычка отклоняется"
+    );
     // кавычка внутри quoted: inner содержит `"a"b"` → содержит quote
-    let t2 = format!("{HDR}OP 001 RAW reason=\"a\"b\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
+    let t2 = format!(
+        "{HDR}OP 001 RAW reason=\"a\"b\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
 END
-");
-    assert!(parser::parse(&t2, "t").is_err(), "кавычка внутри quoted отклоняется");
+"
+    );
+    assert!(
+        parser::parse(&t2, "t").is_err(),
+        "кавычка внутри quoted отклоняется"
+    );
 }
 
 /// emit_num: verbatim "-0.0000" неканоничен → канонизация из f64 → "0.0000"
@@ -694,30 +1043,50 @@ END
 #[test]
 fn mutants_emit_num_minus_zero_canonicalized() {
     let text_minus0 = "-0.0000";
-    let nm = |t: &str, v: f64| Num { text: t.to_string(), value: v };
+    let nm = |t: &str, v: f64| Num {
+        text: t.to_string(),
+        value: v,
+    };
     let prog = Program {
         eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
         path_mode: PathMode::ExactPath,
         frame_preset: None,
-        ops: vec![Op::Rapid {
-            start: StartPoint::Unknown,
-            end: Point3 {
-                x: nm(text_minus0, -0.0),
-                y: nm("0.0000", 0.0),
-                z: nm("0.0000", 0.0),
+        ops: vec![
+            Op::Rapid {
+                start: StartPoint::Unknown,
+                end: Point3 {
+                    x: nm(text_minus0, -0.0),
+                    y: nm("0.0000", 0.0),
+                    z: nm("0.0000", 0.0),
+                },
+                state: State {
+                    feed: None,
+                    spindle: Spindle::Off,
+                    coolant: Default::default(),
+                    tool: None,
+                    frame: Frame::Wcs,
+                    wcs: Wcs::G54,
+                },
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 1,
+                    col_start: 1,
+                    line_end: 1,
+                    col_end: 2,
+                },
+                sub: None,
             },
-            state: State {
-                feed: None,
-                spindle: Spindle::Off,
-                coolant: Default::default(),
-                tool: None,
-                frame: Frame::Wcs,
-                wcs: Wcs::G54,
+            Op::ProgramEnd {
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 9,
+                    col_start: 1,
+                    line_end: 9,
+                    col_end: 2,
+                },
             },
-            src: SrcSpan { file: "t".into(), line_start: 1, col_start: 1, line_end: 1, col_end: 2 },
-            sub: None,
-        }, Op::ProgramEnd { src: SrcSpan { file: "t".into(), line_start: 9, col_start: 1, line_end: 9, col_end: 2 } }],
+        ],
     };
     let text = eid_core::emitter::emit(&prog).expect("эмиссия Ok");
     assert!(text.contains("0.0000"), "{text}");
@@ -739,32 +1108,96 @@ fn spec_6_normal_positive_axis() {
     // позитивы: +Z (G17), +Y (G18), +X (G19) — геометрия сходится
     //  +Z: start (0,0,0), center (0,5,0), ccw 90° → end (5,5,0)
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(5.0, 5.0, 0.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            st_arc.clone(),
+        ),
         pend(),
     ]);
-    assert!(verify::validate(&p).is_empty(), "+Z canonical: {:#?}", verify::validate(&p));
+    assert!(
+        verify::validate(&p).is_empty(),
+        "+Z canonical: {:#?}",
+        verify::validate(&p)
+    );
     //  +Y: start (5,0,0), center (0,0,0), ccw 90° вокруг +Y → end (0,0,-5)
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(5.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(5.0, 0.0, 0.0)), p3(0.0, 0.0, -5.0), p3(0.0, 0.0, 0.0), p3(0.0, 1.0, 0.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        rapid(
+            StartPoint::Unknown,
+            p3(5.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(5.0, 0.0, 0.0)),
+            p3(0.0, 0.0, -5.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 1.0, 0.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            st_arc.clone(),
+        ),
         pend(),
     ]);
-    assert!(verify::validate(&p).is_empty(), "+Y canonical: {:#?}", verify::validate(&p));
+    assert!(
+        verify::validate(&p).is_empty(),
+        "+Y canonical: {:#?}",
+        verify::validate(&p)
+    );
     //  +X: start (0,5,0), center (0,0,0), ccw 90° вокруг +X → end (0,0,5)
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 5.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-        arc(StartPoint::Known(p3(0.0, 5.0, 0.0)), p3(0.0, 0.0, 5.0), p3(0.0, 0.0, 0.0), p3(1.0, 0.0, 0.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 5.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 5.0, 0.0)),
+            p3(0.0, 0.0, 5.0),
+            p3(0.0, 0.0, 0.0),
+            p3(1.0, 0.0, 0.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            st_arc.clone(),
+        ),
         pend(),
     ]);
-    assert!(verify::validate(&p).is_empty(), "+X canonical: {:#?}", verify::validate(&p));
+    assert!(
+        verify::validate(&p).is_empty(),
+        "+X canonical: {:#?}",
+        verify::validate(&p)
+    );
 
     // негативы: перевёрнутая ось — (0,0,-1) — refusal ( ruling-пример),
-    // (0,-1,0), (-1,0,0); не-осевая (0.7071,0,0.7071)
+    // (0,-1,0), (-1,0,0); не-осевая единичная (0.6,0,0.8) — |n|=1, но оси нет
     let mk_neg = |normal: Point3| {
         program(vec![
-            rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), normal, Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+            rapid(
+                StartPoint::Unknown,
+                p3(0.0, 0.0, 0.0),
+                st(None, Wcs::G54, Frame::Wcs),
+            ),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                p3(5.0, 5.0, 0.0),
+                p3(0.0, 5.0, 0.0),
+                normal,
+                Dir::Ccw,
+                90.0,
+                0.0,
+                st_arc.clone(),
+            ),
             pend(),
         ])
     };
@@ -772,20 +1205,30 @@ fn spec_6_normal_positive_axis() {
         (p3(0.0, 0.0, -1.0), "flipped +Z (0,0,-1)"),
         (p3(0.0, -1.0, 0.0), "flipped +Y"),
         (p3(-1.0, 0.0, 0.0), "flipped +X"),
-        (p3(0.7071, 0.0, 0.7071), "off-axis"),
+        (p3(0.6, 0.0, 0.8), "off-axis"),
     ] {
         let ds = verify::validate(&mk_neg(normal));
         assert!(
-            ds.iter().any(|d| d.message.contains("not a canonical +axis") && d.code == ErrorCode::InvalidInput),
+            ds.iter()
+                .any(|d| d.message.contains("not a canonical +axis")
+                    && d.code == ErrorCode::InvalidInput),
             "{ctx}: {ds:?}"
         );
     }
     // допуск: (0,0,1.0001) — в пределах 4dp-кванта (0.001) → канон;
     // (0,0,1.0020) — вне допуска → и канон-отказ, и D7-домен |n|=1
     let ds = verify::validate(&mk_neg(p3(0.0, 0.0, 1.0001)));
-    assert!(!ds.iter().any(|d| d.message.contains("not a canonical +axis")), "1.0001 in 4dp tol: {ds:?}");
+    assert!(
+        !ds.iter()
+            .any(|d| d.message.contains("not a canonical +axis")),
+        "1.0001 in 4dp tol: {ds:?}"
+    );
     let ds = verify::validate(&mk_neg(p3(0.0, 0.0, 1.0020)));
-    assert!(ds.iter().any(|d| d.message.contains("not a canonical +axis")), "1.0020 out of tol: {ds:?}");
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("not a canonical +axis")),
+        "1.0020 out of tol: {ds:?}"
+    );
 }
 
 // ===========================================================================
@@ -806,7 +1249,8 @@ fn spec_2_linking_tol_uses_eps_pos() {
     let ok_text = format!(
         "{HDR}{defined}OP 003 RAPID start=unknown end=100000.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 004 RAPID start=200000.0000,0.0040,0.0000 end=200001.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G55\nOP 005 PEND\nEND\n"
     );
-    let p = parser::parse(&ok_text, "t").unwrap_or_else(|ds| panic!("|Δ|=0.004 < eps_pos≈0.0100 must link: {ds:#?}"));
+    let p = parser::parse(&ok_text, "t")
+        .unwrap_or_else(|ds| panic!("|Δ|=0.004 < eps_pos≈0.0100 must link: {ds:#?}"));
     assert_eq!(p.ops.len(), 5);
     // негатив: |Δ| = 0.02 > ε_pos → refusal (тот же корпус, большее отклонение)
     let bad_text = format!(
@@ -814,7 +1258,9 @@ fn spec_2_linking_tol_uses_eps_pos() {
     );
     let ds = parser::parse(&bad_text, "t").unwrap_err();
     assert!(
-        ds.iter().any(|d| d.message.contains("frame-adjusted previous end") && d.code == ErrorCode::InvalidInput),
+        ds.iter()
+            .any(|d| d.message.contains("frame-adjusted previous end")
+                && d.code == ErrorCode::InvalidInput),
         "{ds:?}"
     );
 }

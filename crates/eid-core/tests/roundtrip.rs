@@ -75,8 +75,7 @@ fn stateq(a: &State, b: &State) -> bool {
         (Some(x), Some(y)) => nq(x, y),
         _ => false,
     };
-    feed
-        && spindleq(&a.spindle, &b.spindle)
+    feed && spindleq(&a.spindle, &b.spindle)
         && a.coolant == b.coolant
         && a.tool == b.tool
         && a.frame == b.frame
@@ -85,8 +84,7 @@ fn stateq(a: &State, b: &State) -> bool {
 
 fn opq(a: &Op, b: &Op) -> bool {
     match (a, b) {
-        (Op::Rapid { .. }, Op::Rapid { .. })
-        | (Op::Linear { .. }, Op::Linear { .. }) => {
+        (Op::Rapid { .. }, Op::Rapid { .. }) | (Op::Linear { .. }, Op::Linear { .. }) => {
             let (sa, ea, ta, ra, ua) = motion_fields(a);
             let (sb, eb, tb, rb, ub) = motion_fields(b);
             spq(sa, sb) && pq(ea, eb) && stateq(ta, tb) && ra == rb && ua == ub
@@ -110,34 +108,94 @@ fn opq(a: &Op, b: &Op) -> bool {
             let (sb, tb, rb, ub) = dwell_fields(b);
             nq(sa, sb) && stateq(ta, tb) && ra == rb && ua == ub
         }
-        (Op::ToolChange { tool: a, state: ta, src: ra }, Op::ToolChange { tool: b, state: tb, src: rb }) => {
-            a == b && stateq(ta, tb) && ra == rb
-        }
-        (Op::ProgramStop { optional: a, state: ta, src: ra }, Op::ProgramStop { optional: b, state: tb, src: rb }) => {
-            a == b && stateq(ta, tb) && ra == rb
-        }
+        (
+            Op::ToolChange {
+                tool: a,
+                state: ta,
+                src: ra,
+            },
+            Op::ToolChange {
+                tool: b,
+                state: tb,
+                src: rb,
+            },
+        ) => a == b && stateq(ta, tb) && ra == rb,
+        (
+            Op::ProgramStop {
+                optional: a,
+                state: ta,
+                src: ra,
+            },
+            Op::ProgramStop {
+                optional: b,
+                state: tb,
+                src: rb,
+            },
+        ) => a == b && stateq(ta, tb) && ra == rb,
         (Op::ProgramEnd { src: a }, Op::ProgramEnd { src: b }) => a == b,
-        (Op::WcsDefine { p: a, origin: oa, state: ta, src: ra }, Op::WcsDefine { p: b, origin: ob, state: tb, src: rb }) => {
-            a == b && pq(oa, ob) && stateq(ta, tb) && ra == rb
-        }
-        (Op::WcsSetHere { p: a, delta: oa, state: ta, src: ra }, Op::WcsSetHere { p: b, delta: ob, state: tb, src: rb }) => {
-            a == b && pq(oa, ob) && stateq(ta, tb) && ra == rb
-        }
-        (Op::Raw { payload_hex: a, reason: ra, code: ca, src: sa }, Op::Raw { payload_hex: b, reason: rb, code: cb, src: sb }) => {
-            a == b && ra == rb && ca == cb && sa == sb
-        }
+        (
+            Op::WcsDefine {
+                p: a,
+                origin: oa,
+                state: ta,
+                src: ra,
+            },
+            Op::WcsDefine {
+                p: b,
+                origin: ob,
+                state: tb,
+                src: rb,
+            },
+        ) => a == b && pq(oa, ob) && stateq(ta, tb) && ra == rb,
+        (
+            Op::WcsSetHere {
+                p: a,
+                delta: oa,
+                state: ta,
+                src: ra,
+            },
+            Op::WcsSetHere {
+                p: b,
+                delta: ob,
+                state: tb,
+                src: rb,
+            },
+        ) => a == b && pq(oa, ob) && stateq(ta, tb) && ra == rb,
+        (
+            Op::Raw {
+                payload_hex: a,
+                reason: ra,
+                code: ca,
+                src: sa,
+            },
+            Op::Raw {
+                payload_hex: b,
+                reason: rb,
+                code: cb,
+                src: sb,
+            },
+        ) => a == b && ra == rb && ca == cb && sa == sb,
         _ => false,
     }
 }
 
 #[allow(clippy::type_complexity)]
-fn motion_fields(
-    op: &Op,
-) -> (&StartPoint, &Point3, &State, &SrcSpan, &Option<u32>) {
+fn motion_fields(op: &Op) -> (&StartPoint, &Point3, &State, &SrcSpan, &Option<u32>) {
     match op {
-        Op::Rapid { start, end, state, src, sub } | Op::Linear { start, end, state, src, sub } => {
-            (start, end, state, src, sub)
+        Op::Rapid {
+            start,
+            end,
+            state,
+            src,
+            sub,
         }
+        | Op::Linear {
+            start,
+            end,
+            state,
+            src,
+            sub,
+        } => (start, end, state, src, sub),
         _ => unreachable!(),
     }
 }
@@ -158,16 +216,32 @@ fn arc_fields(
     &Option<u32>,
 ) {
     match op {
-        Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state, src, sub } => {
-            (start, end, center, normal, dir, sweep_deg, pitch, state, src, sub)
-        }
+        Op::Arc {
+            start,
+            end,
+            center,
+            normal,
+            dir,
+            sweep_deg,
+            pitch,
+            state,
+            src,
+            sub,
+        } => (
+            start, end, center, normal, dir, sweep_deg, pitch, state, src, sub,
+        ),
         _ => unreachable!(),
     }
 }
 
 fn dwell_fields(op: &Op) -> (&Num, &State, &SrcSpan, &Option<u32>) {
     match op {
-        Op::Dwell { seconds, state, src, sub } => (seconds, state, src, sub),
+        Op::Dwell {
+            seconds,
+            state,
+            src,
+            sub,
+        } => (seconds, state, src, sub),
         _ => unreachable!(),
     }
 }
@@ -249,7 +323,10 @@ fn golden_roundtrip_all() {
             Err(ds) => {
                 failures.push(format!(
                     "{name}: parse failed: {}",
-                    ds.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    ds.iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ));
                 continue;
             }
@@ -257,7 +334,12 @@ fn golden_roundtrip_all() {
         if !outcome.notices.is_empty() {
             failures.push(format!(
                 "{name}: unexpected notices: {}",
-                outcome.notices.iter().map(|n| n.message.clone()).collect::<Vec<_>>().join("; ")
+                outcome
+                    .notices
+                    .iter()
+                    .map(|n| n.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; ")
             ));
             continue;
         }
@@ -269,7 +351,10 @@ fn golden_roundtrip_all() {
             Err(ds) => {
                 failures.push(format!(
                     "{name}: emit failed: {}",
-                    ds.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    ds.iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ));
                 continue;
             }
@@ -293,7 +378,12 @@ fn golden_roundtrip_all() {
         let t2 = emitter::emit(&p2).unwrap();
         assert_eq!(t1, t2, "{name}: second emit differs");
     }
-    assert!(failures.is_empty(), "golden round-trip failures ({}):\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "golden round-trip failures ({}):\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -326,7 +416,8 @@ fn neg_bad_magic() {
         "EID/L2 v0.3\n",
         "",
     ] {
-        let text = format!("{bad}UNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
+        let text =
+            format!("{bad}UNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
         expect_err(&text, Some(ErrorCode::InvalidInput), "bad magic");
     }
 }
@@ -334,9 +425,7 @@ fn neg_bad_magic() {
 #[test]
 fn neg_missing_state_field() {
     // пропущено tool= (D3: полный снапшот, каждое поле ровно один раз)
-    let text = prog(&format!(
-        "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none frame=wcs wcs=G54\nOP 002 PEND\n"
-    ));
+    let text = prog("OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none frame=wcs wcs=G54\nOP 002 PEND\n");
     expect_err(&text, Some(ErrorCode::InvalidInput), "missing state field");
     // лишнее поле state (wcs дважды)
     let text2 = prog(&format!(
@@ -345,9 +434,7 @@ fn neg_missing_state_field() {
     ));
     expect_err(&text2, Some(ErrorCode::InvalidInput), "extra state field");
     // нарушен порядок полей state (D3)
-    let text3 = prog(&format!(
-        "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 spindle=off feed=none coolant=none tool=none frame=wcs wcs=G54\nOP 002 PEND\n"
-    ));
+    let text3 = prog("OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 spindle=off feed=none coolant=none tool=none frame=wcs wcs=G54\nOP 002 PEND\n");
     expect_err(&text3, Some(ErrorCode::InvalidInput), "state field order");
 }
 
@@ -405,20 +492,27 @@ fn neg_arc_unknown_start() {
 #[test]
 fn neg_ops_after_end_and_structure() {
     // контент после END
-    let text = format!("{}OP 001 PEND\nEND\nOP 002 PEND\n", HDR);
+    let text = format!("{HDR}OP 001 PEND\nEND\nOP 002 PEND\n");
     expect_err(&text, Some(ErrorCode::InvalidInput), "content after END");
     // пустая строка внутри
     let text2 = format!("{HDR}\nOP 001 PEND\nEND\n");
     expect_err(&text2, Some(ErrorCode::InvalidInput), "blank line");
     // отсутствует финальный NL
-    let text3 = format!("{}OP 001 PEND\nEND", HDR);
+    let text3 = format!("{HDR}OP 001 PEND\nEND");
     expect_err(&text3, Some(ErrorCode::InvalidInput), "missing final NL");
     // неизвестный оп-ключ
     let text4 = prog("OP 001 JUMP src=0.1-0.0\n");
     expect_err(&text4, Some(ErrorCode::InvalidInput), "unknown op keyword");
     // номер опа не 3 цифры
-    let text5 = prog(&format!("OP 1 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 PEND\n", st("G54", "wcs", "none")));
-    expect_err(&text5, Some(ErrorCode::InvalidInput), "op number not 3 digits");
+    let text5 = prog(&format!(
+        "OP 1 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 PEND\n",
+        st("G54", "wcs", "none")
+    ));
+    expect_err(
+        &text5,
+        Some(ErrorCode::InvalidInput),
+        "op number not 3 digits",
+    );
 }
 
 #[test]
@@ -461,7 +555,10 @@ fn zero_length_rapid_dropped_with_notice() {
     ));
     let raw = parser::parse_raw(&bad, "t").expect("raw parse (без канонизации)");
     let ds = emitter::emit(&raw).unwrap_err();
-    assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput), "emit must reject zero-length op: {ds:?}");
+    assert!(
+        ds.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "emit must reject zero-length op: {ds:?}"
+    );
 }
 
 #[test]
@@ -471,7 +568,8 @@ fn zero_length_linear_feed_none_dropped_not_error() {
         "OP 001 LINEAR start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 LINEAR start=1.0000,0.0000,0.0000 end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\n",
         st("G54", "wcs", "500.0000"), st("G54", "wcs", "none")
     ));
-    let out = parser::parse_with_notices(&text, "t").expect("zero-length linear with feed=none is dropped");
+    let out = parser::parse_with_notices(&text, "t")
+        .expect("zero-length linear with feed=none is dropped");
     assert_eq!(out.notices.len(), 1);
     assert_eq!(out.notices[0].kind, NoticeKind::ZeroLengthMotion);
 }
@@ -500,7 +598,11 @@ fn arc_sweep_zero_dropped_not_error() {
         "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 ARC start=1.0000,0.0000,0.0000 end=3.0000,0.0000,0.0000 center=2.0000,0.0000,0.0000 normal=0.0000,0.0000,1.0000 dir=cw sweep=0.0000 pitch=0.0000 src=0.1-0.0 {}\nOP 003 PEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "100.0000")
     ));
-    expect_err(&bad, Some(ErrorCode::InvalidInput), "sweep=0 with start!=end");
+    expect_err(
+        &bad,
+        Some(ErrorCode::InvalidInput),
+        "sweep=0 with start!=end",
+    );
 }
 
 #[test]
@@ -512,17 +614,41 @@ fn arc_domains_and_geometry() {
         ))
     };
     // валидная дуга (golden #46-образная)
-    assert!(parser::parse(&base("-5.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"), "t").is_ok());
+    assert!(parser::parse(
+        &base("-5.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"),
+        "t"
+    )
+    .is_ok());
     // sweep=400 → D7
-    expect_err(&base("-5.0000,5.0000,2.0000", "400.0000", "0.0000,0.0000,1.0000"), Some(ErrorCode::InvalidInput), "sweep=400");
+    expect_err(
+        &base("-5.0000,5.0000,2.0000", "400.0000", "0.0000,0.0000,1.0000"),
+        Some(ErrorCode::InvalidInput),
+        "sweep=400",
+    );
     // |normal| != 1 → D7
-    expect_err(&base("-5.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,2.0000"), Some(ErrorCode::InvalidInput), "normal len 2");
+    expect_err(
+        &base("-5.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,2.0000"),
+        Some(ErrorCode::InvalidInput),
+        "normal len 2",
+    );
     // точка end не согласована с sweep (уравнение §6.3)
-    expect_err(&base("1.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"), Some(ErrorCode::InvalidInput), "endpoint mismatch");
+    expect_err(
+        &base("1.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"),
+        Some(ErrorCode::InvalidInput),
+        "endpoint mismatch",
+    );
     // радиус несогласован (§6.1)
-    expect_err(&base("-6.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"), Some(ErrorCode::InvalidInput), "radius mismatch");
+    expect_err(
+        &base("-6.0000,5.0000,2.0000", "90.0000", "0.0000,0.0000,1.0000"),
+        Some(ErrorCode::InvalidInput),
+        "radius mismatch",
+    );
     // хорда·normal != pitch (§6.2)
-    expect_err(&base("-5.0000,5.0000,3.0000", "90.0000", "0.0000,0.0000,1.0000"), Some(ErrorCode::InvalidInput), "pitch mismatch");
+    expect_err(
+        &base("-5.0000,5.0000,3.0000", "90.0000", "0.0000,0.0000,1.0000"),
+        Some(ErrorCode::InvalidInput),
+        "pitch mismatch",
+    );
 }
 
 #[test]
@@ -551,9 +677,7 @@ fn d4_tool_change_mismatch() {
     ));
     expect_err(&text, Some(ErrorCode::InvalidInput), "D4 mismatch");
     // согласованный вариант валиден
-    let ok = prog(&format!(
-        "OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54\nOP 002 PEND\n"
-    ));
+    let ok = prog("OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54\nOP 002 PEND\n");
     assert!(parser::parse(&ok, "t").is_ok());
 }
 
@@ -563,7 +687,11 @@ fn d5_set_here_after_motion() {
         "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 WCS_SET_HERE p=2 delta=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\n",
         st("G54", "wcs", "none"), st("G55", "wcs", "none")
     ));
-    expect_err(&text, Some(ErrorCode::InvalidInput), "D5 set_here after motion");
+    expect_err(
+        &text,
+        Some(ErrorCode::InvalidInput),
+        "D5 set_here after motion",
+    );
 }
 
 #[test]
@@ -581,9 +709,7 @@ fn d8_sub_rules() {
     ));
     expect_err(&bad, Some(ErrorCode::InvalidInput), "sub on STOP");
     // sub= на TOOL_CHANGE — вне грамматики
-    let bad2 = prog(&format!(
-        "OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 sub=1 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54\nOP 002 PEND\n"
-    ));
+    let bad2 = prog("OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 sub=1 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54\nOP 002 PEND\n");
     expect_err(&bad2, Some(ErrorCode::InvalidInput), "sub on TOOL_CHANGE");
 }
 
@@ -594,13 +720,18 @@ fn d9_raw_payload() {
     // байт-в-байт same-dialect round-trip (R1-text)
     assert_eq!(emitter::emit(&p).unwrap(), ok);
     // пустой payload грамматичен
-    let empty = prog("OP 001 RAW reason=\"\" code=E_LIMIT_EXCEEDED src=0.1-0.0 payload=\nOP 002 PEND\n");
+    let empty =
+        prog("OP 001 RAW reason=\"\" code=E_LIMIT_EXCEEDED src=0.1-0.0 payload=\nOP 002 PEND\n");
     assert!(parser::parse(&empty, "t").is_ok());
     // нечётная длина — D9
-    let odd = prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=0D0A1\nOP 002 PEND\n");
+    let odd = prog(
+        "OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=0D0A1\nOP 002 PEND\n",
+    );
     expect_err(&odd, Some(ErrorCode::InvalidInput), "odd hex length");
     // lowercase вне грамматики
-    let lower = prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=0d0a\nOP 002 PEND\n");
+    let lower = prog(
+        "OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=0d0a\nOP 002 PEND\n",
+    );
     expect_err(&lower, Some(ErrorCode::InvalidInput), "lowercase hex");
     // недиагностический код
     let badcode = prog("OP 001 RAW reason=\"x\" code=E_NOPE src=0.1-0.0 payload=00\nOP 002 PEND\n");
@@ -634,7 +765,11 @@ fn raw_reason_escape_roundtrip_v04() {
         Op::Raw { reason, .. } => assert_eq!(reason, "vendor macro"),
         other => panic!("expected Raw, got {other:?}"),
     }
-    assert_eq!(emitter::emit(&p).unwrap(), plain, "v0.3 round-trip unchanged");
+    assert_eq!(
+        emitter::emit(&p).unwrap(),
+        plain,
+        "v0.3 round-trip unchanged"
+    );
 }
 
 #[test]
@@ -645,7 +780,8 @@ fn path_mode_blend_t() {
     let p = parser::parse(bare, "t").expect("bare blend");
     assert!(matches!(p.path_mode, PathMode::Blend { t: None }));
     // blend t= → t: Some (число по D1)
-    let with_t = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=0.0100\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+    let with_t =
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=0.0100\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
     let p = parser::parse(with_t, "t").expect("blend t=");
     match &p.path_mode {
         PathMode::Blend { t: Some(n) } => assert_eq!(n.value, 0.01),
@@ -657,23 +793,27 @@ fn path_mode_blend_t() {
     let p2 = parser::parse(&t1, "t").unwrap();
     assert!(programq(&p, &p2));
     // отрицательный t грамматичен (число по D1 допускает знак)
-    let neg = "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=-0.5000\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+    let neg =
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE blend t=-0.5000\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
     assert!(parser::parse(neg, "t").is_ok());
     // все три значения PATH_MODE парсятся
     for pm in ["exact_path", "exact_stop", "blend"] {
-        let text = format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE {pm}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
+        let text =
+            format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE {pm}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
         assert!(parser::parse(&text, "t").is_ok(), "PATH_MODE {pm}");
     }
     // негативы лексики t= (D1 и структура)
     for bad in [
-        "blend t=0.500",         // 3 dp
-        "blend t=",              // пустое значение
-        "blend t=1.0000 extra",  // мусор после числа
-        "blendt=0.5000",         // нет SP
-        "blend  t=0.5000",       // двойной SP
-        "blend T=0.5000",        // регистр
+        "blend t=0.500",        // 3 dp
+        "blend t=",             // пустое значение
+        "blend t=1.0000 extra", // мусор после числа
+        "blendt=0.5000",        // нет SP
+        "blend  t=0.5000",      // двойной SP
+        "blend T=0.5000",       // регистр
     ] {
-        let text = format!("EID/L1 v0.3\nUNITS mm\nPATH_MODE {bad}\nFRAME_PRESET none\nOP 001 PEND\nEND\n");
+        let text = format!(
+            "EID/L1 v0.3\nUNITS mm\nPATH_MODE {bad}\nFRAME_PRESET none\nOP 001 PEND\nEND\n"
+        );
         expect_err(&text, Some(ErrorCode::InvalidInput), "bad blend t= lexeme");
     }
     // FRAME_PRESET-строка опциональна по grammar
@@ -693,7 +833,11 @@ fn unknown_outside_break_rejected() {
         "OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 RAPID start=unknown end=2.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none")
     ));
-    expect_err(&text, Some(ErrorCode::InvalidInput), "unknown outside break");
+    expect_err(
+        &text,
+        Some(ErrorCode::InvalidInput),
+        "unknown outside break",
+    );
 }
 
 #[test]
@@ -713,7 +857,10 @@ fn cross_wcs_linking_with_defines() {
         "OP 001 WCS_DEFINE p=1 origin=10.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 WCS_DEFINE p=2 origin=3.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 RAPID start=unknown end=5.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 004 RAPID start=12.0000,0.0000,5.0000 end=7.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 005 PEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none"), st("G54", "wcs", "none"), st("G55", "wcs", "none")
     ));
-    assert!(parser::parse(&ok, "t").is_ok(), "cross-wcs with in-text origins must link");
+    assert!(
+        parser::parse(&ok, "t").is_ok(),
+        "cross-wcs with in-text origins must link"
+    );
     // неверное значение start → ошибка
     let bad = ok.replace("start=12.0000,0.0000,5.0000", "start=5.0000,0.0000,5.0000");
     expect_err(&bad, Some(ErrorCode::InvalidInput), "cross-wcs wrong start");
@@ -732,7 +879,10 @@ fn machine_frame_linking() {
     ));
     // (end последнего опа сделан не-нулевым, чтобы ход не был отброшен
     // как zero-length и переход machine→wcs реально проверился)
-    assert!(parser::parse(&ok, "t").is_ok(), "machine-frame linking with in-text origins");
+    assert!(
+        parser::parse(&ok, "t").is_ok(),
+        "machine-frame linking with in-text origins"
+    );
 
     // G53 без origins (вектор N1-образный) — известный start при невычислимой
     // позиции → ошибка
@@ -740,7 +890,11 @@ fn machine_frame_linking() {
         "OP 001 RAPID start=unknown end=5.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 002 RAPID start=15.0000,0.0000,5.0000 end=20.0000,0.0000,6.0000 src=0.1-0.0 {}\nOP 003 PEND\n",
         st("G54", "wcs", "none"), st("G54", "machine", "none")
     ));
-    expect_err(&bad, Some(ErrorCode::InvalidInput), "G53 without in-text origins");
+    expect_err(
+        &bad,
+        Some(ErrorCode::InvalidInput),
+        "G53 without in-text origins",
+    );
 
     // а unknown в точке разрыва (c) — валиден
     let ok2 = prog(&format!(
@@ -771,9 +925,16 @@ fn preset_anchor_rules() {
         "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 RAPID start=unknown end=1.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 002 PEND\nEND\n",
         st("G55", "wcs", "none")
     );
-    assert!(parser::parse(&both_undef, "t").is_ok(), "(b) after preset: unknown ok");
+    assert!(
+        parser::parse(&both_undef, "t").is_ok(),
+        "(b) after preset: unknown ok"
+    );
     let known = both_undef.replace("start=unknown", "start=0.0000,0.0000,5.0000");
-    expect_err(&known, Some(ErrorCode::InvalidInput), "(b) after preset: known rejected");
+    expect_err(
+        &known,
+        Some(ErrorCode::InvalidInput),
+        "(b) after preset: known rejected",
+    );
 
     // пресетка G54, первый ход в G55, обе системы определены → вычислимо:
     // start = preset + O54 − O55 = (0,0,5) + (10,0,0) − (3,0,0) = (7,0,5)
@@ -781,9 +942,16 @@ fn preset_anchor_rules() {
         "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_DEFINE p=1 origin=10.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 WCS_DEFINE p=2 origin=3.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 RAPID start=7.0000,0.0000,5.0000 end=8.0000,0.0000,5.0000 src=0.1-0.0 {}\nOP 004 PEND\nEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none"), st("G55", "wcs", "none")
     );
-    assert!(parser::parse(&defined, "t").is_ok(), "preset cross-wcs with both origins defined");
+    assert!(
+        parser::parse(&defined, "t").is_ok(),
+        "preset cross-wcs with both origins defined"
+    );
     let wrong = defined.replace("start=7.0000,0.0000,5.0000", "start=0.0000,0.0000,5.0000");
-    expect_err(&wrong, Some(ErrorCode::InvalidInput), "preset cross-wcs wrong start");
+    expect_err(
+        &wrong,
+        Some(ErrorCode::InvalidInput),
+        "preset cross-wcs wrong start",
+    );
 }
 
 #[test]
@@ -795,16 +963,27 @@ fn set_here_anchor_rules() {
     ));
     assert!(parser::parse(&ok, "t").is_ok(), "set_here anchor");
     let bad = ok.replace("start=1.0000,0.0000,0.0000", "start=5.0000,0.0000,0.0000");
-    expect_err(&bad, Some(ErrorCode::InvalidInput), "set_here anchor wrong start");
+    expect_err(
+        &bad,
+        Some(ErrorCode::InvalidInput),
+        "set_here anchor wrong start",
+    );
 
     // G92 + L20 вместе: Δ != 0 → чтение после L20 не вычислимо → unknown
     let both = format!(
         "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET G92 X0.0000 Y0.0000 Z5.0000 WCS G54\nOP 001 WCS_SET_HERE p=1 delta=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 002 RAPID start=unknown end=2.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 003 PEND\nEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none")
     );
-    assert!(parser::parse(&both, "t").is_ok(), "preset+set_here: unknown ok");
+    assert!(
+        parser::parse(&both, "t").is_ok(),
+        "preset+set_here: unknown ok"
+    );
     let known = both.replace("start=unknown", "start=1.0000,0.0000,0.0000");
-    expect_err(&known, Some(ErrorCode::InvalidInput), "preset+set_here: known rejected");
+    expect_err(
+        &known,
+        Some(ErrorCode::InvalidInput),
+        "preset+set_here: known rejected",
+    );
 }
 
 #[test]
@@ -814,7 +993,10 @@ fn tool_change_before_first_motion_not_anchor() {
         "OP 001 TOOL_CHANGE tool=3 src=0.1-0.0 feed=none spindle=off coolant=none tool=3 frame=wcs wcs=G54\nOP 002 STOP optional=no src=0.1-0.0 {}\nOP 003 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}\nOP 004 PEND\n",
         st("G54", "wcs", "none"), st("G54", "wcs", "none")
     ));
-    assert!(parser::parse(&ok, "t").is_ok(), "non-motion ops are not an anchor");
+    assert!(
+        parser::parse(&ok, "t").is_ok(),
+        "non-motion ops are not an anchor"
+    );
 }
 
 #[test]
@@ -863,14 +1045,24 @@ fn emit_rejects_invalid_canonical_forms() {
 
     // PATH_MODE Blend с t= — представим в grammar v0.2 (A1); эмиссия канонична
     let mut p = parser::parse(&prog("OP 001 PEND\n"), "t").unwrap();
-    p.path_mode = PathMode::Blend { t: Some(Num::new("0.5000".into(), 0.5)) };
+    p.path_mode = PathMode::Blend {
+        t: Some(Num::new("0.5000".into(), 0.5)),
+    };
     let t = emitter::emit(&p).unwrap();
-    assert!(t.contains("PATH_MODE blend t=0.5000\n"), "blend t= emitted: {t}");
+    assert!(
+        t.contains("PATH_MODE blend t=0.5000\n"),
+        "blend t= emitted: {t}"
+    );
     assert!(parser::parse(&t, "t").is_ok());
     // неканоничный verbatim-текст числа канонизируется из f64-зеркала
-    p.path_mode = PathMode::Blend { t: Some(Num::new("0.5".into(), 0.5)) };
+    p.path_mode = PathMode::Blend {
+        t: Some(Num::new("0.5".into(), 0.5)),
+    };
     let t = emitter::emit(&p).unwrap();
-    assert!(t.contains("PATH_MODE blend t=0.5000\n"), "canonicalized: {t}");
+    assert!(
+        t.contains("PATH_MODE blend t=0.5000\n"),
+        "canonicalized: {t}"
+    );
     // bare blend
     p.path_mode = PathMode::Blend { t: None };
     let t = emitter::emit(&p).unwrap();
@@ -878,14 +1070,21 @@ fn emit_rejects_invalid_canonical_forms() {
 
     // RAW reason с кавычкой — представим экранированием (grammar v0.4,
     // аудит #12); R1: parse(emit(x)) == x
-    let mut p = parser::parse(&prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"), "t").unwrap();
+    let mut p = parser::parse(
+        &prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"),
+        "t",
+    )
+    .unwrap();
     for op in p.ops.iter_mut() {
         if let Op::Raw { reason, .. } = op {
             *reason = "bad\"quote\\path".into();
         }
     }
     let t = emitter::emit(&p).expect("quote/backslash escapable (v0.4)");
-    assert!(t.contains("reason=\"bad\\\"quote\\\\path\""), "escaped: {t}");
+    assert!(
+        t.contains("reason=\"bad\\\"quote\\\\path\""),
+        "escaped: {t}"
+    );
     let back = parser::parse(&t, "t").expect("re-parse escaped reason");
     assert!(programq(&p, &back), "R1 after escape round-trip");
     // перевод строки — по-прежнему не представим (один оп = одна строка)
@@ -903,16 +1102,29 @@ fn emit_op_number_limit() {
     // zero-pad min 3 сохранён эмиттером ({n:03}); 1000+ легальны — лимита
     // нумерации больше нет. parse → emit → parse для 999/1000/1001 опов.
     let mk = |v: f64| Num::new(emitter::fmt_num(v), v);
-    let p3 = |x: f64| Point3 { x: mk(x), y: mk(0.0), z: mk(0.0) };
+    let p3 = |x: f64| Point3 {
+        x: mk(x),
+        y: mk(0.0),
+        z: mk(0.0),
+    };
     let state = State {
         feed: None,
         spindle: Spindle::Off,
-        coolant: Coolant { flood: false, mist: false },
+        coolant: Coolant {
+            flood: false,
+            mist: false,
+        },
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
     };
-    let src = SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 };
+    let src = SrcSpan {
+        file: "t".into(),
+        line_start: 0,
+        col_start: 1,
+        line_end: 0,
+        col_end: 0,
+    };
     let build = |n_motion: usize| -> Program {
         let mut ops = Vec::new();
         for i in 0..n_motion {
@@ -957,7 +1169,10 @@ fn emit_op_number_limit() {
     let back1001 = parser::parse(&t1001, "t").expect("1001 ops re-parse");
     assert!(programq(&k1, &back1001), "R1 at 1001 ops");
     let t1001_again = emitter::emit(&back1001).expect("re-emit");
-    assert_eq!(t1001, t1001_again, "emit(emit(x)) byte-stable at 4-digit numbering");
+    assert_eq!(
+        t1001, t1001_again,
+        "emit(emit(x)) byte-stable at 4-digit numbering"
+    );
 }
 
 // ===========================================================================
@@ -973,18 +1188,31 @@ mod astbuild {
         Num::new(fmt_num(v), v)
     }
     pub fn p3(x: f64, y: f64, z: f64) -> Point3 {
-        Point3 { x: n(x), y: n(y), z: n(z) }
+        Point3 {
+            x: n(x),
+            y: n(y),
+            z: n(z),
+        }
     }
     #[allow(dead_code)]
     pub fn src() -> SrcSpan {
-        SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }
+        SrcSpan {
+            file: "t".into(),
+            line_start: 0,
+            col_start: 1,
+            line_end: 0,
+            col_end: 0,
+        }
     }
     /// Снапшот состояния: feed (None = none), wcs, frame, tool.
     pub fn st(feed: Option<f64>, wcs: Wcs, frame: Frame, tool: Option<u32>) -> State {
         State {
             feed: feed.map(n),
             spindle: Spindle::Off,
-            coolant: Coolant { flood: false, mist: false },
+            coolant: Coolant {
+                flood: false,
+                mist: false,
+            },
             tool,
             frame,
             wcs,
@@ -1000,16 +1228,57 @@ mod astbuild {
         }
     }
     pub fn pend() -> Op {
-        Op::ProgramEnd { src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } }
+        Op::ProgramEnd {
+            src: SrcSpan {
+                file: "t".into(),
+                line_start: 0,
+                col_start: 1,
+                line_end: 0,
+                col_end: 0,
+            },
+        }
     }
     pub fn rapid(start: StartPoint, end: Point3, st: State) -> Op {
-        Op::Rapid { start, end, state: st, src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None }
+        Op::Rapid {
+            start,
+            end,
+            state: st,
+            src: SrcSpan {
+                file: "t".into(),
+                line_start: 0,
+                col_start: 1,
+                line_end: 0,
+                col_end: 0,
+            },
+            sub: None,
+        }
     }
     pub fn linear(start: StartPoint, end: Point3, st: State) -> Op {
-        Op::Linear { start, end, state: st, src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None }
+        Op::Linear {
+            start,
+            end,
+            state: st,
+            src: SrcSpan {
+                file: "t".into(),
+                line_start: 0,
+                col_start: 1,
+                line_end: 0,
+                col_end: 0,
+            },
+            sub: None,
+        }
     }
     #[allow(clippy::too_many_arguments)]
-    pub fn arc(start: StartPoint, end: Point3, center: Point3, normal: Point3, dir: Dir, sweep: f64, pitch: f64, st: State) -> Op {
+    pub fn arc(
+        start: StartPoint,
+        end: Point3,
+        center: Point3,
+        normal: Point3,
+        dir: Dir,
+        sweep: f64,
+        pitch: f64,
+        st: State,
+    ) -> Op {
         Op::Arc {
             start,
             end,
@@ -1019,7 +1288,13 @@ mod astbuild {
             sweep_deg: n(sweep),
             pitch: n(pitch),
             state: st,
-            src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+            src: SrcSpan {
+                file: "t".into(),
+                line_start: 0,
+                col_start: 1,
+                line_end: 0,
+                col_end: 0,
+            },
             sub: None,
         }
     }
@@ -1039,7 +1314,9 @@ fn verify_all_goldens_clean() {
         assert!(
             ds.is_empty(),
             "{name}: validate(golden) not empty: {:#?}",
-            ds.iter().map(|d| (&d.code, &d.stage, &d.message)).collect::<Vec<_>>()
+            ds.iter()
+                .map(|d| (&d.code, &d.stage, &d.message))
+                .collect::<Vec<_>>()
         );
         let report = verify::validate_with_notices(&raw);
         assert!(
@@ -1052,7 +1329,11 @@ fn verify_all_goldens_clean() {
             "{name}: golden diagnostics: {:#?}",
             report.diagnostics
         );
-        assert_eq!(report.kept_ops.len(), raw.ops.len(), "{name}: kept_ops must match when clean");
+        assert_eq!(
+            report.kept_ops.len(),
+            raw.ops.len(),
+            "{name}: kept_ops must match when clean"
+        );
     }
 }
 
@@ -1101,21 +1382,42 @@ fn verify_broken_ast_exact_codes() {
     // 4. zero-length rapid в каноническом AST (путь эмиссии — reject, не notice)
     let ds = check(
         program(vec![
-            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), ok_st.clone()),
+            rapid(
+                StartPoint::Known(p3(1.0, 0.0, 0.0)),
+                p3(1.0, 0.0, 0.0),
+                ok_st.clone(),
+            ),
             pend(),
         ]),
         "zero-length rapid in AST",
     );
-    assert!(ds.iter().any(|d| d.message.contains("must be dropped")), "zero-length message");
+    assert!(
+        ds.iter().any(|d| d.message.contains("must be dropped")),
+        "zero-length message"
+    );
     // 5. zero-length dwell в каноническом AST
     let ds = check(
         program(vec![
-            Op::Dwell { seconds: n(0.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None },
+            Op::Dwell {
+                seconds: n(0.0),
+                state: ok_st.clone(),
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
+                sub: None,
+            },
             pend(),
         ]),
         "zero dwell in AST",
     );
-    assert!(ds.iter().any(|d| d.message.contains("must be dropped")), "zero dwell message");
+    assert!(
+        ds.iter().any(|d| d.message.contains("must be dropped")),
+        "zero dwell message"
+    );
     // 6. linear с feed=none
     check(
         program(vec![
@@ -1127,7 +1429,16 @@ fn verify_broken_ast_exact_codes() {
     // 7. arc с feed=none
     check(
         program(vec![
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, ok_st.clone()),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                p3(-5.0, 5.0, 2.0),
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, 1.0),
+                Dir::Cw,
+                90.0,
+                2.0,
+                ok_st.clone(),
+            ),
             pend(),
         ]),
         "arc feed none",
@@ -1135,7 +1446,16 @@ fn verify_broken_ast_exact_codes() {
     // 8. ARC с unknown-стартом
     check(
         program(vec![
-            arc(StartPoint::Unknown, p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            arc(
+                StartPoint::Unknown,
+                p3(-5.0, 5.0, 2.0),
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, 1.0),
+                Dir::Cw,
+                90.0,
+                2.0,
+                feed_st.clone(),
+            ),
             pend(),
         ]),
         "arc unknown start",
@@ -1143,7 +1463,16 @@ fn verify_broken_ast_exact_codes() {
     // 9. sweep вне (0°, 360°]
     check(
         program(vec![
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 400.0, 2.0, feed_st.clone()),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                p3(-5.0, 5.0, 2.0),
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, 1.0),
+                Dir::Cw,
+                400.0,
+                2.0,
+                feed_st.clone(),
+            ),
             pend(),
         ]),
         "sweep 400",
@@ -1151,7 +1480,16 @@ fn verify_broken_ast_exact_codes() {
     // 10. |normal| != 1
     check(
         program(vec![
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 2.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                p3(-5.0, 5.0, 2.0),
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, 2.0),
+                Dir::Cw,
+                90.0,
+                2.0,
+                feed_st.clone(),
+            ),
             pend(),
         ]),
         "normal len 2",
@@ -1159,7 +1497,16 @@ fn verify_broken_ast_exact_codes() {
     // 11. end не согласован с геометрией (§6.3)
     check(
         program(vec![
-            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(1.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+            arc(
+                StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                p3(1.0, 5.0, 2.0),
+                p3(0.0, 5.0, 0.0),
+                p3(0.0, 0.0, 1.0),
+                Dir::Cw,
+                90.0,
+                2.0,
+                feed_st.clone(),
+            ),
             pend(),
         ]),
         "arc endpoint inconsistent",
@@ -1167,7 +1514,17 @@ fn verify_broken_ast_exact_codes() {
     // 12. D4: TOOL_CHANGE tool= != state.tool
     check(
         program(vec![
-            Op::ToolChange { tool: 3, state: st(None, Wcs::G54, Frame::Wcs, None), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            Op::ToolChange {
+                tool: 3,
+                state: st(None, Wcs::G54, Frame::Wcs, None),
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
+            },
             pend(),
         ]),
         "D4 mismatch",
@@ -1176,7 +1533,18 @@ fn verify_broken_ast_exact_codes() {
     check(
         program(vec![
             rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
-            Op::WcsSetHere { p: 2, delta: p3(1.0, 0.0, 0.0), state: st(None, Wcs::G55, Frame::Wcs, None), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            Op::WcsSetHere {
+                p: 2,
+                delta: p3(1.0, 0.0, 0.0),
+                state: st(None, Wcs::G55, Frame::Wcs, None),
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
+            },
             pend(),
         ]),
         "set_here after motion",
@@ -1184,7 +1552,18 @@ fn verify_broken_ast_exact_codes() {
     // 14. D7: p вне 1..9
     check(
         program(vec![
-            Op::WcsDefine { p: 0, origin: p3(0.0, 0.0, 0.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 } },
+            Op::WcsDefine {
+                p: 0,
+                origin: p3(0.0, 0.0, 0.0),
+                state: ok_st.clone(),
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
+            },
             pend(),
         ]),
         "wcs_define p=0",
@@ -1192,7 +1571,18 @@ fn verify_broken_ast_exact_codes() {
     // 15. D7: dwell < 0
     check(
         program(vec![
-            Op::Dwell { seconds: n(-1.0), state: ok_st.clone(), src: SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }, sub: None },
+            Op::Dwell {
+                seconds: n(-1.0),
+                state: ok_st.clone(),
+                src: SrcSpan {
+                    file: "t".into(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
+                sub: None,
+            },
             pend(),
         ]),
         "negative dwell",
@@ -1209,7 +1599,11 @@ fn verify_broken_ast_exact_codes() {
     // 17. Q11: known в точке разрыва (первый motion без якоря)
     check(
         program(vec![
-            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(2.0, 0.0, 0.0), ok_st.clone()),
+            rapid(
+                StartPoint::Known(p3(1.0, 0.0, 0.0)),
+                p3(2.0, 0.0, 0.0),
+                ok_st.clone(),
+            ),
             pend(),
         ]),
         "known at break",
@@ -1218,7 +1612,11 @@ fn verify_broken_ast_exact_codes() {
     check(
         program(vec![
             rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st.clone()),
-            rapid(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(2.0, 0.0, 0.0), st(None, Wcs::G55, Frame::Wcs, None)),
+            rapid(
+                StartPoint::Known(p3(1.0, 0.0, 0.0)),
+                p3(2.0, 0.0, 0.0),
+                st(None, Wcs::G55, Frame::Wcs, None),
+            ),
             pend(),
         ]),
         "known at (b) break",
@@ -1232,16 +1630,37 @@ fn verify_valid_ast_clean() {
     let feed_st = st(Some(100.0), Wcs::G54, Frame::Wcs, None);
     // (a)-break: rapid unknown первым + linear (вычисленный start), PEND
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 5.0), st(None, Wcs::G54, Frame::Wcs, None)),
-        linear(StartPoint::Known(p3(0.0, 0.0, 5.0)), p3(10.0, 0.0, 5.0), feed_st.clone()),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 5.0),
+            st(None, Wcs::G54, Frame::Wcs, None),
+        ),
+        linear(
+            StartPoint::Known(p3(0.0, 0.0, 5.0)),
+            p3(10.0, 0.0, 5.0),
+            feed_st.clone(),
+        ),
         pend(),
     ]);
     let ds = verify::validate(&p);
     assert!(ds.is_empty(), "valid AST flagged: {ds:#?}");
     // валидная дуга (golden #46-образная)
     let p = program(vec![
-        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs, None)),
-        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(-5.0, 5.0, 2.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Cw, 90.0, 2.0, feed_st.clone()),
+        rapid(
+            StartPoint::Unknown,
+            p3(0.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs, None),
+        ),
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            p3(-5.0, 5.0, 2.0),
+            p3(0.0, 5.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Cw,
+            90.0,
+            2.0,
+            feed_st.clone(),
+        ),
         pend(),
     ]);
     assert!(verify::validate(&p).is_empty(), "valid arc flagged");

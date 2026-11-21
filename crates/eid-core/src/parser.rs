@@ -21,7 +21,7 @@ use crate::diag::{Diagnostic, ErrorCode, Stage};
 
 // Типы/утилиты валидации живут в verify; пути parser::* сохранены для
 // консьюмеров (interface v0.1.2, итерация 4).
-pub use crate::verify::{Notice, NoticeKind, wcs_to_p};
+pub use crate::verify::{wcs_to_p, Notice, NoticeKind};
 
 /// Результат разбора: программа (zero-length отброшены) + notices.
 #[derive(Debug, Clone)]
@@ -58,7 +58,10 @@ pub fn canonicalize(program: Program) -> Result<ParseOutcome, Vec<Diagnostic>> {
     let report = crate::verify::validate_with_notices(&program);
     if report.diagnostics.is_empty() {
         Ok(ParseOutcome {
-            program: Program { ops: report.kept_ops, ..program },
+            program: Program {
+                ops: report.kept_ops,
+                ..program
+            },
             notices: report.notices,
         })
     } else {
@@ -133,7 +136,8 @@ fn integer(s: &str) -> Result<u64, String> {
     if s.is_empty() || !s.bytes().all(|c| c.is_ascii_digit()) {
         return Err(format!("invalid integer `{s}`"));
     }
-    s.parse::<u64>().map_err(|_| format!("integer `{s}` out of range"))
+    s.parse::<u64>()
+        .map_err(|_| format!("integer `{s}` out of range"))
 }
 
 /// vec = number , "," , number , "," , number (X, Y, Z — D2).
@@ -158,11 +162,19 @@ fn span(s: &str) -> Result<(u32, u32, u32, u32), String> {
     }
     let pos = |p: &str| -> Result<(u32, u32), String> {
         let pp: Vec<&str> = p.split('.').collect();
-        if pp.len() != 2 || pp.iter().any(|x| x.is_empty() || !x.bytes().all(|c| c.is_ascii_digit())) {
+        if pp.len() != 2
+            || pp
+                .iter()
+                .any(|x| x.is_empty() || !x.bytes().all(|c| c.is_ascii_digit()))
+        {
             return Err(format!("invalid position `{p}` (expected digits.digits)"));
         }
-        let l: u32 = pp[0].parse().map_err(|_| format!("position `{p}` out of range"))?;
-        let c: u32 = pp[1].parse().map_err(|_| format!("position `{p}` out of range"))?;
+        let l: u32 = pp[0]
+            .parse()
+            .map_err(|_| format!("position `{p}` out of range"))?;
+        let c: u32 = pp[1]
+            .parse()
+            .map_err(|_| format!("position `{p}` out of range"))?;
         Ok((l, c))
     };
     let (ls, cs) = pos(halves[0])?;
@@ -204,11 +216,19 @@ fn quoted(s: &str) -> Result<String, String> {
 
 /// hex_digit = 0-9 | A-F; чётная длина (D9); пустой payload грамматичен.
 fn hex_payload(s: &str) -> Result<String, String> {
-    if !s.bytes().all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c)) {
-        return Err(format!("invalid hex payload (allowed: 0-9, A-F), got `{s}`"));
+    if !s
+        .bytes()
+        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
+    {
+        return Err(format!(
+            "invalid hex payload (allowed: 0-9, A-F), got `{s}`"
+        ));
     }
     if s.len() % 2 != 0 {
-        return Err(format!("hex payload must have even length (D9), got {}", s.len()));
+        return Err(format!(
+            "hex payload must have even length (D9), got {}",
+            s.len()
+        ));
     }
     Ok(s.to_string())
 }
@@ -250,11 +270,10 @@ struct Cur<'a> {
 
 impl<'a> Cur<'a> {
     fn take(&mut self, prefix: &str) -> Result<&'a str, String> {
-        let s = self
-            .f
-            .get(self.i)
-            .copied()
-            .ok_or_else(|| format!("missing field `{prefix}` (fixed field order, grammar v0.4)"))?;
+        let s =
+            self.f.get(self.i).copied().ok_or_else(|| {
+                format!("missing field `{prefix}` (fixed field order, grammar v0.4)")
+            })?;
         if !s.starts_with(prefix) {
             return Err(format!(
                 "expected field `{prefix}` (fixed order), got `{s}`"
@@ -266,9 +285,9 @@ impl<'a> Cur<'a> {
 
     fn take_opt(&mut self, prefix: &str) -> Result<Option<&'a str>, String> {
         if let Some(s) = self.f.get(self.i) {
-            if s.starts_with(prefix) {
+            if let Some(rest) = s.strip_prefix(prefix) {
                 self.i += 1;
-                return Ok(Some(&s[prefix.len()..]));
+                return Ok(Some(rest));
             }
         }
         Ok(None)
@@ -296,9 +315,9 @@ fn state(c: &mut Cur) -> Result<State, String> {
     let spindle = if spindle_v == "off" {
         Spindle::Off
     } else {
-        let (d, r) = spindle_v
-            .split_once(',')
-            .ok_or_else(|| format!("spindle: expected `off` or `cw|ccw,<rpm>`, got `{spindle_v}`"))?;
+        let (d, r) = spindle_v.split_once(',').ok_or_else(|| {
+            format!("spindle: expected `off` or `cw|ccw,<rpm>`, got `{spindle_v}`")
+        })?;
         let rpm = num(r).map_err(|e| format!("spindle: {e}"))?;
         match d {
             "cw" => Spindle::Cw(rpm),
@@ -308,18 +327,36 @@ fn state(c: &mut Cur) -> Result<State, String> {
     };
     let coolant_v = c.take("coolant=")?;
     let coolant = match coolant_v {
-        "none" => Coolant { flood: false, mist: false },
-        "flood" => Coolant { flood: true, mist: false },
-        "mist" => Coolant { flood: false, mist: true },
-        "flood+mist" => Coolant { flood: true, mist: true },
-        _ => return Err(format!("coolant: invalid value `{coolant_v}` (none|flood|mist|flood+mist)")),
+        "none" => Coolant {
+            flood: false,
+            mist: false,
+        },
+        "flood" => Coolant {
+            flood: true,
+            mist: false,
+        },
+        "mist" => Coolant {
+            flood: false,
+            mist: true,
+        },
+        "flood+mist" => Coolant {
+            flood: true,
+            mist: true,
+        },
+        _ => {
+            return Err(format!(
+                "coolant: invalid value `{coolant_v}` (none|flood|mist|flood+mist)"
+            ))
+        }
     };
     let tool_v = c.take("tool=")?;
     let tool = if tool_v == "none" {
         None
     } else {
-        Some(u32::try_from(integer(tool_v).map_err(|e| format!("tool: {e}"))?)
-            .map_err(|_| "tool: out of range".to_string())?)
+        Some(
+            u32::try_from(integer(tool_v).map_err(|e| format!("tool: {e}"))?)
+                .map_err(|_| "tool: out of range".to_string())?,
+        )
     };
     let frame_v = c.take("frame=")?;
     let frame = match frame_v {
@@ -328,7 +365,14 @@ fn state(c: &mut Cur) -> Result<State, String> {
         _ => return Err(format!("frame: invalid value `{frame_v}` (wcs|machine)")),
     };
     let wcs = wcs_name(c.take("wcs=")?)?;
-    Ok(State { feed, spindle, coolant, tool, frame, wcs })
+    Ok(State {
+        feed,
+        spindle,
+        coolant,
+        tool,
+        frame,
+        wcs,
+    })
 }
 
 fn sub_field(c: &mut Cur) -> Result<Option<u32>, String> {
@@ -372,7 +416,11 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 
     // NL: LF и CRLF принимаются (токенизатор); ровно один NL после END.
     if !src.ends_with('\n') {
-        return Err(fail("missing final newline after END (grammar: \"END\" , NL)".into(), 0, ""));
+        return Err(fail(
+            "missing final newline after END (grammar: \"END\" , NL)".into(),
+            0,
+            "",
+        ));
     }
     let mut lines: Vec<&str> = src.split('\n').map(strip_cr).collect();
     lines.pop(); // хвостовая пустая строка от финального NL
@@ -381,10 +429,18 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
     }
     for (i, l) in lines.iter().enumerate() {
         if l.is_empty() {
-            return Err(fail("empty line (grammar: no blank lines)".into(), i + 1, l));
+            return Err(fail(
+                "empty line (grammar: no blank lines)".into(),
+                i + 1,
+                l,
+            ));
         }
         if l.contains('\t') {
-            return Err(fail("tab character (SP is a single space)".into(), i + 1, l));
+            return Err(fail(
+                "tab character (SP is a single space)".into(),
+                i + 1,
+                l,
+            ));
         }
     }
 
@@ -482,11 +538,17 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
                 }
             };
             if f[3] != "WCS" {
-                return Err(fail(format!("expected `WCS` in G92 block, got `{}`", f[3]), i + 1, lines[i]));
+                return Err(fail(
+                    format!("expected `WCS` in G92 block, got `{}`", f[3]),
+                    i + 1,
+                    lines[i],
+                ));
             }
-            let w = wcs_name(f[4])
-                .map_err(|e| fail(e, i + 1, lines[i]))?;
-            frame_preset = Some(FramePreset { values: Point3 { x, y, z }, wcs: w });
+            let w = wcs_name(f[4]).map_err(|e| fail(e, i + 1, lines[i]))?;
+            frame_preset = Some(FramePreset {
+                values: Point3 { x, y, z },
+                wcs: w,
+            });
         } else {
             return Err(fail(
                 format!("invalid FRAME_PRESET `{rest}` (expected `none` or `G92 ...`)"),
@@ -510,7 +572,10 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
     // END + ничего после
     if i >= lines.len() || lines[i] != "END" {
         return Err(fail(
-            format!("expected `END`, got `{}`", lines.get(i).copied().unwrap_or("")),
+            format!(
+                "expected `END`, got `{}`",
+                lines.get(i).copied().unwrap_or("")
+            ),
             i + 1,
             lines.get(i).copied().unwrap_or(""),
         ));
@@ -592,7 +657,10 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
         ));
     }
     let kw = fields[1];
-    let mut c = Cur { f: &fields[2..], i: 0 };
+    let mut c = Cur {
+        f: &fields[2..],
+        i: 0,
+    };
     let src_of = |s: (u32, u32, u32, u32)| SrcSpan {
         file: file.to_string(),
         line_start: s.0,
@@ -609,7 +677,13 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::Rapid { start, end, state: st, src: src_of(s), sub }
+            Op::Rapid {
+                start,
+                end,
+                state: st,
+                src: src_of(s),
+                sub,
+            }
         }
         "LINEAR" => {
             let start = start_point(c.take("start=")?)?;
@@ -618,7 +692,13 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::Linear { start, end, state: st, src: src_of(s), sub }
+            Op::Linear {
+                start,
+                end,
+                state: st,
+                src: src_of(s),
+                sub,
+            }
         }
         "ARC" => {
             let start = start_point(c.take("start=")?)?;
@@ -637,7 +717,18 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state: st, src: src_of(s), sub }
+            Op::Arc {
+                start,
+                end,
+                center,
+                normal,
+                dir,
+                sweep_deg,
+                pitch,
+                state: st,
+                src: src_of(s),
+                sub,
+            }
         }
         "DWELL" => {
             let seconds = num(c.take("seconds=")?)?;
@@ -645,7 +736,12 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::Dwell { seconds, state: st, src: src_of(s), sub }
+            Op::Dwell {
+                seconds,
+                state: st,
+                src: src_of(s),
+                sub,
+            }
         }
         "TOOL_CHANGE" => {
             let tool = u32::try_from(integer(c.take("tool=")?)?)
@@ -653,7 +749,11 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let s = src_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::ToolChange { tool, state: st, src: src_of(s) }
+            Op::ToolChange {
+                tool,
+                state: st,
+                src: src_of(s),
+            }
         }
         "STOP" => {
             let optional_v = c.take("optional=")?;
@@ -665,13 +765,23 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let s = src_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::ProgramStop { optional, state: st, src: src_of(s) }
+            Op::ProgramStop {
+                optional,
+                state: st,
+                src: src_of(s),
+            }
         }
         "PEND" => {
             c.done()?; // state нет — D6
-            // src в тексте не представлен; плейсхолдер 0.1-0.0 (D10)
+                       // src в тексте не представлен; плейсхолдер 0.1-0.0 (D10)
             Op::ProgramEnd {
-                src: SrcSpan { file: file.to_string(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+                src: SrcSpan {
+                    file: file.to_string(),
+                    line_start: 0,
+                    col_start: 1,
+                    line_end: 0,
+                    col_end: 0,
+                },
             }
         }
         "WCS_DEFINE" => {
@@ -680,7 +790,12 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let s = src_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::WcsDefine { p, origin, state: st, src: src_of(s) }
+            Op::WcsDefine {
+                p,
+                origin,
+                state: st,
+                src: src_of(s),
+            }
         }
         "WCS_SET_HERE" => {
             let p = p_field(&mut c)?;
@@ -688,7 +803,12 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let s = src_field(&mut c)?;
             let st = state(&mut c)?;
             c.done()?;
-            Op::WcsSetHere { p, delta, state: st, src: src_of(s) }
+            Op::WcsSetHere {
+                p,
+                delta,
+                state: st,
+                src: src_of(s),
+            }
         }
         "RAW" => {
             // D6: state нет
@@ -698,7 +818,12 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             let s = src_field(&mut c)?;
             let payload = hex_payload(c.take("payload=")?)?;
             c.done()?;
-            Op::Raw { payload_hex: payload, reason, code, src: src_of(s) }
+            Op::Raw {
+                payload_hex: payload,
+                reason,
+                code,
+                src: src_of(s),
+            }
         }
         _ => return Err(format!("unknown op keyword `{kw}` (10 kinds, SPEC §5)")),
     };

@@ -23,8 +23,8 @@ pub trait Adapter {
 // Сигнатуры trait не меняются (freeze v0.1-interface).
 // ===========================================================================
 
-use std::cell::RefCell;
 use crate::verify::Notice;
+use std::cell::RefCell;
 
 /// Адаптер канонического текста EID/L1 (dialect_name = "eid-l1").
 ///
@@ -39,7 +39,9 @@ pub struct EidTextAdapter {
 
 impl EidTextAdapter {
     pub fn new() -> Self {
-        Self { notices: RefCell::new(Vec::new()) }
+        Self {
+            notices: RefCell::new(Vec::new()),
+        }
     }
 
     /// Notices последнего `parse` (отброшенные опы); опустошает буфер.

@@ -158,8 +158,6 @@ pub struct Notice {
     pub op: Op,
 }
 
-/// Результат разбора: программа (zero-length отброшены) + notices.
-
 // ===========================================================================
 // Диагностика
 // ===========================================================================
@@ -225,7 +223,11 @@ pub struct VerifyReport {
 /// notice, остальные нарушения — диагностики. Путь parse/канонизации.
 pub fn validate_with_notices(program: &Program) -> VerifyReport {
     let (kept_ops, notices, diagnostics) = run(program, false);
-    VerifyReport { kept_ops, notices, diagnostics }
+    VerifyReport {
+        kept_ops,
+        notices,
+        diagnostics,
+    }
 }
 
 /// Верификация канонической формы (путь эмиссии/standalone): zero-length
@@ -254,9 +256,15 @@ fn p3_eq(a: &Point3, b: &Point3) -> bool {
 
 fn motion_parts(op: &Op) -> Option<(&StartPoint, &Point3, &State)> {
     match op {
-        Op::Rapid { start, end, state, .. }
-        | Op::Linear { start, end, state, .. }
-        | Op::Arc { start, end, state, .. } => Some((start, end, state)),
+        Op::Rapid {
+            start, end, state, ..
+        }
+        | Op::Linear {
+            start, end, state, ..
+        }
+        | Op::Arc {
+            start, end, state, ..
+        } => Some((start, end, state)),
         _ => None,
     }
 }
@@ -293,7 +301,10 @@ fn verify_program_end(ops: &[Op], errors: &mut Vec<Diagnostic>) {
             None,
         ));
     }
-    let end_count = ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })).count();
+    let end_count = ops
+        .iter()
+        .filter(|o| matches!(o, Op::ProgramEnd { .. }))
+        .count();
     if end_count == 0 && !ops.is_empty() {
         errors.push(diag(
             ErrorCode::InvalidInput,
@@ -335,7 +346,13 @@ fn verify_op(op: &Op, ctx: &VerifyCtx) -> OpVerify {
         Op::Linear { start, end, .. } => {
             v.zero = zero_motion(start, end);
         }
-        Op::Arc { start, end, sweep_deg, pitch, .. } => {
+        Op::Arc {
+            start,
+            end,
+            sweep_deg,
+            pitch,
+            ..
+        } => {
             // start == end при sweep != 360° и pitch == 0 — нулевой ход,
             // не дуга (SPEC §3/§6; sweep=0 сюда же — CORPUS #13).
             v.zero = zero_arc(start, end, sweep_deg, pitch);
@@ -349,7 +366,10 @@ fn verify_op(op: &Op, ctx: &VerifyCtx) -> OpVerify {
                 ));
             }
             if nval(seconds) == 0.0 {
-                v.zero = Some((NoticeKind::ZeroDwell, "zero dwell dropped (seconds == 0, SPEC §5.2)".into()));
+                v.zero = Some((
+                    NoticeKind::ZeroDwell,
+                    "zero dwell dropped (seconds == 0, SPEC §5.2)".into(),
+                ));
             }
         }
         Op::ToolChange { tool, state, .. } => {
@@ -357,7 +377,13 @@ fn verify_op(op: &Op, ctx: &VerifyCtx) -> OpVerify {
             if state.tool != Some(*tool) {
                 v.hard.push(diag(
                     ErrorCode::InvalidInput,
-                    format!("TOOL_CHANGE tool={tool} != state tool={} (D4)", state.tool.map(|t| t.to_string()).unwrap_or_else(|| "none".into())),
+                    format!(
+                        "TOOL_CHANGE tool={tool} != state tool={} (D4)",
+                        state
+                            .tool
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "none".into())
+                    ),
                     op_src(op),
                 ));
             }
@@ -400,17 +426,29 @@ fn check_p_domain(op: &Op, p: u8, errors: &mut Vec<Diagnostic>) {
 fn zero_motion(start: &StartPoint, end: &Point3) -> Option<(NoticeKind, String)> {
     if let StartPoint::Known(s) = start {
         if p3_eq(s, end) {
-            return Some((NoticeKind::ZeroLengthMotion, "zero-length motion dropped (start == end, SPEC §3)".into()));
+            return Some((
+                NoticeKind::ZeroLengthMotion,
+                "zero-length motion dropped (start == end, SPEC §3)".into(),
+            ));
         }
     }
     None
 }
 
 /// zero-length candidate для arc.
-fn zero_arc(start: &StartPoint, end: &Point3, sweep_deg: &Num, pitch: &Num) -> Option<(NoticeKind, String)> {
+fn zero_arc(
+    start: &StartPoint,
+    end: &Point3,
+    sweep_deg: &Num,
+    pitch: &Num,
+) -> Option<(NoticeKind, String)> {
     if let StartPoint::Known(s) = start {
         if p3_eq(s, end) && nval(sweep_deg) != 360.0 && nval(pitch) == 0.0 {
-            return Some((NoticeKind::ZeroLengthArc, "zero-length arc dropped (start == end, sweep != 360°, pitch == 0; SPEC §3/§6)".into()));
+            return Some((
+                NoticeKind::ZeroLengthArc,
+                "zero-length arc dropped (start == end, sweep != 360°, pitch == 0; SPEC §3/§6)"
+                    .into(),
+            ));
         }
     }
     None
@@ -425,7 +463,17 @@ fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
         Op::Linear { state, .. } => {
             check_feed_modal(op, "linear", state, errors);
         }
-        Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state, .. } => {
+        Op::Arc {
+            start,
+            end,
+            center,
+            normal,
+            dir,
+            sweep_deg,
+            pitch,
+            state,
+            ..
+        } => {
             if matches!(start, StartPoint::Unknown) {
                 errors.push(diag(
                     ErrorCode::InvalidInput,
@@ -437,7 +485,10 @@ fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
             if s <= 0.0 || s > 360.0 {
                 errors.push(diag(
                     ErrorCode::InvalidInput,
-                    format!("sweep={} out of domain (0°, 360°] (D7, SPEC §6)", sweep_deg.text),
+                    format!(
+                        "sweep={} out of domain (0°, 360°] (D7, SPEC §6)",
+                        sweep_deg.text
+                    ),
                     op_src(op),
                 ));
             }
@@ -453,7 +504,18 @@ fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
             check_normal_positive_axis(op, normal, errors);
             check_feed_modal(op, "arc", state, errors);
             if let StartPoint::Known(sk) = start {
-                check_arc_geometry(op, sk, end, center, normal, *dir, nval(sweep_deg), nval(pitch), eps_pos, errors);
+                check_arc_geometry(
+                    op,
+                    sk,
+                    end,
+                    center,
+                    normal,
+                    *dir,
+                    nval(sweep_deg),
+                    nval(pitch),
+                    eps_pos,
+                    errors,
+                );
             }
         }
         Op::Rapid { .. }
@@ -536,7 +598,10 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
     let mut kept: Vec<Op> = Vec::new();
     let mut notices: Vec<Notice> = Vec::new();
     for (i, o) in ops.iter().enumerate() {
-        let ctx = VerifyCtx { index: i, first_motion_raw };
+        let ctx = VerifyCtx {
+            index: i,
+            first_motion_raw,
+        };
         let ov = verify_op(o, &ctx);
         errors.extend(ov.hard);
         match ov.zero {
@@ -544,15 +609,17 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
                 if reject_zero_length {
                     errors.push(diag(
                         ErrorCode::InvalidInput,
-                        format!(
-                            "{} must be dropped by canonicalization before emission (SPEC §3)",
-                            message
-                        ),
+                        format!("{message} must be dropped by canonicalization before emission (SPEC §3)"),
                         op_src(o),
                     ));
                     kept.push(o.clone());
                 } else {
-                    notices.push(Notice { kind, message, op_index: i, op: o.clone() });
+                    notices.push(Notice {
+                        kind,
+                        message,
+                        op_index: i,
+                        op: o.clone(),
+                    });
                 }
             }
             None => kept.push(o.clone()),
@@ -607,7 +674,11 @@ fn vdot(a: &V3, b: &V3) -> f64 {
 }
 
 fn vcross(a: &V3, b: &V3) -> V3 {
-    (a.1 * b.2 - a.2 * b.1, a.2 * b.0 - a.0 * b.2, a.0 * b.1 - a.1 * b.0)
+    (
+        a.1 * b.2 - a.2 * b.1,
+        a.2 * b.0 - a.0 * b.2,
+        a.0 * b.1 - a.1 * b.0,
+    )
 }
 
 fn vdist(a: &V3, b: &V3) -> f64 {
@@ -622,8 +693,12 @@ fn eps_for(ops: &[Op]) -> f64 {
     let mut any = false;
     let mut take = |v: V3| {
         any = true;
-        min.0 = min.0.min(v.0); min.1 = min.1.min(v.1); min.2 = min.2.min(v.2);
-        max.0 = max.0.max(v.0); max.1 = max.1.max(v.1); max.2 = max.2.max(v.2);
+        min.0 = min.0.min(v.0);
+        min.1 = min.1.min(v.1);
+        min.2 = min.2.min(v.2);
+        max.0 = max.0.max(v.0);
+        max.1 = max.1.max(v.1);
+        max.2 = max.2.max(v.2);
     };
     for o in ops {
         if let Some((start, end, _)) = motion_parts(o) {
@@ -647,10 +722,7 @@ fn rotate(v: &V3, n: &V3, theta: f64) -> V3 {
     let nxv = vcross(n, v);
     let nv = vdot(n, v);
     vadd(
-        &vadd(
-            &vscale(v, c),
-            &vscale(&nxv, s),
-        ),
+        &vadd(&vscale(v, c), &vscale(&nxv, s)),
         &vscale(n, nv * (1.0 - c)),
     )
 }
@@ -740,7 +812,11 @@ struct PrevMotion {
 
 fn p3_build(v: V3) -> Point3 {
     let mk = |x: f64| Num::new(crate::emitter::fmt_num(x), x);
-    Point3 { x: mk(v.0), y: mk(v.1), z: mk(v.2) }
+    Point3 {
+        x: mk(v.0),
+        y: mk(v.1),
+        z: mk(v.2),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -813,7 +889,10 @@ fn expect_start(
             } else if known_origin[wcs_to_p(pr.wcs) as usize].is_some() && op_o.is_some() {
                 // reading = preset + O₀ − O_wcs (обе системы определены в тексте)
                 let o0 = known_origin[wcs_to_p(pr.wcs) as usize].clone().unwrap();
-                StartExpect::Tol(p3_build(vadd(&p3_vals(&pr.values), &vsub(&p3_vals(&o0), &p3_vals(&op_o.unwrap())))))
+                StartExpect::Tol(p3_build(vadd(
+                    &p3_vals(&pr.values),
+                    &vsub(&p3_vals(&o0), &p3_vals(&op_o.unwrap())),
+                )))
             } else {
                 // (b): смена на систему, разность origin'ов которой не вычислима
                 StartExpect::UnknownRequired
@@ -899,7 +978,11 @@ fn check_linking(program: &Program, kept: &[Op], eps_pos: f64, errors: &mut Vec<
                     }
                 }
                 saw_motion = true;
-                prev = Some(PrevMotion { end: end.clone(), frame: state.frame, wcs: state.wcs });
+                prev = Some(PrevMotion {
+                    end: end.clone(),
+                    frame: state.frame,
+                    wcs: state.wcs,
+                });
             }
             _ => {}
         }

@@ -119,6 +119,15 @@ pub struct SrcSpan {
 }
 
 /// 10 типов опов (SPEC §5). RAW и PEND не несут state (D6).
+// Точечный allow с обоснованием (clippy-гейт CI, волна аудита A): finding
+// PRE-EXISTING (не из правок волны — файл не менялся с freeze). Code-fix по
+// подсказке clippy = Box<State>/Box<SrcSpan> в 7 вариантах — изменение
+// ЗАМОРОЖЕННОГО интерфейса v0.1 (lib.rs: «изменение сигнатур — только PR к
+// оркестратору») и compile-break eid-grbl / eid-linuxcnc / eid-fanuc (агент C
+// в полёте) / eid-harness generator.rs (зона B). Кандидат на разморозку API —
+// оркестратор; до тех пор гейт держится на этом атрибуте, а не на
+// crate-wide allow (удалён, аудит #24).
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     Rapid {
