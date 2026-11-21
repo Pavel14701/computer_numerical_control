@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-22 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9 (Fanuc + Haas колонки) · CORPUS v0.7 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
+**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9.1 (Fanuc + Haas колонки) · CORPUS v0.7.1 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
 
 ---
 
