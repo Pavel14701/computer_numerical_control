@@ -167,6 +167,32 @@ CORPUS §1.2 v0.5). Изменение управляемое: поле конс
 
 ---
 
+## EID-CORE (crates/eid-core)
+
+### v0.3 — 2026-11-21 (итерация 5: per-op-kind verify + grammar-conformance + obligation-таблица)
+
+`verify.rs`: `run()` декомпозирован — `verify_program_end` → **`verify_op(op, ctx)`** (exhaustive match по 10 вариантам: новый вариант Op = компилятор принуждает verify-арм) → `verify_kept_op` (инварианты итогового AST + §6-геометрия с ε) → `check_linking` (post). Поведение идентично — все 48 golden зелёные без правок. **Grammar-conformance suite**: 57 тестов по 33 продукциям grammar.ebnf (валидный пример + невалидные варианты с точным кодом и Stage::Parse); чек-лист продукций в шапке теста. **Obligation-таблица** «правило→тест» в шапке verify.rs — 0 пробелов (§2/§3/§5/§6/§10: каждое правило = именованный spec_* тест или явное N/A-core с владельцем). Stage-provenance тесты (Parse/Verify/Emit по источнику диагностики). 108/108.
+
+## EID-GRBL (crates/eid-grbl)
+
+### v0.4 — 2026-11-21 (итерации 2–5: полная машина + legality + покрытие + cargo-mutants)
+
+Полная машина: lexer (слова/комментарии/N-skip/$-config/block-delete, регистронезависимо) → canonicalize (modal state → resolved-state AST; дуги IJK/R по §6 — все плоскости×режимы×знаки; квантование входа §10.6; циклы-сырьё → Raw; двухклассовый RAW: line-level vs структурный Err) → emit (legality-таблица ConversionTarget-паттерна: legal 10 / illegal 9 с кодами; единый путь отказа через `code_of`; coolant 10 переходов; полный круг без end-слов). **+32 теста** (102/102): специ-пары по правилам спеки (`spec_*` именование), modal-конфликты ×6 групп, frames §5.3, G74/76/84/87/88 SEMANTICS-класс (ruling), legality ×8 условий. **cargo-mutants**: 676 мутантов, kill-rate 74% → **82.2%** (55 убито усилением тестов), 88 выживших классифицированы (~30 эквивалентных порогов, ~10 core-gated, ~40 arc-3D ждут R1-эталонных значений — итерация 6, 6 timeout = детекция висания лексера).
+
+## EID-LINUXCNC (crates/eid-linuxcnc)
+
+### v0.4 — 2026-11-21 (итерации 2–5: полная машина + циклы §7.7 + legality + метаморфные инварианты)
+
+Полная машина: lexer (регистронезависимый, whitespace-вариативный, жёсткие классы `#`/O-code) → canonicalize (G90.1/G91.1 ABSORB побитово-эквивалентный тест; циклы §7.7-шаблон: 7 типов, d_k-геометрия, G86-рестарт, G98/G99, L/K + лимит blowup) → emit (legality-таблица: legal 11 / illegal 8; полный круг без end-слов — зеркало C-фикса). **Метаморфные инварианты**: comment/whitespace/N-word → идентичный AST (semantic_diff-компаратор; 10 ложных срабатываний derive(PartialEq) с SrcSpan расследованы — артефакт компаратора, не парсера). Stage-транзит v0.1.2 применён (11 мест). **94 → 106 тестов**.
+
+## EID-INTEGRATION + EID-CLI
+
+### v0.2 — 2026-11-21 (итерации 4–5: sim mock + translate registry + CLI live + e2e-матрица 48 + axis_limits + stage-вывод)
+
+sim.rs: mock-sim (обратный parse + structural + axis_limits) + real-detektion (LinuxCNC не установлен — mock-only MVP задокументирован). translate.rs: registry адаптеров (trait objects), TranslateError::stage(), format_diagnostic с `[stage]`-тегом. CLI: live translate/verify (exit-коды по классам отказов), **e2e-матрица 48 векторов** (fwd/reverse/verify + r4-отказы через CLI + lossy-Skip), идемпотентность CLI, mixed-line-endings. axis_limits в профиле (не retract_clearance — ruling детерминизма). 18 тестов.
+
+---
+
 ## SPEC-EID-L1
 
 ### v0.15 — 2026-11-20 (красный-протокол round 2: шаблон развёртки + payload-граница)
