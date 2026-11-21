@@ -20,6 +20,9 @@ pub enum Expect {
     /// parse Err с любым из кодов семейства (уровневые расхождения
     /// канонизатора/диалекта — классификация §9).
     AnyErr(&'static [ErrorCode]),
+    /// Ok ИЛИ emit-отказ E_INVALID_INPUT (Verify-этап) — ruling refinement:
+    /// инварианты Verify работают, отказ = подтверждение, не находка (M1/M5/M7/M11/M13/M14).
+    OkOrVerifyErr,
 }
 
 impl Expect {
@@ -32,7 +35,7 @@ impl Expect {
                 _ => false,
             },
             Ok(out) => match self {
-                Expect::Ok => true,
+                Expect::Ok | Expect::OkOrVerifyErr => true,
                 Expect::Notice => !out.notices.is_empty(),
                 Expect::Err(_) | Expect::AnyErr(_) => false,
             },
@@ -47,7 +50,7 @@ impl Expect {
                 Expect::AnyErr(cs) => diags.iter().any(|d| cs.contains(&d.code)),
                 _ => false,
             },
-            Ok(_) => matches!(self, Expect::Ok),
+            Ok(_) => matches!(self, Expect::Ok | Expect::OkOrVerifyErr),
         }
     }
 
@@ -59,6 +62,7 @@ impl Expect {
             Expect::AnyErr(cs) => {
                 format!("Err({})", cs.iter().map(|c| c.as_str()).collect::<Vec<_>>().join("|"))
             }
+            Expect::OkOrVerifyErr => "Ok или Verify-отказ E_INVALID_INPUT".into(),
         }
     }
 }
@@ -73,16 +77,6 @@ const SEM_OR_INV: &[ErrorCode] = &[ErrorCode::UnsupportedSemantics, ErrorCode::I
 /// Первый arc.
 fn first_arc(p: &mut Program) -> Option<&mut Op> {
     p.ops.iter_mut().find(|o| matches!(o, Op::Arc { .. }))
-}
-
-/// Второй motion-оп (для start-инъекции).
-fn second_motion(p: &mut Program) -> Option<&mut Op> {
-    p.ops
-        .iter_mut()
-        .filter(|o| {
-            matches!(o, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. })
-        })
-        .nth(1)
 }
 
 fn num(v: f64) -> Num {
@@ -103,10 +97,13 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 *sweep_deg = num(0.0001);
                 *pitch = num(0.0);
             }
-            Expect::Notice
+            Expect::OkOrVerifyErr
         }
         "M2" => {
-            // sweep→360 при start==end → полный круг (SPEC §6)
+            // sweep→360 при start==end → полный круг (SPEC §6).
+            // Если дуга связанная (не первая), end := start ломает цепочку
+            // последующих опов → легитимный Verify-отказ (инвариант §4
+            // связывания работает) — мутант-зонд инварианта, не баг (ruling).
             let a = first_arc(&mut p)?;
             if let Op::Arc { end, start, sweep_deg, .. } = a {
                 if let StartPoint::Known(s) = start {
@@ -114,7 +111,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 }
                 *sweep_deg = num(360.0);
             }
-            Expect::Ok
+            Expect::OkOrVerifyErr
         }
         "M3" => {
             // sweep→near-180 с пересчитанным центром (амплификация, #11)
@@ -155,7 +152,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             if let Op::Linear { state, .. } = lin {
                 state.feed = None;
             }
-            Expect::Err(ErrorCode::InvalidInput)
+            Expect::OkOrVerifyErr
         }
         "M6" => {
             // feed re-set: смена F' на первом линейном ходе → Ok (modal)
@@ -166,15 +163,39 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             Expect::Ok
         }
         "M7" => {
-            // unknown-start инъекция на втором motion-опе → Err(E_INVALID_INPUT)
-            let m = second_motion(&mut p)?;
-            match m {
+            // unknown-start инъекция только на СВЯЗАННОМ ходе (refinement):
+            // пара соседних motion-опов (frame=Wcs, одна WCS, обе Known) —
+            // связывание обязывает Known; Unknown здесь = Err(E_INVALID_INPUT).
+            // В точках разрыва (a)-(d) Unknown легален — инъекция туда = шум.
+            let mut pair: Option<usize> = None;
+            let mut prev: Option<(Frame, Wcs)> = None;
+            for (idx, o) in p.ops.iter().enumerate() {
+                let (frame, wcs, known) = match o {
+                    Op::Rapid { start, state, .. }
+                    | Op::Linear { start, state, .. }
+                    | Op::Arc { start, state, .. } => (
+                        state.frame,
+                        state.wcs,
+                        matches!(start, StartPoint::Known(_)),
+                    ),
+                    _ => continue,
+                };
+                if let Some((pf, pw)) = prev {
+                    if known && frame == Frame::Wcs && pf == Frame::Wcs && pw == wcs {
+                        pair = Some(idx);
+                        break;
+                    }
+                }
+                prev = Some((frame, wcs));
+            }
+            let idx = pair?;
+            match &mut p.ops[idx] {
                 Op::Rapid { start, .. } | Op::Linear { start, .. } | Op::Arc { start, .. } => {
                     *start = StartPoint::Unknown
                 }
                 _ => {}
             }
-            Expect::Err(ErrorCode::InvalidInput)
+            Expect::OkOrVerifyErr
         }
         "M11" => {
             // zero-length + пресетка: L20-якорь + linear start==end → notice
@@ -223,7 +244,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                     sub: None,
                 };
             }
-            Expect::Notice
+            Expect::OkOrVerifyErr
         }
         "M13" => {
             // plane orphan: нормаль чужой плоскости → радиус-валидация §6.1
@@ -231,7 +252,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             if let Op::Arc { normal, .. } = a {
                 *normal = Point3 { x: num(0.0), y: num(1.0), z: num(0.0) };
             }
-            Expect::AnyErr(&[ErrorCode::InvalidInput])
+            Expect::OkOrVerifyErr
         }
         "M14" => {
             // centers swap: центр сдвинут на 2·вектор (инкрементальное прочтение)
@@ -248,7 +269,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 let cx = center.x.value();
                 center.x = num(sx + 2.0 * (cx - sx));
             }
-            Expect::Err(ErrorCode::InvalidInput)
+            Expect::OkOrVerifyErr
         }
         "M16" => {
             // M1-инъекция: STOP optional=yes после первого опа → Ok (Q8)
