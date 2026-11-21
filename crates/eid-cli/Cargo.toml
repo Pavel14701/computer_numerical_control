@@ -9,3 +9,5 @@ eid-integration = { path = "../eid-integration" }
 
 [dev-dependencies]
 eid-harness = { path = "../eid-harness" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
