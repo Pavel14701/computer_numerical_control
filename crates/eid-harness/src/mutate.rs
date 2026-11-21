@@ -72,8 +72,6 @@ pub const OPERATORS: [&str; 17] = [
     "M15", "M16", "M17",
 ];
 
-const SEM_OR_INV: &[ErrorCode] = &[ErrorCode::UnsupportedSemantics, ErrorCode::InvalidInput];
-
 /// Первый arc.
 fn first_arc(p: &mut Program) -> Option<&mut Op> {
     p.ops.iter_mut().find(|o| matches!(o, Op::Arc { .. }))

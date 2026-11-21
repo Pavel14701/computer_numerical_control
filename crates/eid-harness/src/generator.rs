@@ -6,6 +6,11 @@
 
 use eid_core::ast::*;
 
+/// Порог защиты arc_center (#16): tan(sweep/2) с |t| ниже порога считаем
+/// вырождением (sweep→0°/360°), центр = середина хорды. 1e-4 ⇒ потолок
+/// |d| = 10⁴·half; sweep=359.99° даёт |t| = 8.7e-5 < порога (см. тест).
+const MIN_TAN: f64 = 1e-4;
+
 #[derive(Debug, Clone)]
 pub struct GenConfig {
     pub seed: u64,
@@ -72,6 +77,16 @@ fn state(feed: Option<f64>, wcs: Wcs) -> State {
 
 /// Согласованный центр дуги в плоскости Z=const: c = mid + perp·(L/2)/tan(sweep/2),
 /// perp для dir=Ccw — слева от вектора S→E, для Cw — справа (normal +Z).
+///
+/// #16 (clamp знаменателя): при sweep→360° tan(sweep/2)→0 и d = half/tan
+/// улетало в ±∞ (координаты центра ~1e16 и хуже). Порог [`MIN_TAN`]: при
+/// |t| < 1e-4 (sweep ≈ 0° или ≈ 360° — дуга с почти полным оборотом при
+/// ненулевой хорде геометрически нечестива) центр = середина хорды; при
+/// |t| ≥ 1e-4 ограничение |d| ≤ half/MIN_TAN = 10⁴·half выполняется
+/// автоматически. Координаты центра конечны при любом входе (включая
+/// NaN/±∞ sweep). Генератор сам такие sweep не выдаёт (фиксированный набор
+/// [90°, 180°, 270°]); порог — страховка pub-функции (прямые вызовы,
+/// будущие расширения GenConfig).
 pub fn arc_center(sx: f64, sy: f64, ex: f64, ey: f64, sweep_deg: f64, dir: Dir) -> (f64, f64) {
     let dx = ex - sx;
     let dy = ey - sy;
@@ -82,7 +97,13 @@ pub fn arc_center(sx: f64, sy: f64, ex: f64, ey: f64, sweep_deg: f64, dir: Dir) 
     let half = l2 / 2.0;
     let rad = sweep_deg.to_radians();
     let t = (rad / 2.0).tan();
-    let d = if t.abs() < 1e-9 { 0.0 } else { half / t };
+    // #16: |t| ниже порога (sweep≈0/360°) или tan выродился в NaN/±∞
+    // (|sweep|→inf) → центр в середине хорды, а не деление с улетанием.
+    let d = if !t.is_finite() || t.abs() < MIN_TAN {
+        0.0
+    } else {
+        half / t // |t| ≥ MIN_TAN ⇒ |d| ≤ half/MIN_TAN = 10⁴·half
+    };
     // перпендикуляр единичной длины: ccw — слева, cw — справа
     let (px, py) = if dir == Dir::Ccw { (-dy / l2, dx / l2) } else { (dy / l2, -dx / l2) };
     let mx = (sx + ex) / 2.0;
@@ -258,6 +279,52 @@ mod tests {
         assert_eq!(a, b);
         let c = generate(&GenConfig { seed: 43, max_ops: 10, ..GenConfig::default() });
         assert_ne!(a, c, "разные seed — разные программы (sanity)");
+    }
+
+    /// #16: sweep→360° не даёт inf/nan/улетания координат центра. До фикса
+    /// sweep=359.99° давал d = half/tan(179.995°) ≈ -5.1e4 (и ~1e16 при
+    /// ровно 360°, tan(π) = -1.2e-16 > порога 1e-9).
+    #[test]
+    fn arc_center_stays_finite_near_full_circle() {
+        // точный воспроизводитель находки: sweep=359.99°
+        let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, 359.99, Dir::Ccw);
+        assert!(cx.is_finite() && cy.is_finite(), "({cx}, {cy})");
+        assert!(cx.abs() < 1e6 && cy.abs() < 1e6, "центр улетел: ({cx}, {cy})");
+
+        // вся окрестность полного оборота + вырождения, оба направления;
+        // потолок |d| = half/MIN_TAN (центр не дальше 10⁴·half от середины)
+        let half = 8.0_f64.hypot(4.0) / 2.0;
+        let bound = 1e4 * half + 1e-6;
+        for sweep in [0.0, 0.001, 45.0, 90.0, 180.0, 270.0, 359.0, 359.9, 359.99, 359.999,
+                      359.9999, 360.0, 360.001, 400.0]
+        {
+            for dir in [Dir::Ccw, Dir::Cw] {
+                let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, sweep, dir);
+                assert!(
+                    cx.is_finite() && cy.is_finite(),
+                    "sweep={sweep} dir={dir:?}: центр ({cx}, {cy})"
+                );
+                let d = ((cx - 4.0).powi(2) + (cy - 2.0).powi(2)).sqrt();
+                assert!(d <= bound, "sweep={sweep} dir={dir:?}: |d|={d} > {bound}");
+            }
+        }
+
+        // NaN/±∞ sweep не отравляют результат (центр = середина хорды)
+        for sweep in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, sweep, Dir::Cw);
+            assert!(cx.is_finite() && cy.is_finite(), "sweep={sweep}: ({cx}, {cy})");
+        }
+    }
+
+    /// #16: генерация с дугой sweep=359.99 (через pub arc_center) даёт
+    /// конечные координаты, пригодные для Num-эмиссии (без inf/nan в тексте).
+    #[test]
+    fn generated_arc_359_99_center_representable() {
+        let (cx, cy) = arc_center(0.0, 0.0, 6.0, 2.0, 359.99, Dir::Ccw);
+        assert!(cx.is_finite() && cy.is_finite());
+        // num() форматирует как {v:.4}: строка не должна содержать inf/nan
+        let s = format!("{cx:.4}{cy:.4}");
+        assert!(!s.contains("inf") && !s.contains("NaN"), "{s}");
     }
 }
 

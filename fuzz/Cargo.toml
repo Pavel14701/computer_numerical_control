@@ -1,0 +1,44 @@
+[package]
+name = "eid-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Отдельный workspace-корень: fuzz-крейт живёт ВНЕ корневого workspace
+# репозитория (#36). libfuzzer-sys и sanitizer-сборка — nightly-only;
+# членство в workspace сломало бы stable `cargo build/test` всего репозитория.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+eid-core = { path = "../crates/eid-core" }
+eid-grbl = { path = "../crates/eid-grbl" }
+eid-linuxcnc = { path = "../crates/eid-linuxcnc" }
+
+# Усилитель детектирования: line-info в трейсах при локальных прогонах.
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_grbl_parse"
+path = "fuzz_targets/fuzz_grbl_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_linuxcnc_parse"
+path = "fuzz_targets/fuzz_linuxcnc_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_eid_core_parse"
+path = "fuzz_targets/fuzz_eid_core_parse.rs"
+test = false
+doc = false
+bench = false
