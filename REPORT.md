@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
-**Дата:** 2026-11-21 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.16 · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.8 (Fanuc-колонка) · CORPUS v0.7 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev) — все внесены, лицензии проверены**
+**Дата:** 2026-11-22 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
+**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9 (Fanuc + Haas колонки) · CORPUS v0.7 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
 
 ---
 
@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **475 тестов passed / 0 failed** · 91+ коммитов · SPEC v0.16 (auto-PEND, O-code→Raw) · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** (свип с manifest-диалектами: ok=57 / err=64: INVALID 41 / RUNTIME 22 / SEMANTICS 1) · mutation-testing kill-rate: grbl 82.2% / linuxcnc ~80% (усилен) / workspace 75.5% · метаморфные инварианты зелёные · grammar-conformance 57 · **e2e48-матрица: 141 направлений через живой CLI** · **rs274 canonical comparison 48/48 — 0 divergences**.
+**Числа:** **758 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203 теста, parse+emit+legality) · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -82,10 +82,31 @@
 - **Режимы**: staged-брифы против зависаний; прицельные коммиты; активная версия в шапке задач; documents-only-via-editor.
 - **Цикл классификации красного** (CORPUS §9): 70 красных v1 → 4 категории → адресные фиксы → 0 красных v5-v7 за две итерации.
 
-## 6. Дальше (итерация 6 — Fanuc, этап 10; волна в полёте)
+## 6. Итерация 6 — Fanuc (этап 10) + волна аудита (36 пунктов) — ЗАВЕРШЕНЫ
 
-**Fanuc (этап 10, в работе):** research закрыт (`fanuc_dialect_analysis.md` v0.0: COVERAGE-матрица 30i, 3 ловушки адаптера — EOB `;` / DPI bare-integer / G10 L20≠LinuxCNC; Q6 G76 закрыт — параметр станка 5101; G52 = единственный ERR-класс; Macro B → line-level Raw подтверждён структурой диалекта; реестр 15 `?`) · COVERAGE v0.8 Fanuc-колонка внесена · `eid-fanuc` парсер (этап 1: скелет/лексер/движение — агент C в работе; этапы 2–3: фреймы/циклы по Fanuc-семантике/M-коды/Macro B; затем эмиссия).
+### 6.1 Fanuc-адаптер — ПОЛНЫЙ ЦИКЛ (этапы 1–3, коммиты c5c2ac8/421678c/a49a6e9)
 
-**Кандидаты итерации 6:** motion-level компаратор rs274-потока (CANON-DIV-остаток) · sweep из manifest напрямую · fanuc-эмиссия + профили (G59.x→G54.1-опция) · реестр 15 `?` — сверка по конкретной серии Fanuc.
+- **Этап 1** (парсер): лексер с EOB `;`-разделением (не комментарий — ловушка №2), DPI-политика (bare-integer × least-increment + W_DPI_ASSUMED; F исключён из ×0.001 — ревью нашло баг брифа: Fanuc F-инкремент = 1 mm/min, параметр 1422), модальные группы + G70/G71-псевдонимы, движение G0–G3 все формы. 68 тестов.
+- **Этап 2**: фреймы (G54–G59, G10 L2, G92±S, G53, **G52 = ERR** — единственный жёсткий отказ, G10 L20 ≠ wcs_set_here — ловушка №3, G54.1/G92.1–.3), циклы ×7 по **Fanuc-семантике** (P-мс, δ=0.5mm+W_CYCLE_PARAM_ASSUMED, K/L-повторы, G86-рестарт), M-словарь, Macro B → line-level Raw, G93 ABSORB, D9 round-trip фрагментов (CRLF). 147 тестов.
+- **Этап 3** (эмиссия): FanucEmissionLegality (ConversionTarget), decimal-point-всегда (DPI-ловушка golden), dwell P-мс/X-правило, полный круг без end-слов, path_mode exact_stop→G61 / exact_path→G61+warn / blend→G64+warn, M30 дефолт, wcs_set_here → отказ (честный), зеркала SPEC v0.17, **Raw-хвост после PEND легален** (DNC-subs файлы). 203 теста. Смоук 17 fanuc-файлов корпуса: crash=0, ok=6 (включая fixed-point на 44 618-оперном RTCP-файле) / diagnosed=11 честно.
+- COVERAGE: v0.8 Fanuc-колонка (44 строки + 64 ячейки, Q6 закрыт, реестр +16) → v0.8.1 (rulings) → v0.9 Haas-колонка (36 строк + 101 ячейка, коллизии ≠Fanuc, реестр 66).
 
-**Ревью-очередь (пользователь, данные собраны):** Q10 static-inlining (O-code ×25) · NURBS P-words ×13 (Raw vs этап 12). Auto-PEND — решён (SPEC v0.16, подтверждён rs274).
+### 6.2 Внешний аудит 36 пунктов — все обработаны (зонд-дисциплина)
+
+Каждое ключевое заявление проверено **зондами реального rs274** до фикса: #15 подтверждён (`ARC_FEED rotation=-1` — реальный контроллер режет полный круг с явными X Y, мы молча дропали), #18 подтверждён (rs274 принимает пробел в слове), **#17 ОПРОВЕРГНУТ** (rs274 тоже отвергает вложенные комментарии — наша строгость честна), #1 ложная тревога (Cargo.lock показывает и dev-рёбра; harness уже dev-dep).
+
+- **Критические закрыты**: #33 — модальная абсорбция на RAW-строках (`G91 G28 Z0` терял G91 → следующий кадр молча абсолютный; SPEC §8.6); #15 — полный круг 360° по геометрии (SPEC §3 v0.17 пересмотрел v0.13-правило «формы команды»; CORPUS #13 re-disposition, goldens regen); #29/#30 — тихие u32-обрезания (T4294967296→T0, P1.9→P1).
+- **Спеки**: SPEC v0.17 (§3, §8.6, канон-нормаль pinned) · grammar v0.4 = back-compatible superset (op_num 3+ цифр, quoted-экранирование; **magic «EID/L1 v0.3» не менялся** — все goldens целы).
+- **Зоны**: A (eid-core: feed>0, eps_pos, raw_refusal→eid_core::diag, clippy+fmt чисто), B (harness: cfg(windows)-docker-пути, .out-гард ДО прогона — 288 утечек→0, generator tan-clamp, cargo-fuzz targets), D (13 пунктов eid-linuxcnc, 138 тестов), E (CLI --profile опционален, профиль в конвейере, Fanuc=AdapterPending, units×25.4, CI fmt+clippy gates), grbl-зеркало (117 тестов).
+- **Корпус-последствия**: manifest 144 (конструкционный добор 23 файла, лицензии независимо верифицированы; RTCP 2.1MB/G69 2.5MB cap-исключения приняты — единственные публичные сэмплы); **N11/N14 expect-ревизия** (SPEC v0.16 supersede CORPUS v0.5.2: auto-PEND → Ok+notice, M98 → Ok+Raw); tier_b тесты → manifest-динамика (хардкод 92 убран).
+- **Финал волны**: **workspace 758/0**, R1 48/0 · R2 48/0 · **R3-golden 83/0 · R3-consistency 35/0** (оба красных #13 очищены grbl-зеркалом, stash-верифицировано) · R1-text 8/0 · R4 8/0 · Tier B 144 crash=0 · rs274_e2e48: #13 [ok] 0 divergences live · tree-wide fmt применён (CI fmt-gate зелёный).
+
+### 6.3 Отложено осознанно (не потеряно)
+
+#21 SrcSpan→Arc<str> и #22 AdapterOutput — API-рефакторинги (бласт-радиус через замороженный интерфейс v0.1; Box-PR large_enum_variant туда же) · 21 rs274-e2e48 красный на циклах #19/#20/#21/#25 — классификация §9 запущена (гипотезы: motion-level компаратор / §7.7-сверка с внутренней развёрткой rs274) · NURBS/Q10 — ревью-очередь пользователя.
+
+## 7. Дальше (итерация 7)
+
+Классификация 21 e2e48-красного (в полёте) → SPEC §7.7-сверка с rs274-референсом или motion-level компаратор · eid-haas адаптер (контракт готов: research v0.0 + COVERAGE v0.9) · регистрация "fanuc" в adapter-реестре (17 fanuc-файлов корпуса становятся живыми тестами) · 15+34 `?`-реестры: сверка по конкретным сериям · #21/#22 при разморозке API.
+
+**Ревью-очередь (пользователь):** Q10 static-inlining (O-code ×25) · NURBS P-words ×13 (Raw vs этап 12). Auto-PEND — решён (SPEC v0.16, подтверждён rs274 независимо).
