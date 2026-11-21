@@ -256,10 +256,33 @@ fn negative_n7_unit_switch_semantics() {
 }
 
 #[test]
-fn negative_n12_13_14_program_end_structure() {
+fn negative_n12_13_program_end_structure() {
+    // Дубль/не-последний — структурные → Err INVALID (SPEC §3).
     assert_eq!(err_code(parse(&corpus("n12_program_end_not_last"))), ErrorCode::InvalidInput);
     assert_eq!(err_code(parse(&corpus("n13_program_end_duplicate"))), ErrorCode::InvalidInput);
-    assert_eq!(err_code(parse(&corpus("n14_program_end_missing"))), ErrorCode::InvalidInput);
+}
+
+#[test]
+fn spec_v016_auto_pend_missing_program_end() {
+    // SPEC §3 v0.16 (18/32 Tier B): программа без M2/M30 ВАЛИДА — неявный
+    // конец: ProgramEnd добавлен последним опом + notice W_MISSING_PROGRAM_END.
+    let out = canonicalize_with_notices(
+        &corpus("n14_program_end_missing/program_end_missing.grbl.ngc"),
+        "n14.ngc",
+    )
+    .expect("n14: Ok (auto-PEND, не отказ)");
+    // ops: RAPID, LINEAR, ProgramEnd(авто) — последний оп именно ProgramEnd.
+    assert!(matches!(&out.program.ops[0], Op::Rapid { .. }));
+    assert!(matches!(&out.program.ops[1], Op::Linear { .. }));
+    assert!(matches!(&out.program.ops.last().expect("non-empty"), Op::ProgramEnd { .. }));
+    assert_eq!(out.notices.len(), 1);
+    assert_eq!(
+        out.notices[0].kind,
+        eid_grbl::canonicalize::NoticeKind::MissingProgramEnd
+    );
+    assert!(out.notices[0].message.contains("W_MISSING_PROGRAM_END"));
+    // Негатив: дубль M2 по-прежнему Err (структура ≠ отсутствие конца).
+    assert_eq!(err_code(parse(&corpus("n13_program_end_duplicate"))), ErrorCode::InvalidInput);
 }
 
 #[test]

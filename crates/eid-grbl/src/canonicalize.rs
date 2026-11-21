@@ -25,6 +25,10 @@ pub enum NoticeKind {
     /// R-форма около 180°: cos(sweep/2) < 1e-3 — амплитификация погрешности
     /// центра (EQUIVALENCE §4: notice, не отказ).
     NearDegenerateRArc,
+    /// Программа без M2/M30: неявный конец — ProgramEnd ДОБАВЛЕН последним
+    /// опом (SPEC §3 v0.16 «отсутствие M2 = неявный конец, не отказ»;
+    /// 18/32 Tier B — реальные посты не пишут program-end).
+    MissingProgramEnd,
 }
 
 #[derive(Debug, Clone)]
@@ -308,24 +312,10 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     finalize(&mut ctx, line_count as u32)
 }
 
-/// Структурная проверка program_end (N12/N13/N14 → Err INVALID) + сборка Program.
+/// Структурная проверка program_end: дубли/не-последний → Err INVALID
+/// (N12/N13); ОТСУТСТВИЕ M2/M30 → неявный конец: ProgramEnd добавляется
+/// последним опом с notice (SPEC §3 v0.16; 18/32 Tier B) + сборка Program.
 fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>> {
-    // Лимит max_ops_per_program (COVERAGE §1.2).
-    let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
-    if ops_n > 200_000.0 {
-        return Err(vec![limit_err(
-            "max_ops_per_program", 200_000.0, ops_n,
-            format!("program yields {} ops, limit 200000", ops_n as u64),
-            &ctx.file, 1,
-        )]);
-    }
-    if ctx.end_count == 0 {
-        return Err(vec![err(
-            ErrorCode::InvalidInput,
-            "program end missing: no M2/M30 as the last block (CORPUS n14)",
-            &ctx.file, line_count.max(1), 0,
-        )]);
-    }
     if ctx.end_count > 1 {
         return Err(vec![err(
             ErrorCode::InvalidInput,
@@ -333,11 +323,40 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
             &ctx.file, ctx.end_line, 0,
         )]);
     }
-    if !ctx.end_is_last {
+    if ctx.end_count > 0 && !ctx.end_is_last {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "program end is not the last block (CORPUS n12)",
             &ctx.file, ctx.end_line, 0,
+        )]);
+    }
+    if ctx.end_count == 0 {
+        // SPEC §3 v0.16: отсутствие M2/M30 = неявный конец — авто-PEND
+        // последним опом с notice (18/32 Tier B: реальные посты не пишут
+        // program-end). src — весь файл (позиция вставки).
+        let op = Op::ProgramEnd {
+            src: SrcSpan {
+                file: ctx.file.clone(),
+                line_start: line_count.max(1),
+                col_start: 1,
+                line_end: line_count.max(1),
+                col_end: 1,
+            },
+        };
+        ctx.push_keep(
+            op,
+            NoticeKind::MissingProgramEnd,
+            "W_MISSING_PROGRAM_END: no M2/M30 — implicit program end appended (SPEC §3 v0.16; 18/32 Tier B)".into(),
+        );
+    }
+    // Лимит max_ops_per_program (COVERAGE §1.2) — после авто-PEND (лимит
+    // считается по ИТОГОВОМУ списку ops+notices).
+    let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
+    if ops_n > 200_000.0 {
+        return Err(vec![limit_err(
+            "max_ops_per_program", 200_000.0, ops_n,
+            format!("program yields {} ops, limit 200000", ops_n as u64),
+            &ctx.file, 1,
         )]);
     }
     let program = Program {
