@@ -1,3 +1,9 @@
 /target
 **/*.rs.bk
 mutants.out/
+
+# Phase 2.2 (итерация 6, лицензионная чистота): 60 local-dev GPL/неясных
+# файлов Tier B не хранятся в git (public repo с Apache 2.0 + GPL = конфликт).
+# Файлы на диске локально; повторное скачивание — tools/download_tier_b.sh.
+# Provenance: corpus/tier_b/PROVENANCE.md, manifest.toml [[tier_b_files]] tier="local-dev".
+corpus/tier_b/local/

@@ -11,6 +11,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
 
+  # Итерация 6 (Phase 2.1): lint-гейт. Без -D warnings — warnings чужих
+  # зон (core/grbl/harness) не валят CI; конвенция -D — после чистки.
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace
+
   # Критерий #12 (IMPLEMENTATION-PLAN §5): CHANGELOG проверяется скриптом,
   # не глазами. Скрипт появляется в итерации 1 (агент B); до того — placeholder.
   changelog-lint:
