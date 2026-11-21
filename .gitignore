@@ -7,3 +7,6 @@ mutants.out/
 # Файлы на диске локально; повторное скачивание — tools/download_tier_b.sh.
 # Provenance: corpus/tier_b/PROVENANCE.md, manifest.toml [[tier_b_files]] tier="local-dev".
 corpus/tier_b/local/
+*.out
+out_probe*.txt
+_docker_dbg.rs
