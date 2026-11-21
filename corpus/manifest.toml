@@ -1164,7 +1164,7 @@ expect = "ok"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_Circle_Diamond_Square_Calibration.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (Circle_Diamond_Square_Calibration.gcode)"
@@ -1173,7 +1173,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_arc-ijk.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-ijk.gcode)"
@@ -1182,7 +1182,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_arc-xz-plane.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-xz-plane.gcode)"
@@ -1191,7 +1191,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_arc-yz-plane.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (arc-yz-plane.gcode)"
@@ -1200,7 +1200,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_circle-inch.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (circle-inch.gcode)"
@@ -1209,7 +1209,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_circle.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (circle.gcode)"
@@ -1218,7 +1218,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_full-circle-without-xyz.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (full-circle-without-xyz.gcode)"
@@ -1227,7 +1227,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_g2-arc.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (g2-arc.gcode)"
@@ -1236,7 +1236,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_helical-thread-milling.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (helical-thread-milling.gcode)"
@@ -1245,7 +1245,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_jsdc-laser.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (jsdc-laser.gcode)"
@@ -1254,7 +1254,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_jsdc.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (jsdc.gcode)"
@@ -1263,7 +1263,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/grbljs_sample.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode (sample.gcode)"
@@ -1272,7 +1272,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_cws_fresa.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/filipecaixeta/cncwebsim/gcode (fresa.gcode)"
@@ -1281,7 +1281,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_cws_torno.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/filipecaixeta/cncwebsim/gcode (torno.gcode)"
@@ -1353,7 +1353,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_pycnc_circles.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/Nikolay-Kha/PyCNC/tests (circles.gcode)"
@@ -1362,7 +1362,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_pycnc_rects.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/Nikolay-Kha/PyCNC/tests (rects.gcode)"
@@ -1371,7 +1371,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_pycnc_test_parser.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/Nikolay-Kha/PyCNC/tests (test_parser.gcode)"
@@ -1380,7 +1380,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_shpk_MIT_EC_Logo.nc"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/TheSaturdayThing/shapeoko_arduino (MIT_EC_Logo.nc)"
@@ -1389,7 +1389,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_shpk_ncdrill1.tap"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/TheSaturdayThing/shapeoko_arduino (ncdrill1.tap)"
@@ -1398,7 +1398,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_svg2g_circular_interpolation.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/sameer/svg2gcode/g_code/tests (circular_interpolation.gcode)"
@@ -1407,7 +1407,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_svg2g_shapes.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/sameer/svg2gcode/g_code/tests (shapes.gcode)"
@@ -1416,7 +1416,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_svg2g_square.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/sameer/svg2gcode/g_code/tests (square.gcode)"
@@ -1425,7 +1425,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_tball_tball-engrave-laser.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball-engrave-laser.gcode)"
@@ -1434,7 +1434,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_tball_tball-engrave.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball-engrave.gcode)"
@@ -1443,7 +1443,7 @@ tier = "published"
 
 [[tier_b_files]]
 path = "tier_b/inbox/mit_tball_tball.gcode"
-dialect = "grbl"
+dialect = "grbl-1.1"
 expect = "parse-or-diagnose"
 license = "MIT"
 source = "https://github.com/cncjs/cncjs/tree/master/examples/gcode/tball (tball.gcode)"

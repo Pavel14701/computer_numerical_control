@@ -110,7 +110,6 @@ pub fn generate(cfg: &GenConfig) -> Program {
 
     let n_motion = 1 + rng.below(cfg.max_ops.max(1));
     for _ in 0..n_motion {
-        let roll = rng.below(1000);
         let start = if start_known {
             StartPoint::Known(p3(cur.0, cur.1, cur.2))
         } else {

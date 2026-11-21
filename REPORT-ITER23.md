@@ -17,8 +17,8 @@
 
 ## Tier B — parse-or-diagnose
 
-- файлов: 92, Ok: 12, no-adapter: 31, panics: 0
-- отказы по классам: E_INVALID_INPUT × 18, E_RUNTIME_STATE × 6, E_UNSUPPORTED_SYNTAX × 25
+- файлов: 92, Ok: 15, no-adapter: 6, panics: 0
+- отказы по классам: E_INVALID_INPUT × 39, E_RUNTIME_STATE × 7, E_UNSUPPORTED_SYNTAX × 25
 - crash-free: true
 
 ## Счётчики по отношениям

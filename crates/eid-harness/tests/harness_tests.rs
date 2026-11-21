@@ -1099,11 +1099,12 @@ fn tier_b_loader_parses_real_92() {
         m.tier_b_files.iter().all(|f| f.license.is_some() || f.source.is_some()),
         "provenance: лицензия/источник указаны"
     );
-    let grbl = m.tier_b_files.iter().filter(|f| f.dialect == "grbl").count();
+    // После нормализации (ruling): все dialect-ключи канонические
+    let grbl = m.tier_b_files.iter().filter(|f| f.dialect == "grbl-1.1").count();
     let lcnc = m.tier_b_files.iter().filter(|f| f.dialect == "linuxcnc").count();
-    let other = m.tier_b_files.iter().filter(|f| f.dialect != "grbl" && f.dialect != "linuxcnc").count();
-    assert_eq!(grbl + lcnc + other, 92, "92 = grbl + linuxcnc + сторонние (marlin вне MVP — no-adapter в прогоне)");
-    assert!(other <= 6, "сторонних диалектов немного (сейчас {other})");
+    let other = m.tier_b_files.iter().filter(|f| f.dialect != "grbl-1.1" && f.dialect != "linuxcnc").count();
+    assert_eq!(grbl + lcnc + other, 92, "92 = grbl-1.1 + linuxcnc + сторонние (marlin — no-adapter легален)");
+    assert_eq!(other, 6, "marlin-3dp — единственный сторонний диалект (сейчас {other})");
 }
 
 #[test]

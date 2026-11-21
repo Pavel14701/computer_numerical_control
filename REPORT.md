@@ -11,6 +11,15 @@
 
 **Числа:** **448 тестов passed / 0 failed** · 60 коммитов · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B 92/92 crash=0 · mutation-testing kill-rate 82.2% · метаморфные инварианты (комментарии/whitespace/N-слова/регистр/line-endings) зелёные · grammar-conformance 57 тестов по 33 продукциям.
 
+## Итерация 5 — дополнительные слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
+
+- **Verify-pass как отдельный проход** (`eid_core::verify`, вызываемый на любом этапе пайплайна) + `Diagnostic.stage` (Parse/Canonicalize/Verify/Emit) — stage-атрибуция в runner-отчётах и CLI-выводе (`[emit]`, `[verify]`); интерфейс v0.1.2 (coordinated transit: grbl 3 / linuxcnc 11 / harness 1 — все закрыты).
+- **Legality-таблицы обеих машин** (ConversionTarget-паттерн): legal/illegal + коды как данные; `emit` проверяет AST против таблицы (единый путь отказа, защита от дрейфа кодов); cross-check «таблица ↔ manifest r4_expect» — 0 расхождений.
+- **Mutation-фаззер M1–M17 + AST-driven generator** (Tier A v1, seeded): panic-freedom подтверждена на byte-soup (0 паник × 2 адаптера), emit-отказы мутированных AST = инварианты Verify-этапа работают (refinement уровней зафиксирован), M7-refinement (инъекция на связных ходах).
+- **Метаморфные отношения** (комментарии/line-ending LF-CRLF-MIXED/whitespace/регистр/N-слова → идентичный AST): первый прогон нашёл 10 «нарушений» → расследование D → артефакт компаратора (PartialEq с provenance) → компаратор заменён на semantic_diff (EQUIVALENCE §3); постоянные тест-пары в eid-linuxcnc.
+- **Grammar-conformance**: 57 тестов по 33 продукциям grammar.ebnf (дрейф грамматика↔парсер детектируется; TableGen-урок без новых deps).
+- **rs274ngc source-check**: дефолт retract = G99 подтверждён source'ом (`interp_setup.cc:152`) — §6.13 закрыт ✔.
+
 ---
 
 ## 2. Приёмка по 12 критериям (IMPLEMENTATION-PLAN §5)
