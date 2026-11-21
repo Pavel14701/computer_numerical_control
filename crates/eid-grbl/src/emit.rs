@@ -142,12 +142,21 @@ pub struct EmissionLegality {
     pub legal: Vec<&'static str>,
     /// Условия отказа: (имя условия, код класса легальности).
     pub illegal: Vec<(&'static str, ErrorCode)>,
+    /// Легально-но-потерьные условия: (условие, текст Q3-warning). Эмиттер
+    /// пишет текст в warnings-буфер адаптера (take_warnings), отказом НЕ
+    /// является (COVERAGE §6.1/§5: warning-цель по manifest r4_expect).
+    pub warnings: Vec<(&'static str, &'static str)>,
 }
 
 impl EmissionLegality {
     /// Код отказа по имени условия; None = условие не объявлено.
     pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
         self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+    }
+
+    /// Текст Q3-warning по имени условия; None = не объявлено.
+    pub fn warning_of(&self, condition: &str) -> Option<&'static str> {
+        self.warnings.iter().find(|(c, _)| *c == condition).map(|(_, text)| *text)
     }
 
     /// Все коды отказа таблицы (без дубликатов).
@@ -180,7 +189,17 @@ pub fn op_kind(op: &Op) -> &'static str {
     }
 }
 
+/// Эмиссия без warnings-буфера (совместимость; предупреждения теряются).
 pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
+    let mut sink = Vec::new();
+    emit_with_warnings(program, &mut sink)
+}
+
+/// Эмиссия + Q3-warnings (потери метаданных при целевой эмиссии).
+pub fn emit_with_warnings(
+    program: &Program,
+    warnings: &mut Vec<String>,
+) -> Result<String, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
     eid_core::parser::validate(program)?;
     // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
@@ -207,6 +226,17 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
         coolant: Coolant::default(),
         first_motion: true,
     };
+
+    // Q3-warning: PATH_MODE не выражается в GRBL-шапке — потеря метаданных
+    // фиксируется в warnings-буфере адаптера (не отказ; manifest r4_expect).
+    let pm_cond = match program.path_mode {
+        eid_core::ast::PathMode::ExactPath => Some("path_mode_exact_path"),
+        eid_core::ast::PathMode::ExactStop => Some("path_mode_exact_stop"),
+        eid_core::ast::PathMode::Blend { .. } => Some("path_mode_blend"),
+    };
+    if let Some(text) = pm_cond.and_then(|c| table.warning_of(c)) {
+        warnings.push(text.to_string());
+    }
 
     // Заголовок — всегда явно (бриф п.1).
     ctx.line(match program.units {
@@ -367,7 +397,7 @@ fn decode_hex(s: &str) -> Vec<u8> {
 fn emit_op(ctx: &mut Ectx, op: &Op) {
     match op {
         Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
-            let rapid = matches!(op, Op::Rapid { .. });
+
             ctx.state_prefix(state);
             let frame = if state.frame == eid_core::ast::Frame::Machine { "G53 " } else { "" };
             let mut line = format!(
@@ -378,13 +408,14 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
                 fmt_num(end.y.value()),
                 fmt_num(end.z.value())
             );
-            if !rapid {
-                // F на linear/arc при изменении feed от предыдущего emitted-state
-                // (модальный F; rapid без F — бриф п.4).
-                let fv = state.feed.as_ref().map(|n| n.value());
-                if fv != ctx.feed {
-                    line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));
-                    ctx.feed = fv;
+            // F-дельта ВКЛЮЧАЯ rapid (§7.7-1 развёртки: traverse/approach несут
+            // modal feed кадра; "G0 F.." легален в GRBL — устанавливает F).
+            // Без F на rapid парс-бэк даёт feed=none ≠ golden (#17–#26).
+            let fv = state.feed.as_ref().map(|n| n.value());
+            if let Some(fv) = fv {
+                if Some(fv) != ctx.feed {
+                    line.push_str(&format!(" F{}", fmt_num(fv)));
+                    ctx.feed = Some(fv);
                 }
             }
             ctx.line(&line);

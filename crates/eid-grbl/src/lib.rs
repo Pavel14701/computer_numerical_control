@@ -23,11 +23,18 @@ pub mod lexer;
 #[derive(Debug, Default)]
 pub struct GrblAdapter {
     notices: RefCell<Vec<canonicalize::Notice>>,
+    warnings: RefCell<Vec<String>>,
 }
 
 impl GrblAdapter {
     pub fn new() -> Self {
-        Self { notices: RefCell::new(Vec::new()) }
+        Self { notices: RefCell::new(Vec::new()), warnings: RefCell::new(Vec::new()) }
+    }
+
+    /// Q3-warnings последнего `emit` (потери метаданных цели, напр.
+    /// path_mode на GRBL); опустошает буфер.
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.warnings.borrow_mut())
     }
 
     /// ConversionTarget-таблица легальности эмиссии в GRBL 1.1 (COVERAGE §5).
@@ -62,6 +69,12 @@ impl GrblAdapter {
                 ("program_end_duplicate", INVAL),     // n13
                 ("program_end_not_last", INVAL),      // n12
             ],
+            warnings: vec![
+                // Q3 (COVERAGE §6.1/§5): PATH_MODE не выражается в GRBL-шапке.
+                ("path_mode_exact_path", "junction blending behaviour lost on GRBL (COVERAGE §6.1)"),
+                ("path_mode_exact_stop", "exact stop not representable on GRBL (no G61.1; COVERAGE §5)"),
+                ("path_mode_blend", "target G64 P- tolerance not representable"),
+            ],
         }
     }
 
@@ -84,6 +97,9 @@ impl Adapter for GrblAdapter {
     }
 
     fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
-        emit::emit(program)
+        let mut warnings = Vec::new();
+        let result = emit::emit_with_warnings(program, &mut warnings);
+        *self.warnings.borrow_mut() = warnings;
+        result
     }
 }

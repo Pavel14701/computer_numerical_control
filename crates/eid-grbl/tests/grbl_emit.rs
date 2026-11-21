@@ -562,3 +562,72 @@ fn spec_cov_emit_zero_length_rapid_notice_kind() {
     assert_eq!(out.notices[0].kind, eid_grbl::canonicalize::NoticeKind::ZeroLengthMotion);
     assert!(matches!(out.notices[0].op, Op::Rapid { .. }));
 }
+
+#[test]
+fn spec_cov_emit_f_bootstrap_on_rapid() {
+    // §7.7-1 развёртки: traverse/approach rapid несут modal feed кадра —
+    // F-дельта включает rapid ("G0 F.." легален, устанавливает модальный F;
+    // без него parse-back даёт feed=none ≠ golden — корень #17–#26).
+    let n = |v: f64| Num::new(format!("{v}"), v);
+    let st150 = State {
+        feed: Some(n(150.0)),
+        spindle: Spindle::Off,
+        coolant: Coolant::default(),
+        tool: None,
+        frame: Frame::Wcs,
+        wcs: Wcs::G54,
+    };
+    let span0 = || SrcSpan { file: "t".into(), line_start: 1, col_start: 1, line_end: 1, col_end: 2 };
+    let prog = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: eid_core::ast::PathMode::ExactPath,
+        frame_preset: None,
+        ops: vec![
+            Op::Rapid {
+                start: StartPoint::Unknown,
+                end: Point3 { x: n(1.0), y: n(0.0), z: n(0.0) },
+                state: st150.clone(),
+                src: span0(),
+                sub: None,
+            },
+            Op::Linear {
+                start: StartPoint::Known(Point3 { x: n(1.0), y: n(0.0), z: n(0.0) }),
+                end: Point3 { x: n(2.0), y: n(0.0), z: n(0.0) },
+                state: st150,
+                src: span0(),
+                sub: None,
+            },
+            Op::ProgramEnd { src: span0() },
+        ],
+    };
+    let text = GrblAdapter::new().emit(&prog).expect("emit ok");
+    assert!(
+        text.contains("G0 X1.0000 Y0.0000 Z0.0000 F150.0000"),
+        "F не забутстрапился на rapid: {text}"
+    );
+    assert!(text.contains("G1 X2.0000 Y0.0000 Z0.0000\n"), "линейный F-повтор не нужен: {text}");
+    // Standalone rapid ПОСЛЕ F сохраняет feed (не сбрасывает).
+    let b = parse_grbl(&text);
+    assert!(semantic_diff(&prog, &b, &DiffConfig::default()).is_empty(), "round-trip F-bootstrap");
+}
+
+#[test]
+fn spec_cov_emit_path_mode_warnings() {
+    // Q3: PATH_MODE не выражается в GRBL-шапке → emit Ok + warning-текст
+    // из EmissionLegality.warnings (manifest r4_expect: grbl = warning).
+    let ad = GrblAdapter::new();
+    let cases = [
+        ("40_path_exact/golden.eid", "junction blending behaviour lost on GRBL (COVERAGE §6.1)"),
+        ("41_path_blend/golden.eid", "target G64 P- tolerance not representable"),
+        ("45_path_exact_stop/golden.eid", "exact stop not representable on GRBL (no G61.1; COVERAGE §5)"),
+    ];
+    for (rel, want) in cases {
+        let g = EidTextAdapter::new().parse(&corpus(rel), rel).expect("golden parses");
+        let text = ad.emit(&g).expect("emit Ok (warning, не отказ)");
+        let warnings = ad.take_warnings();
+        assert_eq!(warnings.len(), 1, "{rel}: ровно одно предупреждение, факт {warnings:?}");
+        assert_eq!(warnings[0], want, "{rel}: текст warning");
+        assert!(text.contains("G21 G90 G94"), "{rel}: заголовок на месте");
+    }
+}
