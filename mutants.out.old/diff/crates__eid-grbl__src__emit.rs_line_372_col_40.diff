@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace == with != in emit_op
+@@ -364,17 +364,17 @@
+         .collect()
+ }
+ 
+ fn emit_op(ctx: &mut Ectx, op: &Op) {
+     match op {
+         Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
+             let rapid = matches!(op, Op::Rapid { .. });
+             ctx.state_prefix(state);
+-            let frame = if state.frame == eid_core::ast::Frame::Machine { "G53 " } else { "" };
++            let frame = if state.frame != /* ~ changed by cargo-mutants ~ */ eid_core::ast::Frame::Machine { "G53 " } else { "" };
+             let mut line = format!(
+                 "{}{} X{} Y{} Z{}",
+                 frame,
+                 motion_code(op),
+                 fmt_num(end.x.value()),
+                 fmt_num(end.y.value()),
+                 fmt_num(end.z.value())
+             );

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace match guard has_axis || has_arc_words with false in motion_block
+@@ -522,17 +522,17 @@
+         return Err(vec![err(
+             ErrorCode::InvalidInput,
+             "G53 requires G0/G1 in the same block (grbl gcode.c)",
+             &ctx.file, line, blen,
+         )]);
+     }
+     let mode = match ctx.motion {
+         Some(m) => m,
+-        None if has_axis || has_arc_words => {
++        None if false /* ~ changed by cargo-mutants ~ */ => {
+             return Err(vec![err(
+                 ErrorCode::InvalidInput,
+                 "naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)",
+                 &ctx.file, line, blen,
+             )]);
+         }
+         None => return Ok(()),
+     };

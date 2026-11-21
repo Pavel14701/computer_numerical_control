@@ -1,0 +1,28 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace limit_err -> Diagnostic with Default::default()
+@@ -85,24 +85,17 @@
+     Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage }
+ }
+ 
+ fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
+     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
+ }
+ 
+ fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file: &str, line: u32) -> Diagnostic {
+-    Diagnostic {
+-        code: ErrorCode::LimitExceeded,
+-        message: msg,
+-        src: Some(span(file, line, 0)),
+-        options: Vec::new(),
+-        limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+-        stage: eid_core::diag::Stage::Verify,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn e3(p: &Point3) -> [f64; 3] {
+     [p.x.value(), p.y.value(), p.z.value()]
+ }
+ 
+ fn pt(x: f64, y: f64, z: f64) -> Point3 {
+     Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }

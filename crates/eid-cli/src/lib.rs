@@ -107,6 +107,9 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
             for w in &outcome.emit_warnings {
                 eprintln!("  warning: {}", format_diagnostic(w));
             }
+            for w in &outcome.q3_warnings {
+                eprintln!("  warning: {w}");
+            }
             println!(
                 "  output: {} ({} bytes)",
                 output.display(),

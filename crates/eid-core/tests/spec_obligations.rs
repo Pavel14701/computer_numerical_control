@@ -94,6 +94,14 @@ fn spec_3_pend_invariants_three_modes() {
         let raw = parser::parse_raw(&text, "t").unwrap();
         let ds2 = verify::validate(&raw);
         assert!(!ds2.is_empty(), "{ctx}");
+        // пин ветки: "no PEND" обязан дать именно missing-PEND диагностику
+        // (мутант-инверсия !ops.is_empty() иначе переживает общий не-empty).
+        if *ctx == "no PEND" {
+            assert!(
+                ds2.iter().any(|d| d.message.contains("missing program_end")),
+                "{ctx}: нет missing-PEND диагностики: {ds2:?}"
+            );
+        }
         assert!(ds2.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify), "{ctx}");
         // режим 3: AST → validate_with_notices (diagnostics, notices пусты —
         // PEND-нарушения не drop)

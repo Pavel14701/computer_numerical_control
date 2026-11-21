@@ -1,0 +1,129 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace emit_op with ()
+@@ -360,125 +360,17 @@
+ fn decode_hex(s: &str) -> Vec<u8> {
+     (0..s.len())
+         .step_by(2)
+         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap_or(0))
+         .collect()
+ }
+ 
+ fn emit_op(ctx: &mut Ectx, op: &Op) {
+-    match op {
+-        Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
+-            let rapid = matches!(op, Op::Rapid { .. });
+-            ctx.state_prefix(state);
+-            let frame = if state.frame == eid_core::ast::Frame::Machine { "G53 " } else { "" };
+-            let mut line = format!(
+-                "{}{} X{} Y{} Z{}",
+-                frame,
+-                motion_code(op),
+-                fmt_num(end.x.value()),
+-                fmt_num(end.y.value()),
+-                fmt_num(end.z.value())
+-            );
+-            if !rapid {
+-                // F на linear/arc при изменении feed от предыдущего emitted-state
+-                // (модальный F; rapid без F — бриф п.4).
+-                let fv = state.feed.as_ref().map(|n| n.value());
+-                if fv != ctx.feed {
+-                    line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));
+-                    ctx.feed = fv;
+-                }
+-            }
+-            ctx.line(&line);
+-            ctx.first_motion = false;
+-        }
+-        Op::Arc { start, end, center, normal, state, sweep_deg, pitch, .. } => {
+-            ctx.state_prefix(state);
+-            // Плоскость из канонической нормали; G17/18/19 при смене (бриф п.1).
+-            let n = [normal.x.value(), normal.y.value(), normal.z.value()];
+-            let plane = plane_of(&n).expect("нормаль провалидирована");
+-            if plane != ctx.plane {
+-                ctx.line(match plane {
+-                    GCode::PlaneZX => "G18",
+-                    GCode::PlaneYZ => "G19",
+-                    _ => "G17",
+-                });
+-                ctx.plane = plane;
+-            }
+-            // I/J/K инкрементальные от СТАРТА: offsets = center − start
+-            // (in-plane пара: G17→I,J; G18→I,K; G19→J,K; R никогда).
+-            let s = start_pt(start);
+-            let c = [center.x.value(), center.y.value(), center.z.value()];
+-            let (w0, ax0, w1, ax1) = arc_pair(&plane);
+-            let offsets = format!(" {}{} {}{}", w0, fmt_num(c[ax0] - s[ax0]), w1, fmt_num(c[ax1] - s[ax1]));
+-            // Полное кольцо (sweep 360°, pitch 0) — БЕЗ end-слов (легальный
+-            // формат grbl): end-слова == start перепарсер трактовал бы как
+-            // вырожденную дугу (CORPUS #13-различитель); pitch ≠ 0 несёт Z.
+-            let full_circle = (sweep_deg.value() - 360.0).abs() < 1e-6 && pitch.value().abs() < 1e-9;
+-            let target = if full_circle {
+-                String::new()
+-            } else {
+-                format!(
+-                    " X{} Y{} Z{}",
+-                    fmt_num(end.x.value()),
+-                    fmt_num(end.y.value()),
+-                    fmt_num(end.z.value())
+-                )
+-            };
+-            let mut line = format!("{}{} {}", motion_code(op), target, offsets);
+-            let fv = state.feed.as_ref().map(|num| num.value());
+-            if fv != ctx.feed {
+-                line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));
+-                ctx.feed = fv;
+-            }
+-            ctx.line(&line);
+-            ctx.first_motion = false;
+-        }
+-        Op::Dwell { seconds, state, .. } => {
+-            ctx.state_prefix(state);
+-            ctx.line(&format!("G4 P{}", fmt_num(seconds.value())));
+-        }
+-        Op::WcsDefine { p, origin, state, .. } => {
+-            ctx.state_prefix(state);
+-            ctx.line(&format!(
+-                "G10 L2 P{} X{} Y{} Z{}",
+-                p,
+-                fmt_num(origin.x.value()),
+-                fmt_num(origin.y.value()),
+-                fmt_num(origin.z.value())
+-            ));
+-        }
+-        Op::WcsSetHere { p, delta, state, .. } => {
+-            ctx.state_prefix(state);
+-            ctx.line(&format!(
+-                "G10 L20 P{} X{} Y{} Z{}",
+-                p,
+-                fmt_num(delta.x.value()),
+-                fmt_num(delta.y.value()),
+-                fmt_num(delta.z.value())
+-            ));
+-        }
+-        Op::ProgramStop { optional, state, .. } => {
+-            ctx.state_prefix(state);
+-            ctx.line(if *optional { "M1" } else { "M0" });
+-        }
+-        Op::ProgramEnd { .. } => ctx.line("M2"),
+-        Op::Raw { payload_hex, .. } => {
+-            // same-dialect fidelity: исходные байты строки verbatim ВКЛЮЧАЯ
+-            // терминатор (grammar D9 v0.3: \r\n / \n байт-в-байт). Внешний '\n'
+-            // не добавляется, если терминатор уже в payload.
+-            let bytes = decode_hex(payload_hex);
+-            let text = String::from_utf8_lossy(&bytes).to_string();
+-            ctx.out.push_str(&text);
+-            if !text.ends_with('\n') {
+-                ctx.out.push('\n');
+-            }
+-        }
+-        Op::ToolChange { .. } => unreachable!("tool_change отбракован валидацией"),
+-    }
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn start_pt(s: &StartPoint) -> [f64; 3] {
+     match s {
+         StartPoint::Known(p) => [p.x.value(), p.y.value(), p.z.value()],
+         StartPoint::Unknown => [0.0, 0.0, 0.0],
+     }
+ }

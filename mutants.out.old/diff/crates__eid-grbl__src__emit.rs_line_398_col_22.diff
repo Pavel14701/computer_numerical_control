@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace != with == in emit_op
+@@ -390,17 +390,17 @@
+             ctx.line(&line);
+             ctx.first_motion = false;
+         }
+         Op::Arc { start, end, center, normal, state, sweep_deg, pitch, .. } => {
+             ctx.state_prefix(state);
+             // Плоскость из канонической нормали; G17/18/19 при смене (бриф п.1).
+             let n = [normal.x.value(), normal.y.value(), normal.z.value()];
+             let plane = plane_of(&n).expect("нормаль провалидирована");
+-            if plane != ctx.plane {
++            if plane == /* ~ changed by cargo-mutants ~ */ ctx.plane {
+                 ctx.line(match plane {
+                     GCode::PlaneZX => "G18",
+                     GCode::PlaneYZ => "G19",
+                     _ => "G17",
+                 });
+                 ctx.plane = plane;
+             }
+             // I/J/K инкрементальные от СТАРТА: offsets = center − start

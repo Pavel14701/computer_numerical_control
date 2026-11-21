@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace verbatim -> Num with Default::default()
+@@ -60,17 +60,17 @@
+     }
+     if s == "-0" {
+         s = "0".into();
+     }
+     Num::new(s, v)
+ }
+ 
+ fn verbatim(n: &Num) -> Num {
+-    n.clone()
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+     SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }
+ }
+ 
+ /// Диагностика с явным этапом: Parse — лексические пути GRBL, Verify —
+ /// канонизационные инварианты (§6-геометрия, позиционные правила).

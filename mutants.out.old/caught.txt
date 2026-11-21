@@ -1,0 +1,556 @@
+crates/eid-grbl/src/emit.rs:25:26: replace match guard (v - 1.0).abs() < 1e-9 with false in plane_of
+crates/eid-grbl/src/emit.rs:26:26: replace match guard (v - 1.0).abs() < 1e-9 with false in plane_of
+crates/eid-grbl/src/emit.rs:27:26: replace match guard (v - 1.0).abs() < 1e-9 with false in plane_of
+crates/eid-grbl/src/emit.rs:25:42: replace < with == in plane_of
+crates/eid-grbl/src/emit.rs:25:42: replace < with > in plane_of
+crates/eid-grbl/src/emit.rs:25:29: replace - with + in plane_of
+crates/eid-grbl/src/emit.rs:25:29: replace - with / in plane_of
+crates/eid-grbl/src/emit.rs:26:42: replace < with == in plane_of
+crates/eid-grbl/src/emit.rs:26:42: replace < with > in plane_of
+crates/eid-grbl/src/emit.rs:26:29: replace - with / in plane_of
+crates/eid-grbl/src/emit.rs:26:29: replace - with + in plane_of
+crates/eid-grbl/src/emit.rs:27:42: replace < with == in plane_of
+crates/eid-grbl/src/emit.rs:27:42: replace < with > in plane_of
+crates/eid-grbl/src/emit.rs:27:29: replace - with + in plane_of
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 0, "", 0)
+crates/eid-grbl/src/emit.rs:27:29: replace - with / in plane_of
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 0, "", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 0, "xyzzy", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 0, "xyzzy", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 1, "", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 1, "", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 1, "xyzzy", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 1, "xyzzy", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 0, "", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 0, "", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 0, "xyzzy", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 1, "", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 1, "", 1)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 0, "xyzzy", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 1, "xyzzy", 0)
+crates/eid-grbl/src/emit.rs:35:5: replace arc_pair -> (&'static str, usize, &'static str, usize) with ("xyzzy", 1, "xyzzy", 1)
+crates/eid-grbl/src/emit.rs:37:9: delete match arm GCode::PlaneYZ in arc_pair
+crates/eid-grbl/src/emit.rs:43:5: replace wcs_code -> &'static str with ""
+crates/eid-grbl/src/emit.rs:36:9: delete match arm GCode::PlaneZX in arc_pair
+crates/eid-grbl/src/emit.rs:43:5: replace wcs_code -> &'static str with "xyzzy"
+crates/eid-grbl/src/emit.rs:44:9: delete match arm Wcs::G54 in wcs_code
+crates/eid-grbl/src/emit.rs:46:9: delete match arm Wcs::G56 in wcs_code
+crates/eid-grbl/src/emit.rs:47:9: delete match arm Wcs::G57 in wcs_code
+crates/eid-grbl/src/emit.rs:45:9: delete match arm Wcs::G55 in wcs_code
+crates/eid-grbl/src/emit.rs:48:9: delete match arm Wcs::G58 in wcs_code
+crates/eid-grbl/src/emit.rs:49:9: delete match arm Wcs::G59 in wcs_code
+crates/eid-grbl/src/emit.rs:67:5: replace spindle_eq -> bool with true
+crates/eid-grbl/src/emit.rs:67:5: replace spindle_eq -> bool with false
+crates/eid-grbl/src/emit.rs:68:9: delete match arm (Spindle::Off, Spindle::Off) in spindle_eq
+crates/eid-grbl/src/emit.rs:69:9: delete match arm (Spindle::Cw(x), Spindle::Cw(y)) |(Spindle::Ccw(x), Spindle::Ccw(y)) in spindle_eq
+crates/eid-grbl/src/emit.rs:69:92: replace == with != in spindle_eq
+crates/eid-grbl/src/emit.rs:78:9: replace Ectx::state_prefix with ()
+crates/eid-grbl/src/emit.rs:78:30: replace || with && in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:78:40: replace != with == in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:83:12: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:91:23: replace != with == in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:98:27: replace && with || in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:98:16: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:98:30: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:100:50: replace || with && in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:100:35: replace && with || in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:100:38: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:100:64: replace && with || in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:100:67: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:109:29: replace && with || in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:109:32: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:112:30: replace && with || in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:112:33: delete ! in Ectx::state_prefix
+crates/eid-grbl/src/emit.rs:121:9: replace Ectx::line with ()
+crates/eid-grbl/src/emit.rs:150:9: replace EmissionLegality::code_of -> Option<ErrorCode> with None
+crates/eid-grbl/src/emit.rs:150:46: replace == with != in EmissionLegality::code_of
+crates/eid-grbl/src/emit.rs:155:9: replace EmissionLegality::codes -> Vec<ErrorCode> with vec![]
+crates/eid-grbl/src/emit.rs:163:9: replace EmissionLegality::is_legal_kind -> bool with false
+crates/eid-grbl/src/emit.rs:169:5: replace op_kind -> &'static str with ""
+crates/eid-grbl/src/emit.rs:169:5: replace op_kind -> &'static str with "xyzzy"
+crates/eid-grbl/src/emit.rs:163:9: replace EmissionLegality::is_legal_kind -> bool with true
+crates/eid-grbl/src/emit.rs:185:5: replace emit -> Result<String, Vec<Diagnostic>> with Ok(String::new())
+crates/eid-grbl/src/emit.rs:185:5: replace emit -> Result<String, Vec<Diagnostic>> with Ok("xyzzy".into())
+crates/eid-grbl/src/emit.rs:197:8: delete ! in emit
+crates/eid-grbl/src/emit.rs:187:28: replace != with == in emit
+crates/eid-grbl/src/emit.rs:239:5: replace validate_grbl -> Vec<Diagnostic> with vec![]
+crates/eid-grbl/src/emit.rs:250:18: replace += with -= in validate_grbl
+crates/eid-grbl/src/emit.rs:250:18: replace += with *= in validate_grbl
+crates/eid-grbl/src/emit.rs:258:13: delete match arm Op::Linear{state, src, ..} in validate_grbl
+crates/eid-grbl/src/emit.rs:253:13: delete match arm Op::ToolChange{src, ..} in validate_grbl
+crates/eid-grbl/src/emit.rs:276:13: delete match arm Op::Raw{payload_hex, src, ..} in validate_grbl
+crates/eid-grbl/src/emit.rs:278:21: replace || with && in validate_grbl
+crates/eid-grbl/src/emit.rs:277:42: replace != with == in validate_grbl
+crates/eid-grbl/src/emit.rs:277:38: replace % with / in validate_grbl
+crates/eid-grbl/src/emit.rs:277:38: replace % with + in validate_grbl
+crates/eid-grbl/src/emit.rs:302:13: replace == with != in validate_grbl
+crates/eid-grbl/src/emit.rs:278:52: delete ! in validate_grbl
+crates/eid-grbl/src/emit.rs:308:20: replace > with == in validate_grbl
+crates/eid-grbl/src/emit.rs:308:20: replace > with >= in validate_grbl
+crates/eid-grbl/src/emit.rs:310:15: delete ! in validate_grbl
+crates/eid-grbl/src/emit.rs:327:18: replace && with || in check_motion_state
+crates/eid-grbl/src/emit.rs:348:5: replace motion_code -> &'static str with ""
+crates/eid-grbl/src/emit.rs:348:5: replace motion_code -> &'static str with "xyzzy"
+crates/eid-grbl/src/emit.rs:327:5: replace check_motion_state with ()
+crates/eid-grbl/src/emit.rs:350:9: delete match arm Op::Linear{..} in motion_code
+crates/eid-grbl/src/emit.rs:351:9: delete match arm Op::Arc{dir, ..} in motion_code
+crates/eid-grbl/src/emit.rs:349:9: delete match arm Op::Rapid{..} in motion_code
+crates/eid-grbl/src/emit.rs:361:5: replace decode_hex -> Vec<u8> with vec![]
+crates/eid-grbl/src/emit.rs:361:5: replace decode_hex -> Vec<u8> with vec![1]
+crates/eid-grbl/src/emit.rs:363:45: replace + with - in decode_hex
+crates/eid-grbl/src/emit.rs:361:5: replace decode_hex -> Vec<u8> with vec![0]
+crates/eid-grbl/src/emit.rs:363:45: replace + with * in decode_hex
+crates/eid-grbl/src/emit.rs:368:5: replace emit_op with ()
+crates/eid-grbl/src/emit.rs:381:16: delete ! in emit_op
+crates/eid-grbl/src/emit.rs:385:23: replace != with == in emit_op
+crates/eid-grbl/src/emit.rs:372:40: replace == with != in emit_op
+crates/eid-grbl/src/emit.rs:398:22: replace != with == in emit_op
+crates/eid-grbl/src/emit.rs:400:21: delete match arm GCode::PlaneZX in emit_op
+crates/eid-grbl/src/emit.rs:401:21: delete match arm GCode::PlaneYZ in emit_op
+crates/eid-grbl/src/emit.rs:415:72: replace && with || in emit_op
+crates/eid-grbl/src/emit.rs:415:65: replace < with == in emit_op
+crates/eid-grbl/src/emit.rs:415:65: replace < with > in emit_op
+crates/eid-grbl/src/emit.rs:415:50: replace - with / in emit_op
+crates/eid-grbl/src/emit.rs:415:95: replace < with == in emit_op
+crates/eid-grbl/src/emit.rs:415:50: replace - with + in emit_op
+crates/eid-grbl/src/emit.rs:415:95: replace < with > in emit_op
+crates/eid-grbl/src/emit.rs:428:19: replace != with == in emit_op
+crates/eid-grbl/src/emit.rs:471:16: delete ! in emit_op
+crates/eid-grbl/src/emit.rs:480:5: replace start_pt -> [f64; 3] with [1.0; 3]
+crates/eid-grbl/src/emit.rs:480:5: replace start_pt -> [f64; 3] with [0.0; 3]
+crates/eid-grbl/src/emit.rs:480:5: replace start_pt -> [f64; 3] with [-1.0; 3]
+crates/eid-grbl/src/canonicalize.rs:72:107: replace + with - in span
+crates/eid-grbl/src/canonicalize.rs:104:5: replace e3 -> [f64; 3] with [0.0; 3]
+crates/eid-grbl/src/canonicalize.rs:104:5: replace e3 -> [f64; 3] with [1.0; 3]
+crates/eid-grbl/src/canonicalize.rs:104:5: replace e3 -> [f64; 3] with [-1.0; 3]
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (0, 0, 0)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (0, 0, 1)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (0, 1, 0)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (0, 1, 1)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (1, 0, 0)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (1, 0, 1)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (1, 1, 0)
+crates/eid-grbl/src/canonicalize.rs:114:5: replace plane_axes -> (usize, usize, usize) with (1, 1, 1)
+crates/eid-grbl/src/canonicalize.rs:116:9: delete match arm GCode::PlaneZX in plane_axes
+crates/eid-grbl/src/canonicalize.rs:117:9: delete match arm GCode::PlaneYZ in plane_axes
+crates/eid-grbl/src/canonicalize.rs:125:9: delete match arm 2 in wcs_from_p
+crates/eid-grbl/src/canonicalize.rs:126:9: delete match arm 3 in wcs_from_p
+crates/eid-grbl/src/canonicalize.rs:124:9: delete match arm 1 in wcs_from_p
+crates/eid-grbl/src/canonicalize.rs:128:9: delete match arm 5 in wcs_from_p
+crates/eid-grbl/src/canonicalize.rs:127:9: delete match arm 4 in wcs_from_p
+crates/eid-grbl/src/canonicalize.rs:134:5: replace wcs_to_p -> u8 with 0
+crates/eid-grbl/src/canonicalize.rs:135:9: delete match arm Wcs::G54 in wcs_to_p
+crates/eid-grbl/src/canonicalize.rs:134:5: replace wcs_to_p -> u8 with 1
+crates/eid-grbl/src/canonicalize.rs:136:9: delete match arm Wcs::G55 in wcs_to_p
+crates/eid-grbl/src/canonicalize.rs:147:5: replace payload_hex -> String with String::new()
+crates/eid-grbl/src/canonicalize.rs:201:9: replace Ctx::origin_of -> Option<&Point3> with None
+crates/eid-grbl/src/canonicalize.rs:147:5: replace payload_hex -> String with "xyzzy".into()
+crates/eid-grbl/src/canonicalize.rs:201:50: replace == with != in Ctx::origin_of
+crates/eid-grbl/src/canonicalize.rs:205:9: replace Ctx::push with ()
+crates/eid-grbl/src/canonicalize.rs:210:9: replace Ctx::push_drop with ()
+crates/eid-grbl/src/canonicalize.rs:216:9: replace Ctx::push_keep with ()
+crates/eid-grbl/src/canonicalize.rs:246:19: replace > with == in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:246:19: replace > with < in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:246:19: replace > with >= in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:256:8: delete ! in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:310:42: replace == with != in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:310:38: replace + with - in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:310:38: replace + with * in canonicalize_with_notices
+crates/eid-grbl/src/canonicalize.rs:318:32: replace + with - in finalize
+crates/eid-grbl/src/canonicalize.rs:318:32: replace + with * in finalize
+crates/eid-grbl/src/canonicalize.rs:319:14: replace > with == in finalize
+crates/eid-grbl/src/canonicalize.rs:319:14: replace > with < in finalize
+crates/eid-grbl/src/canonicalize.rs:326:22: replace == with != in finalize
+crates/eid-grbl/src/canonicalize.rs:333:22: replace > with == in finalize
+crates/eid-grbl/src/canonicalize.rs:319:14: replace > with >= in finalize
+crates/eid-grbl/src/canonicalize.rs:333:22: replace > with >= in finalize
+crates/eid-grbl/src/canonicalize.rs:340:8: delete ! in finalize
+crates/eid-grbl/src/canonicalize.rs:333:22: replace > with < in finalize
+crates/eid-grbl/src/canonicalize.rs:366:5: replace process_block -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/canonicalize.rs:408:8: delete ! in process_block
+crates/eid-grbl/src/canonicalize.rs:441:27: replace == with != in process_block
+crates/eid-grbl/src/canonicalize.rs:442:18: replace != with == in process_block
+crates/eid-grbl/src/canonicalize.rs:490:13: delete match arm GCode::Probe(_) in process_block
+crates/eid-grbl/src/canonicalize.rs:486:13: delete match arm GCode::Home | GCode::SetHome | GCode::Home2 | GCode::SetHome2 in process_block
+crates/eid-grbl/src/canonicalize.rs:510:5: replace motion_block -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/canonicalize.rs:494:13: delete match arm GCode::ResetFramePreset in process_block
+crates/eid-grbl/src/canonicalize.rs:518:67: replace || with && in motion_block
+crates/eid-grbl/src/canonicalize.rs:518:42: replace || with && in motion_block
+crates/eid-grbl/src/canonicalize.rs:521:12: replace && with || in motion_block
+crates/eid-grbl/src/canonicalize.rs:521:15: delete ! in motion_block
+crates/eid-grbl/src/canonicalize.rs:530:17: replace match guard has_axis || has_arc_words with true in motion_block
+crates/eid-grbl/src/canonicalize.rs:530:26: replace || with && in motion_block
+crates/eid-grbl/src/canonicalize.rs:539:18: replace && with || in motion_block
+crates/eid-grbl/src/canonicalize.rs:539:8: delete ! in motion_block
+crates/eid-grbl/src/canonicalize.rs:530:17: replace match guard has_axis || has_arc_words with false in motion_block
+crates/eid-grbl/src/canonicalize.rs:539:21: delete ! in motion_block
+crates/eid-grbl/src/canonicalize.rs:555:45: delete ! in motion_block
+crates/eid-grbl/src/canonicalize.rs:563:33: replace < with > in motion_block
+crates/eid-grbl/src/canonicalize.rs:563:33: replace < with == in motion_block
+crates/eid-grbl/src/canonicalize.rs:564:30: replace == with != in motion_block
+crates/eid-grbl/src/canonicalize.rs:595:5: replace reading_now -> Result<Option<Point3>, Vec<Diagnostic>> with Ok(None)
+crates/eid-grbl/src/canonicalize.rs:576:22: replace == with != in motion_block
+crates/eid-grbl/src/canonicalize.rs:598:32: replace > with == in reading_now
+crates/eid-grbl/src/canonicalize.rs:598:32: replace > with >= in reading_now
+crates/eid-grbl/src/canonicalize.rs:618:58: replace == with != in reading_now
+crates/eid-grbl/src/canonicalize.rs:624:13: delete match arm (Some(m), Some(o)) in reading_now
+crates/eid-grbl/src/canonicalize.rs:628:21: replace == with != in reading_now
+crates/eid-grbl/src/canonicalize.rs:642:5: replace machine_start -> Option<Point3> with None
+crates/eid-grbl/src/canonicalize.rs:661:5: replace resolve_end -> Result<Option<Point3>, Vec<Diagnostic>> with Ok(None)
+crates/eid-grbl/src/canonicalize.rs:635:9: delete match arm (Some(e), Some(a), Some(c)) in reading_now
+crates/eid-grbl/src/canonicalize.rs:662:45: replace && with || in resolve_end
+crates/eid-grbl/src/canonicalize.rs:662:66: replace && with || in resolve_end
+crates/eid-grbl/src/canonicalize.rs:672:33: replace match guard at_start with true in resolve_end
+crates/eid-grbl/src/canonicalize.rs:672:33: replace match guard at_start with false in resolve_end
+crates/eid-grbl/src/canonicalize.rs:681:42: replace + with * in resolve_end
+crates/eid-grbl/src/canonicalize.rs:681:42: replace + with - in resolve_end
+crates/eid-grbl/src/canonicalize.rs:686:25: replace match guard at_start with false in resolve_end
+crates/eid-grbl/src/canonicalize.rs:692:9: delete match arm (Some(x), Some(y), Some(z)) in resolve_end
+crates/eid-grbl/src/canonicalize.rs:709:8: delete ! in resolved_feed
+crates/eid-grbl/src/canonicalize.rs:713:64: replace * with + in resolved_feed
+crates/eid-grbl/src/canonicalize.rs:686:25: replace match guard at_start with true in resolve_end
+crates/eid-grbl/src/canonicalize.rs:726:5: replace arc_block -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/canonicalize.rs:713:64: replace * with / in resolved_feed
+crates/eid-grbl/src/canonicalize.rs:740:23: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:741:23: replace == with != in arc_block
+crates/eid-grbl/src/canonicalize.rs:740:23: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:744:9: delete match arm GCode::PlaneZX in arc_block
+crates/eid-grbl/src/canonicalize.rs:743:9: delete match arm GCode::PlaneXY in arc_block
+crates/eid-grbl/src/canonicalize.rs:751:20: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:752:20: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:751:20: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:752:20: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:32: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:32: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:27: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:37: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:27: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:757:28: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:753:37: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:757:28: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:44: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:44: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:34: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:34: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:30: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:30: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:26: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:26: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:39: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:49: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:49: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:764:39: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:765:19: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:765:19: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:765:34: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:765:28: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:765:21: delete - in arc_block
+crates/eid-grbl/src/canonicalize.rs:772:35: replace == with != in arc_block
+crates/eid-grbl/src/canonicalize.rs:772:53: delete - in arc_block
+crates/eid-grbl/src/canonicalize.rs:773:18: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:773:18: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:774:23: delete - in arc_block
+crates/eid-grbl/src/canonicalize.rs:776:40: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:776:40: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:777:33: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:777:29: delete - in arc_block
+crates/eid-grbl/src/canonicalize.rs:777:33: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:777:51: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:43: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:777:51: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:43: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:37: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:37: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:28: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:28: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:53: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:53: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:49: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:778:49: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:43: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:43: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:37: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:37: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:28: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:28: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:53: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:49: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:53: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:779:49: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:788:27: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:789:27: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:788:27: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:789:27: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:794:22: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:26: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:26: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:41: replace / with % in arc_block
+crates/eid-grbl/src/canonicalize.rs:794:22: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:41: replace / with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:48: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:801:48: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:802:18: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:802:18: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:802:33: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:806:30: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:806:30: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:806:51: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:802:33: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:807:30: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:807:30: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:806:51: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:807:51: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:808:38: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:808:38: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:809:26: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:807:51: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:812:30: replace == with != in arc_block
+crates/eid-grbl/src/canonicalize.rs:812:55: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:812:55: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:813:19: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:813:19: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:42: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:42: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:25: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:51: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:25: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:821:51: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:42: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:25: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:42: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:25: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:51: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:822:51: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:43: replace && with || in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:21: replace && with || in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:36: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:36: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:58: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:824:58: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:849:68: replace < with == in arc_block
+crates/eid-grbl/src/canonicalize.rs:849:68: replace < with > in arc_block
+crates/eid-grbl/src/canonicalize.rs:849:40: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:849:40: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:855:30: replace > with < in arc_block
+crates/eid-grbl/src/canonicalize.rs:855:15: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:855:15: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:862:26: replace == with != in arc_block
+crates/eid-grbl/src/canonicalize.rs:862:44: delete - in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:24: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:37: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:24: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:37: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:50: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:863:50: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:866:25: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:866:45: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:866:65: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:31: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:31: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:23: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:43: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:43: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:868:23: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:869:23: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:869:23: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:869:43: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:869:43: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:31: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:31: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:23: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:23: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:43: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:870:43: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:39: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:25: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:25: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:19: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:19: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:33: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:33: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:59: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:51: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:873:51: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:39: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:25: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:25: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:19: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:19: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:33: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:33: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:59: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:51: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:874:51: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:39: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:25: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:25: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:19: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:33: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:59: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:51: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:875:51: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:32: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:32: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:25: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:25: replace + with - in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:40: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:881:40: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:882:25: replace - with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:882:25: replace - with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:884:22: replace > with < in arc_block
+crates/eid-grbl/src/canonicalize.rs:891:44: replace + with * in arc_block
+crates/eid-grbl/src/canonicalize.rs:891:27: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:891:27: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:891:52: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:895:54: replace * with + in arc_block
+crates/eid-grbl/src/canonicalize.rs:925:5: replace update_pos with ()
+crates/eid-grbl/src/canonicalize.rs:940:10: replace + with - in add3
+crates/eid-grbl/src/canonicalize.rs:940:10: replace + with * in add3
+crates/eid-grbl/src/canonicalize.rs:940:17: replace + with - in add3
+crates/eid-grbl/src/canonicalize.rs:940:17: replace + with * in add3
+crates/eid-grbl/src/canonicalize.rs:895:54: replace * with / in arc_block
+crates/eid-grbl/src/canonicalize.rs:940:24: replace + with - in add3
+crates/eid-grbl/src/canonicalize.rs:940:24: replace + with * in add3
+crates/eid-grbl/src/canonicalize.rs:946:10: replace - with / in sub3
+crates/eid-grbl/src/canonicalize.rs:946:17: replace - with + in sub3
+crates/eid-grbl/src/canonicalize.rs:946:10: replace - with + in sub3
+crates/eid-grbl/src/canonicalize.rs:946:17: replace - with / in sub3
+crates/eid-grbl/src/canonicalize.rs:946:24: replace - with + in sub3
+crates/eid-grbl/src/canonicalize.rs:946:24: replace - with / in sub3
+crates/eid-grbl/src/canonicalize.rs:950:5: replace len3 -> f64 with 0.0
+crates/eid-grbl/src/canonicalize.rs:950:5: replace len3 -> f64 with 1.0
+crates/eid-grbl/src/canonicalize.rs:950:5: replace len3 -> f64 with -1.0
+crates/eid-grbl/src/canonicalize.rs:951:20: replace + with * in len3
+crates/eid-grbl/src/canonicalize.rs:951:12: replace + with - in len3
+crates/eid-grbl/src/canonicalize.rs:951:12: replace + with * in len3
+crates/eid-grbl/src/canonicalize.rs:951:8: replace * with / in len3
+crates/eid-grbl/src/canonicalize.rs:951:8: replace * with + in len3
+crates/eid-grbl/src/canonicalize.rs:951:16: replace * with + in len3
+crates/eid-grbl/src/canonicalize.rs:951:16: replace * with / in len3
+crates/eid-grbl/src/canonicalize.rs:951:24: replace * with / in len3
+crates/eid-grbl/src/canonicalize.rs:955:5: replace process_tail -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/canonicalize.rs:961:13: delete match arm GCode::Wcs(p) in process_tail
+crates/eid-grbl/src/canonicalize.rs:965:13: delete match arm GCode::PlaneXY | GCode::PlaneZX | GCode::PlaneYZ in process_tail
+crates/eid-grbl/src/canonicalize.rs:967:13: delete match arm GCode::DistInc in process_tail
+crates/eid-grbl/src/canonicalize.rs:966:13: delete match arm GCode::DistAbs in process_tail
+crates/eid-grbl/src/canonicalize.rs:968:13: delete match arm GCode::FeedInverse in process_tail
+crates/eid-grbl/src/canonicalize.rs:990:13: delete match arm MCode::SpindleCw in process_tail
+crates/eid-grbl/src/canonicalize.rs:998:13: delete match arm MCode::SpindleOff in process_tail
+crates/eid-grbl/src/canonicalize.rs:994:13: delete match arm MCode::SpindleCcw in process_tail
+crates/eid-grbl/src/canonicalize.rs:999:13: delete match arm MCode::MistOn in process_tail
+crates/eid-grbl/src/canonicalize.rs:1000:13: delete match arm MCode::FloodOn in process_tail
+crates/eid-grbl/src/canonicalize.rs:1001:13: delete match arm MCode::CoolantOff in process_tail
+crates/eid-grbl/src/canonicalize.rs:1021:16: replace < with > in process_tail
+crates/eid-grbl/src/canonicalize.rs:1021:16: replace < with == in process_tail
+crates/eid-grbl/src/canonicalize.rs:1021:16: replace < with <= in process_tail
+crates/eid-grbl/src/canonicalize.rs:1028:16: replace == with != in process_tail
+crates/eid-grbl/src/canonicalize.rs:1043:13: delete match arm MCode::ProgramStop | MCode::OptionalStop in process_tail
+crates/eid-grbl/src/canonicalize.rs:1051:13: delete match arm MCode::ProgramEnd in process_tail
+crates/eid-grbl/src/canonicalize.rs:1045:34: replace == with != in process_tail
+crates/eid-grbl/src/canonicalize.rs:1056:23: replace += with *= in process_tail
+crates/eid-grbl/src/canonicalize.rs:1066:5: replace process_g10 -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/canonicalize.rs:1056:23: replace += with -= in process_tail
+crates/eid-grbl/src/canonicalize.rs:1072:20: replace match guard n.value() >= 1.0 && n.value() <= 6.0 && n.value().fract() == 0.0 with false in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:20: replace match guard n.value() >= 1.0 && n.value() <= 6.0 && n.value().fract() == 0.0 with true in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:37: replace && with || in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:57: replace && with || in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:50: replace <= with > in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:78: replace == with != in process_g10
+crates/eid-grbl/src/canonicalize.rs:1072:30: replace >= with < in process_g10
+crates/eid-grbl/src/canonicalize.rs:1080:17: delete match arm (Some(x), Some(y), Some(z)) in process_g10
+crates/eid-grbl/src/canonicalize.rs:1167:28: replace >= with < in process_g92
+crates/eid-grbl/src/canonicalize.rs:1175:9: delete match arm (Some(x), Some(y), Some(z)) in process_g92
+crates/eid-grbl/src/canonicalize.rs:1186:25: replace += with -= in process_g92
+crates/eid-grbl/src/canonicalize.rs:1158:5: replace process_g92 -> Result<(), Vec<Diagnostic>> with Ok(())
+crates/eid-grbl/src/lexer.rs:51:5: replace lex_line -> Result<Vec<Tok>, LexError> with Ok(vec![])
+crates/eid-grbl/src/lexer.rs:57:24: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:57:13: replace < with == in lex_line
+crates/eid-grbl/src/canonicalize.rs:1186:25: replace += with *= in process_g92
+crates/eid-grbl/src/lexer.rs:57:13: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:58:11: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:60:21: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:60:10: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:60:10: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:60:10: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:60:30: replace == with != in lex_line
+crates/eid-grbl/src/lexer.rs:63:21: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:63:10: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:63:10: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:63:10: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:63:30: replace == with != in lex_line
+crates/eid-grbl/src/lexer.rs:66:21: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:66:10: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:66:10: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:66:10: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:66:30: replace == with != in lex_line
+crates/eid-grbl/src/lexer.rs:68:11: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:68:11: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:71:13: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:71:13: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:71:13: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:74:15: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:75:21: replace == with != in lex_line
+crates/eid-grbl/src/lexer.rs:76:27: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:76:27: replace + with * in lex_line
+crates/eid-grbl/src/lexer.rs:78:32: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:78:21: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:78:21: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:78:21: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:78:41: replace != with == in lex_line
+crates/eid-grbl/src/lexer.rs:79:19: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:81:18: replace >= with < in lex_line
+crates/eid-grbl/src/lexer.rs:82:41: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:85:19: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:85:19: replace + with * in lex_line
+crates/eid-grbl/src/lexer.rs:86:21: replace == with != in lex_line
+crates/eid-grbl/src/lexer.rs:87:37: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:87:37: replace + with * in lex_line
+crates/eid-grbl/src/lexer.rs:92:37: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:93:15: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:93:15: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:94:32: replace && with || in lex_line
+crates/eid-grbl/src/lexer.rs:94:21: replace < with == in lex_line
+crates/eid-grbl/src/lexer.rs:94:21: replace < with > in lex_line
+crates/eid-grbl/src/lexer.rs:94:21: replace < with <= in lex_line
+crates/eid-grbl/src/lexer.rs:95:19: replace += with -= in lex_line
+crates/eid-grbl/src/lexer.rs:101:31: replace > with == in lex_line
+crates/eid-grbl/src/lexer.rs:101:31: replace > with < in lex_line
+crates/eid-grbl/src/lexer.rs:101:31: replace > with >= in lex_line
+crates/eid-grbl/src/lexer.rs:105:16: delete ! in lex_line
+crates/eid-grbl/src/lexer.rs:110:52: replace / with % in lex_line
+crates/eid-grbl/src/lexer.rs:110:52: replace / with * in lex_line
+crates/eid-grbl/src/lexer.rs:110:32: replace * with + in lex_line
+crates/eid-grbl/src/lexer.rs:110:32: replace * with / in lex_line
+crates/eid-grbl/src/lexer.rs:113:23: replace != with == in lex_line
+crates/eid-grbl/src/lexer.rs:117:37: replace + with - in lex_line
+crates/eid-grbl/src/lexer.rs:117:37: replace + with * in lex_line
+crates/eid-grbl/src/lexer.rs:126:5: replace read_number -> (String, usize) with (String::new(), 0)
+crates/eid-grbl/src/lexer.rs:126:5: replace read_number -> (String, usize) with (String::new(), 1)
+crates/eid-grbl/src/lexer.rs:126:5: replace read_number -> (String, usize) with ("xyzzy".into(), 0)
+crates/eid-grbl/src/lexer.rs:126:5: replace read_number -> (String, usize) with ("xyzzy".into(), 1)
+crates/eid-grbl/src/lexer.rs:127:21: replace && with || in read_number
+crates/eid-grbl/src/lexer.rs:127:10: replace < with == in read_number
+crates/eid-grbl/src/lexer.rs:127:10: replace < with > in read_number
+crates/eid-grbl/src/lexer.rs:127:10: replace < with <= in read_number
+crates/eid-grbl/src/lexer.rs:127:38: replace || with && in read_number
+crates/eid-grbl/src/lexer.rs:127:31: replace == with != in read_number
+crates/eid-grbl/src/lexer.rs:127:47: replace == with != in read_number
+crates/eid-grbl/src/lexer.rs:128:11: replace += with -= in read_number
+crates/eid-grbl/src/lexer.rs:128:11: replace += with *= in read_number
+crates/eid-grbl/src/lexer.rs:131:24: replace && with || in read_number
+crates/eid-grbl/src/lexer.rs:131:13: replace < with == in read_number
+crates/eid-grbl/src/lexer.rs:131:13: replace < with > in read_number
+crates/eid-grbl/src/lexer.rs:131:13: replace < with <= in read_number
+crates/eid-grbl/src/lexer.rs:132:11: replace += with -= in read_number
+crates/eid-grbl/src/lexer.rs:135:21: replace && with || in read_number
+crates/eid-grbl/src/lexer.rs:135:10: replace < with == in read_number
+crates/eid-grbl/src/lexer.rs:135:10: replace < with > in read_number
+crates/eid-grbl/src/lexer.rs:135:10: replace < with <= in read_number
+crates/eid-grbl/src/lexer.rs:135:30: replace == with != in read_number
+crates/eid-grbl/src/lexer.rs:136:11: replace += with -= in read_number
+crates/eid-grbl/src/lexer.rs:136:11: replace += with *= in read_number
+crates/eid-grbl/src/lexer.rs:137:28: replace && with || in read_number
+crates/eid-grbl/src/lexer.rs:137:17: replace < with == in read_number
+crates/eid-grbl/src/lexer.rs:137:17: replace < with > in read_number
+crates/eid-grbl/src/lexer.rs:137:17: replace < with <= in read_number
+crates/eid-grbl/src/lexer.rs:138:15: replace += with -= in read_number

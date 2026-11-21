@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace * with + in arc_block
+@@ -757,17 +757,17 @@
+             if chord_plane < 1e-9 {
+                 return Err(vec![inval(
+                     "R-arc with coincident in-plane start/end: ambiguous center (SPEC §6; CORPUS n19)".into(),
+                 )]);
+             }
+             // Хорда > 2R — невозможная дуга (допуск радиуса EQUIVALENCE §4; N5b).
+             let tol_r = 0.001f64.max(1e-6 * r.abs());
+             let h2 = 4.0 * r * r - d0 * d0 - d1 * d1; // = (2R)² − c²
+-            if h2 < -tol_r * 4.0 * r.abs().max(1.0) {
++            if h2 < -tol_r * 4.0 + /* ~ changed by cargo-mutants ~ */ r.abs().max(1.0) {
+                 return Err(vec![inval(
+                     format!("arc chord {chord_plane:.4} > 2R {}: impossible arc (SPEC §6; CORPUS n5b)", r.abs()),
+                 )]);
+             }
+             // Формула LinuxCNC/grbl: центр = середина хорды ± h·p̂; знак из
+             // направления и знака R (проверено на пилоте 46: центр (0,5,0)).
+             let mut sgn = if mode == GCode::ArcCw { -1.0 } else { 1.0 };
+             if r < 0.0 {

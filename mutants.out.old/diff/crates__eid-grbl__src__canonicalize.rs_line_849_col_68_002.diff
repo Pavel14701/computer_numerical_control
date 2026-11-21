@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace < with <= in arc_block
+@@ -841,17 +841,17 @@
+             op,
+             NoticeKind::ZeroLengthArc,
+             "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6; CORPUS #13)".into(),
+         );
+         update_pos(ctx, false, end);
+         return Ok(());
+     }
+     let mut near_degenerate = false;
+-    if b.word('R').is_some() && (180.0 - sweep.to_degrees()).abs() < 0.114 {
++    if b.word('R').is_some() && (180.0 - sweep.to_degrees()).abs() <= /* ~ changed by cargo-mutants ~ */ 0.114 {
+         near_degenerate = true; // |cos(sweep/2)| < 1e-3 (EQUIVALENCE §4)
+     }
+ 
+     // Валидация §6: планиметрический радиус ρ_start ≈ ρ_end (N5a).
+     let tol_r = 0.001f64.max(1e-6 * rho_s.max(rho_e));
+     if (rho_s - rho_e).abs() > tol_r {
+         return Err(vec![inval(format!(
+             "arc radius mismatch: ρ_start {rho_s:.4} vs ρ_end {rho_e:.4} (SPEC §6; CORPUS n5a)"

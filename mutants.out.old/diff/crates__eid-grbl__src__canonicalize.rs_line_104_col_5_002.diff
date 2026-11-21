@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace e3 -> [f64; 3] with [-1.0; 3]
+@@ -96,17 +96,17 @@
+         src: Some(span(file, line, 0)),
+         options: Vec::new(),
+         limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+         stage: eid_core::diag::Stage::Verify,
+     }
+ }
+ 
+ fn e3(p: &Point3) -> [f64; 3] {
+-    [p.x.value(), p.y.value(), p.z.value()]
++    [-1.0; 3] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn pt(x: f64, y: f64, z: f64) -> Point3 {
+     Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+ }
+ 
+ /// Плоскость → (axis_0, axis_1, axis_linear) — определение grbl gcode.c
+ /// (COVERAGE §6.11: G18 = ZX, G19 = YZ). Нормаль = +axis_linear (SPEC §6).

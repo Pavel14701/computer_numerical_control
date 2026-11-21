@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace < with <= in process_tail
+@@ -1013,17 +1013,17 @@
+ 
+     // (11) Dwell G4 P (сек, COVERAGE §7.3): ==0 → drop+notice; <0 → INVALID.
+     if b.g_codes.contains(&GCode::Dwell) {
+         let p = b.word('P').ok_or_else(|| {
+             vec![err(ErrorCode::InvalidInput, "G4 requires P word (seconds)", &ctx.file, line, blen)]
+         })?;
+         let sec = p.value();
+         let op = Op::Dwell { seconds: verbatim(p), state: ctx.state(Frame::Wcs), src: span(&ctx.file, line, blen), sub: None };
+-        if sec < 0.0 {
++        if sec <= /* ~ changed by cargo-mutants ~ */ 0.0 {
+             return Err(vec![err(
+                 ErrorCode::InvalidInput,
+                 "G4 P < 0: negative dwell (SPEC §5.2)",
+                 &ctx.file, line, blen,
+             )]);
+         }
+         if sec == 0.0 {
+             ctx.push_drop(op, NoticeKind::ZeroDwell, "zero dwell dropped (seconds == 0, SPEC §5.2)".into());

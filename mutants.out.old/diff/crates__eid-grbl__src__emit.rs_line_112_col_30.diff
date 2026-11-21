@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace && with || in Ectx::state_prefix
+@@ -104,17 +104,17 @@
+                 }
+                 if new.flood {
+                     self.out.push_str("M8\n");
+                 }
+             } else {
+                 if new.mist && !prev.mist {
+                     self.out.push_str("M7\n");
+                 }
+-                if new.flood && !prev.flood {
++                if new.flood || /* ~ changed by cargo-mutants ~ */ !prev.flood {
+                     self.out.push_str("M8\n");
+                 }
+             }
+             self.coolant = new;
+         }
+     }
+ 
+     fn line(&mut self, s: &str) {

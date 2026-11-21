@@ -1,0 +1,243 @@
+
+*** crates/eid-grbl/src/canonicalize.rs:662:66: replace && with || in resolve_end
+
+*** mutation diff:
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace && with || in resolve_end
+@@ -654,17 +654,17 @@
+ /// end → E_RUNTIME_STATE.
+ fn resolve_end(
+     ctx: &Ctx,
+     b: &Block,
+     reading: &Option<Point3>,
+     allow_controller_default: bool,
+ ) -> Result<Option<Point3>, Vec<Diagnostic>> {
+     let rv = reading.as_ref().map(|p| e3(p));
+-    let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
++    let at_start = allow_controller_default && reading.is_none() || /* ~ changed by cargo-mutants ~ */ ctx.prev_end.is_none();
+     let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
+     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
+         v[i] = match b.word(w) {
+             Some(n) => {
+                 if ctx.dist_abs {
+                     Some(verbatim(n))
+                 } else {
+                     let base = match rv {
+
+
+*** C:\\Users\\Pashtet\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --no-run --verbose --package=eid-grbl@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh unicode-ident v1.0.27
+       Fresh hashbrown v0.17.1
+       Fresh equivalent v1.0.3
+       Fresh proc-macro2 v1.0.107
+       Fresh indexmap v2.14.2
+       Fresh winnow v0.7.15
+       Fresh toml_write v0.1.2
+       Fresh quote v1.0.47
+       Fresh serde_core v1.0.229
+       Fresh eid-core v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-core)
+       Fresh syn v3.0.10
+       Dirty eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-grbl): the file `crates\eid-grbl\src\canonicalize.rs` has changed (13439689056.071134300s, 8s after last build at 13439689048.418156600s)
+   Compiling eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-grbl)
+       Fresh serde_derive v1.0.229
+       Fresh serde v1.0.229
+       Fresh serde_spanned v0.6.9
+       Fresh toml_datetime v0.6.11
+       Fresh toml_edit v0.22.27
+       Fresh toml v0.8.23
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6f66aa5f1d44b072 -C extra-filename=-22dfc31c079c2eb6 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rmeta'`
+       Fresh eid-harness v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-harness)
+warning: unused variable: `roll`
+   --> crates\eid-harness\src\generator.rs:113:13
+    |
+113 |         let roll = rng.below(1000);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_roll`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `eid-harness` (lib) generated 1 warning
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name eid_grbl --edition=2021 'crates\eid-grbl\src\lib.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d1483d80dfc8fd5f -C extra-filename=-cd8cd812586b141f --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'`
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name grbl_parse --edition=2021 'crates\eid-grbl\tests\grbl_parse.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=53da73d8c578a5b8 -C extra-filename=-5d4b1e7341d10e77 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_grbl=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_grbl-22dfc31c079c2eb6.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'`
+     Running `C:\Users\Pashtet\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name grbl_emit --edition=2021 'crates\eid-grbl\tests\grbl_emit.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=6beaac3f8aac30af -C extra-filename=-79bb3c46a98f4068 --out-dir 'C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' -C 'incremental=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\incremental' -L 'dependency=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps' --extern 'eid_core=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_core-e4708bc5f9300181.rlib' --extern 'eid_grbl=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_grbl-22dfc31c079c2eb6.rlib' --extern 'eid_harness=C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\libeid_harness-9a06ee5210a63c5a.rlib'`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.62s
+  Executable `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\eid_grbl-cd8cd812586b141f.exe`
+  Executable `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\grbl_emit-79bb3c46a98f4068.exe`
+  Executable `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\grbl_parse-5d4b1e7341d10e77.exe`
+
+*** result: Success
+
+*** C:\\Users\\Pashtet\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe test --verbose --package=eid-grbl@0.1.0
+       Fresh unicode-ident v1.0.27
+       Fresh hashbrown v0.17.1
+       Fresh equivalent v1.0.3
+       Fresh winnow v0.7.15
+       Fresh toml_write v0.1.2
+       Fresh eid-core v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-core)
+       Fresh proc-macro2 v1.0.107
+       Fresh indexmap v2.14.2
+       Fresh quote v1.0.47
+       Fresh serde_core v1.0.229
+       Fresh syn v3.0.10
+       Fresh serde_derive v1.0.229
+       Fresh serde v1.0.229
+       Fresh serde_spanned v0.6.9
+       Fresh toml_datetime v0.6.11
+       Fresh toml_edit v0.22.27
+       Fresh toml v0.8.23
+       Fresh eid-harness v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-harness)
+warning: unused variable: `roll`
+   --> crates\eid-harness\src\generator.rs:113:13
+    |
+113 |         let roll = rng.below(1000);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_roll`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `eid-harness` (lib) generated 1 warning
+       Fresh eid-grbl v0.1.0 (C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\crates\eid-grbl)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\eid_grbl-cd8cd812586b141f.exe`
+
+running 18 tests
+test block::tests::markers_and_out_of_dictionary ... ok
+test block::tests::arc_r_words ... ok
+test block::tests::modal_violation_detected ... ok
+test block::tests::g10_l20_and_l2 ... ok
+test block::tests::pilot_header_modal_state ... ok
+test block::tests::pilot_01_file_structure ... ok
+test gcode::tests::frames_modes_and_specials ... ok
+test block::tests::pilot_46_and_negative_19_parse ... ok
+test gcode::tests::out_of_dictionary_is_none ... ok
+test gcode::tests::m_codes_and_words ... ok
+test lexer::tests::markers_config_percent_block_delete ... ok
+test lexer::tests::comments_paren_and_semicolon ... ok
+test gcode::tests::motion_and_plane_and_units ... ok
+test lexer::tests::errors ... ok
+test lexer::tests::n_word_skipped_decimal_code ... ok
+test lexer::tests::pilot_header_words ... ok
+test lexer::tests::pilot_lowercase_and_signed ... ok
+test block::tests::corpus_grbl_files_lex_clean ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\grbl_emit-79bb3c46a98f4068.exe`
+
+running 30 tests
+test legality_table_shape_invariants ... ok
+test legality_negative_tool_change_via_table ... ok
+test raw_crlf_preserved_byte_exact ... ok
+test dwell_and_stops_emission ... ok
+test emit_never_uses_r_form ... ok
+test plane_switch_and_g18_pair ... ok
+test roundtrip_pilot_03_feed_survives_rapid ... ok
+test g53_prefix_and_g10_define_roundtrip ... ok
+test roundtrip_10_helix_inch ... ok
+test roundtrip_13_degenerate_zero_sweep ... ok
+test roundtrip_08_full_circle ... ok
+test negative_n3_config_verbatim ... ok
+test roundtrip_pilot_02_rapid_reposition ... ok
+test roundtrip_47_crlf_dollar_dollar ... ok
+test roundtrip_pilot_01_linear_box ... ok
+test roundtrip_pilot_11_arc_r_semicircle ... ok
+test spec_cov_emit_coolant_all_transitions ... ok
+test spec_cov_emit_coolant_partial_off_reenables ... ok
+test roundtrip_pilot_46_arc_r_helix ... ok
+test spec_cov_emit_legality_conditions_via_table ... ok
+test roundtrip_pilot_36_preset_then_switch ... ok
+test spec_cov_emit_spindle_same_value_not_reemitted ... ok
+test spec_cov_emit_planes_exact_text ... ok
+test spec_cov_emit_op_kind_in_legality ... ok
+test spec_cov_emit_zero_length_rapid_notice_kind ... ok
+test spec_cov_emit_spindle_transitions ... ok
+test spec_cov_emit_wcs_cycle_exact_text ... ok
+test vector_27_tool_change_is_syntax ... ok
+test vector_36_preset_order_e14 ... ok
+test legality_table_matches_manifest_r4_expect ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running `C:\Users\Pashtet\AppData\Local\Temp\cargo-mutants-computer_numerical_control-TyGuE5.tmp\target\debug\deps\grbl_parse-5d4b1e7341d10e77.exe`
+
+running 53 tests
+test negative_n19_r_full_circle_invalid ... ok
+test negative_n7_unit_switch_semantics ... ok
+test pilot_11_arc_r_semicircle ... ok
+test corpus_47_dollar_dollar_line_is_raw ... ok
+test corpus_08_full_circle_without_end_words_kept ... ok
+test pilot_03_feed_survives_rapid ... ok
+test pilot_36_preset_g54_then_switch ... ok
+test pilot_02_rapid_reposition ... ok
+test negative_n3_config_is_ok_with_raw ... ok
+test negative_n2_mid_g92_is_semantics ... ok
+test pilot_01_linear_box ... ok
+test negative_n5_arcs_invalid ... ok
+test corpus_37_g53_known_origins_breakpoint_c ... ok
+test pilot_46_arc_r_helix ... ok
+test spec_cov_arc_g93_arc_len_and_linear_diagonal ... ok
+test spec_cov_arc_near_degenerate_r_notice ... ok
+test spec_cov_arc_nonzero_start_exact ... ok
+test negative_n12_13_14_program_end_structure ... ok
+test spec_cov_arc_planes_ijk ... ok
+test negative_n15_n16_n17_frames ... ok
+test spec_cov_arc_r_negative_and_pitch ... ok
+test spec_cov_arc_r_nonzero_start ... ok
+test spec_cov_coolant_ops_state ... ok
+test spec_cov_cycles_raw_syntax ... ok
+test spec_cov_frame_dist_feed_resets ... ok
+test spec_cov_frame_g28_g38_raw ... ok
+test spec_cov_frame_g10_p_variants ... ok
+test spec_cov_frame_g53_no_motion ... ok
+test spec_cov_frame_g92_partial_and_g92_1 ... ok
+test spec_cov_frame_g91_at_start_and_breakpoint ... FAILED
+test spec_cov_frame_wcs_solo ... ok
+test spec_cov_lex_exponent_is_bad_number ... ok
+test spec_cov_lex_dollar_variants ... ok
+test spec_cov_lex_whitespace_and_word_boundary ... ok
+test spec_cov_lex_stage_parse_vs_canonical_verify ... ok
+test spec_cov_modal_conflicts ... ok
+test spec_cov_modal_solo ... ok
+test unit_cross_wcs_linking_arithmetic ... ok
+test spec_v0106_input_quantization_drops_near_zero_arc ... ok
+test unit_dwell_and_stops ... ok
+test spec_v012_path_mode_default_exact_path ... ok
+test unit_g80_naked_coords_invalid ... ok
+test unit_g53_machine_frame_and_limits ... ok
+test unit_g93_inverse_time_resolution ... ok
+test unit_g91_incremental_resolution ... ok
+test spec_v012_first_units_word_establishes ... ok
+test unit_modal_motion_continuation ... ok
+test unit_partial_end_after_unknown_breakpoint_is_runtime ... FAILED
+test unit_partial_end_at_start_inherits_zero ... ok
+test unit_t_word_and_modal_violation_invalid ... ok
+test unit_zero_length_linear_dropped_with_notice ... ok
+test spec_cov_limit_max_source_lines ... ok
+test spec_cov_limit_max_ops_boundary ... ok
+
+failures:
+
+---- spec_cov_frame_g91_at_start_and_breakpoint stdout ----
+
+thread 'spec_cov_frame_g91_at_start_and_breakpoint' panicked at crates\eid-grbl\tests\grbl_parse.rs:676:5:
+assertion `left == right` failed
+  left: InvalidInput
+ right: RuntimeState
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- unit_partial_end_after_unknown_breakpoint_is_runtime stdout ----
+
+thread 'unit_partial_end_after_unknown_breakpoint_is_runtime' panicked at crates\eid-grbl\tests\grbl_parse.rs:42:27:
+ожидался Err
+
+
+failures:
+    spec_cov_frame_g91_at_start_and_breakpoint
+    unit_partial_end_after_unknown_breakpoint_is_runtime
+
+test result: FAILED. 51 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.58s
+
+error: test failed, to rerun pass `-p eid-grbl --test grbl_parse`
+
+*** result: Failure(101)

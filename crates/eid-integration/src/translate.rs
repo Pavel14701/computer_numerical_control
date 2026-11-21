@@ -90,10 +90,19 @@ impl AnyAdapter {
         }
     }
 
-    /// Emit-стадия warnings последнего emit (Q3: потеря метаданных — не отказ).
+    /// Emit-стадия diagnostics последнего emit (LinuxCnc: Diagnostic-канал).
     pub fn take_emit_diagnostics(&mut self) -> Vec<Diagnostic> {
         match self {
             AnyAdapter::LinuxCnc(a) => a.take_diagnostics(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Q3-warning-строки последнего emit (Grbl: warnings-буфер адаптера,
+    /// напр. path_mode-потеря #40/#41/#45 — COVERAGE §6.1).
+    pub fn take_q3_warnings(&mut self) -> Vec<String> {
+        match self {
+            AnyAdapter::Grbl(a) => a.take_warnings(),
             _ => Vec::new(),
         }
     }
@@ -243,8 +252,10 @@ pub struct TranslateOutcome {
     pub emitted: String,
     /// Parse-stage notices источника (drop-with-notice — не ошибка).
     pub notices: Vec<String>,
-    /// Emit-stage warnings цели (Ok-путь; Q3).
+    /// Emit-stage warnings цели (Ok-путь; Q3, Diagnostic-канал LinuxCnc).
     pub emit_warnings: Vec<Diagnostic>,
+    /// Q3-warning-строки цели (Ok-путь; Grbl warnings-буфер, #40/#41/#45).
+    pub q3_warnings: Vec<String>,
 }
 
 /// Текст → текст: parse(источник) → RAW-правило → emit(цель).
@@ -272,6 +283,7 @@ pub fn translate_text(
 
     let emitted = target.emit(&program).map_err(TranslateError::Emit)?;
     let emit_warnings = target.take_emit_diagnostics();
+    let q3_warnings = target.take_q3_warnings();
 
     Ok(TranslateOutcome {
         from: source.name().to_string(),
@@ -280,6 +292,7 @@ pub fn translate_text(
         emitted,
         notices,
         emit_warnings,
+        q3_warnings,
     })
 }
 

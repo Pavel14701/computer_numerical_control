@@ -1,0 +1,22 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace Ectx::line with ()
+@@ -113,18 +113,17 @@
+                     self.out.push_str("M8\n");
+                 }
+             }
+             self.coolant = new;
+         }
+     }
+ 
+     fn line(&mut self, s: &str) {
+-        self.out.push_str(s);
+-        self.out.push('\n');
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ fn err(code: ErrorCode, msg: impl Into<String>, src: Option<eid_core::ast::SrcSpan>) -> Diagnostic {
+     Diagnostic { code, message: msg.into(), src, options: Vec::new(), limit: None, stage: eid_core::diag::Stage::Emit }
+ }
+ 
+ // ---------------------------------------------------------------------------

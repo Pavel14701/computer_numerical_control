@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace && with || in process_block
+@@ -464,17 +464,17 @@
+             b,
+             &b.raw,
+             ErrorCode::UnsupportedSemantics,
+             "G43.1 dynamic TLO — value not representable as motion state (COVERAGE §2.4)",
+         );
+         ctx.push(op);
+         return Ok(());
+     }
+-    if b.g_codes.contains(&GCode::ToolLenOff) && ctx.g43_family_seen {
++    if b.g_codes.contains(&GCode::ToolLenOff) || /* ~ changed by cargo-mutants ~ */ ctx.g43_family_seen {
+         let op = ctx.raw_op(
+             b,
+             &b.raw,
+             ErrorCode::UnsupportedSemantics,
+             "G49 cancels present G43-family compensation — family rule (COVERAGE §1.3)",
+         );
+         ctx.push(op);
+         return Ok(());

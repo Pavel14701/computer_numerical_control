@@ -1,0 +1,32 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace op_kind -> &'static str with "xyzzy"
+@@ -161,28 +161,17 @@
+     /// Вид опа легален?
+     pub fn is_legal_kind(&self, kind: &str) -> bool {
+         self.legal.contains(&kind)
+     }
+ }
+ 
+ /// Имя вида опа — ключ таблицы легальности (и словарь manifest r4_expect).
+ pub fn op_kind(op: &Op) -> &'static str {
+-    match op {
+-        Op::Rapid { .. } => "rapid",
+-        Op::Linear { .. } => "linear",
+-        Op::Arc { .. } => "arc",
+-        Op::Dwell { .. } => "dwell",
+-        Op::ToolChange { .. } => "tool_change",
+-        Op::ProgramStop { .. } => "program_stop",
+-        Op::ProgramEnd { .. } => "program_end",
+-        Op::WcsDefine { .. } => "wcs_define",
+-        Op::WcsSetHere { .. } => "wcs_set_here",
+-        Op::Raw { .. } => "raw",
+-    }
++    "xyzzy" /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
+     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
+     eid_core::parser::validate(program)?;
+     // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
+     if program.eid_version != "EID/L1 v0.3" {
+         return Err(vec![err(

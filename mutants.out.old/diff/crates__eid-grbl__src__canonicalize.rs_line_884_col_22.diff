@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace > with == in arc_block
+@@ -876,17 +876,17 @@
+         ]
+     };
+     let eps_pos = 0.001f64.max(1e-7 * len3(&sub3(&end, &start)));
+     let mut resid2 = 0.0;
+     for i in 0..3 {
+         let pred = c[i] + v[i] + pitch * normal[i];
+         resid2 += (e[i] - pred).powi(2);
+     }
+-    if resid2.sqrt() > eps_pos {
++    if resid2.sqrt() == /* ~ changed by cargo-mutants ~ */ eps_pos {
+         return Err(vec![inval(format!(
+             "arc rotation-equation residual {:.4} > {eps_pos:.4} (SPEC §6.3)",
+             resid2.sqrt()
+         ))]);
+     }
+ 
+     let arc_len = ((rho_s * sweep).powi(2) + pitch * pitch).sqrt();
+     let f = ctx.feed.clone().ok_or_else(|| {

@@ -111,24 +111,11 @@ fn exit_of(args: &[&str]) -> u8 {
 /// Документированные исключения (вербатим оркестратору, не фикс): возврат
 /// Some(причина) ⇒ расхождение классифицировано и не роняет матрицу.
 /// НОВЫЕ классы расхождений сюда не попадают → тест красный списком.
-/// #47 выведен из исключений (итерация 5, фикс raw_refusal в
-/// eid-integration::translate): r4_expect E_RAW_UNTRANSLATABLE выполняется.
-fn known_exception(id: &str, msg: &str) -> Option<String> {
-    const CYCLES: [&str; 10] = ["17", "18", "19", "20", "21", "22", "23", "24", "25", "26"];
-    if msg.contains(r#"field: "feed""#) && CYCLES.contains(&id) {
-        return Some(
-            "cycle-family feed@traverse/approach — известный список B (checkpoint v4); \
-             поверхность: CLI round-trip эмиссии циклов (C/D, SPEC §7)"
-                .to_string(),
-        );
-    }
-    if id == "40" && msg.contains("emit-warnings пусты") {
-        return Some(
-            "Q3-warning (junction-потеря G61 при →grbl) не записана эмиттером D \
-             (COVERAGE §6.1, r4_expect grbl=warning)"
-                .to_string(),
-        );
-    }
+/// Контрольный прогон (фиксы C/D в дереве): известные исключения циклов
+/// (#17–#26 feed@traverse) и #40 (Q3-warning) зелёные — ветки удалены,
+/// матрица чистая. Остаются только lossy-Skip #41/#45 и r4-отказ #27
+/// (не исключения, а ожидаемые ветки).
+fn known_exception(_id: &str, _msg: &str) -> Option<String> {
     None
 }
 
@@ -226,7 +213,10 @@ fn e2e48_positive_vectors_full_matrix() {
                         continue;
                     }
                     Ok(outcome) => {
-                        if r4 == "warning" && outcome.emit_warnings.is_empty() {
+                        if r4 == "warning"
+                            && outcome.emit_warnings.is_empty()
+                            && outcome.q3_warnings.is_empty()
+                        {
                             let msg = format!(
                                 "{tag}: r4_expect warning, но emit-warnings пусты (Q3-потеря не записана)"
                             );

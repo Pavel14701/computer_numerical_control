@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace += with -= in validate_grbl
+@@ -242,17 +242,17 @@
+         })
+     };
+     let mut v = Vec::new();
+     let mut ends = 0usize;
+     let mut last_is_end = false;
+     for op in &program.ops {
+         last_is_end = matches!(op, Op::ProgramEnd { .. });
+         if last_is_end {
+-            ends += 1;
++            ends -= /* ~ changed by cargo-mutants ~ */ 1;
+         }
+         match op {
+             Op::ToolChange { src, .. } => v.push(err(
+                 code("tool_change"),
+                 "tool_change: M6 outside GRBL 1.1 dictionary (COVERAGE §5; vector #27 r4_expect)",
+                 Some(src.clone()),
+             )),
+             Op::Linear { state, src, .. } => {

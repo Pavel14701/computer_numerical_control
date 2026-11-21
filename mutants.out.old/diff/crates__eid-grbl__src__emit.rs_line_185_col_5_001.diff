@@ -1,0 +1,68 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace emit -> Result<String, Vec<Diagnostic>> with Ok("xyzzy".into())
+@@ -177,64 +177,17 @@
+         Op::WcsDefine { .. } => "wcs_define",
+         Op::WcsSetHere { .. } => "wcs_set_here",
+         Op::Raw { .. } => "raw",
+     }
+ }
+ 
+ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
+     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
+-    eid_core::parser::validate(program)?;
+-    // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
+-    if program.eid_version != "EID/L1 v0.3" {
+-        return Err(vec![err(
+-            ErrorCode::InvalidInput,
+-            format!("eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)", program.eid_version),
+-            None,
+-        )]);
+-    }
+-    // Легальность эмиссии — против таблицы (COVERAGE §5), fail-fast до прохода.
+-    let table = crate::GrblAdapter::default().emission_legality();
+-    let problems = validate_grbl(&table, program);
+-    if !problems.is_empty() {
+-        return Err(problems);
+-    }
+-
+-    let mut ctx = Ectx {
+-        out: String::new(),
+-        plane: GCode::PlaneXY,
+-        wcs: Wcs::G54,
+-        feed: None,
+-        spindle: Spindle::Off,
+-        coolant: Coolant::default(),
+-        first_motion: true,
+-    };
+-
+-    // Заголовок — всегда явно (бриф п.1).
+-    ctx.line(match program.units {
+-        Units::Mm => "G21 G90 G94",
+-        Units::In => "G20 G90 G94",
+-    });
+-
+-    // frame_preset — первым блоком после заголовка (EQUIVALENCE §1.4, порядок
+-    // строгий: выборка preset.wcs, затем G92; без «запекания» в G10).
+-    if let Some(fp) = &program.frame_preset {
+-        ctx.line(wcs_code(&fp.wcs));
+-        ctx.line(&format!(
+-            "G92 X{} Y{} Z{}",
+-            fmt_num(fp.values.x.value()),
+-            fmt_num(fp.values.y.value()),
+-            fmt_num(fp.values.z.value())
+-        ));
+-    }
+-
+-    for op in &program.ops {
+-        emit_op(&mut ctx, op);
+-    }
+-    Ok(ctx.out)
++    Ok("xyzzy".into()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5).
+ /// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
+ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic> {
+     // Условие обязано быть объявлено в таблице — иначе баг объявления, не паника пути.
+     let code = |cond: &'static str| {
+         table.code_of(cond).unwrap_or_else(|| {

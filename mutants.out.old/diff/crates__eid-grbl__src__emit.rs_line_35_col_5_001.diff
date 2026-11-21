@@ -1,0 +1,25 @@
+--- crates/eid-grbl/src/emit.rs
++++ replace arc_pair -> (&'static str, usize, &'static str, usize) with ("", 0, "", 1)
+@@ -27,21 +27,17 @@
+         (0.0, 0.0, v) if (v - 1.0).abs() < 1e-9 => Ok(GCode::PlaneXY),
+         _ => Err(format!("arc normal ({x},{y},{z}) is not a canonical +axis (SPEC §6)")),
+     }
+ }
+ 
+ /// In-plane пара offsets: (слово, ось) — I/J/K literal X/Y/Z (COVERAGE §6.11):
+ /// G17 → I+J, G18 → I+K, G19 → J+K. Порядок эмиссии — слово за словом.
+ fn arc_pair(plane: &GCode) -> (&'static str, usize, &'static str, usize) {
+-    match plane {
+-        GCode::PlaneZX => ("I", 0, "K", 2), // G18: I(X) + K(Z)
+-        GCode::PlaneYZ => ("J", 1, "K", 2), // G19: J(Y) + K(Z)
+-        _ => ("I", 0, "J", 1),              // G17: I(X) + J(Y)
+-    }
++    ("", 0, "", 1) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn wcs_code(w: &Wcs) -> &'static str {
+     match w {
+         Wcs::G54 => "G54",
+         Wcs::G55 => "G55",
+         Wcs::G56 => "G56",
+         Wcs::G57 => "G57",

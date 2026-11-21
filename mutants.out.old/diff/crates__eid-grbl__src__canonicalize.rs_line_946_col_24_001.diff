@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace - with / in sub3
+@@ -938,17 +938,17 @@
+     let [x, y, z] = e3(a);
+     let [u, v, w] = e3(b);
+     pt(x + u, y + v, z + w)
+ }
+ 
+ fn sub3(a: &Point3, b: &Point3) -> Point3 {
+     let [x, y, z] = e3(a);
+     let [u, v, w] = e3(b);
+-    pt(x - u, y - v, z - w)
++    pt(x - u, y - v, z / /* ~ changed by cargo-mutants ~ */ w)
+ }
+ 
+ fn len3(d: &Point3) -> f64 {
+     let [x, y, z] = e3(d);
+     (x * x + y * y + z * z).sqrt()
+ }
+ 
+ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagnostic>> {

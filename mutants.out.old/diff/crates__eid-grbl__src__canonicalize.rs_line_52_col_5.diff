@@ -1,0 +1,33 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace num_f64 -> Num with Default::default()
+@@ -44,29 +44,17 @@
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // Числовые/диагностические хелперы
+ // ---------------------------------------------------------------------------
+ 
+ /// Вычисленное число → Num: 4 dp, трейлинг-нули нормализованы (SPEC §10.2).
+ pub(crate) fn num_f64(v: f64) -> Num {
+-    let mut s = format!("{:.4}", v);
+-    if s.contains('.') {
+-        while s.ends_with('0') {
+-            s.pop();
+-        }
+-        if s.ends_with('.') {
+-            s.pop();
+-        }
+-    }
+-    if s == "-0" {
+-        s = "0".into();
+-    }
+-    Num::new(s, v)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn verbatim(n: &Num) -> Num {
+     n.clone()
+ }
+ 
+ fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+     SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }

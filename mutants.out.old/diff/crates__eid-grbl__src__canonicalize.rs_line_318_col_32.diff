@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace + with - in finalize
+@@ -310,17 +310,17 @@
+         process_block(&mut ctx, b, i + 1 == n)?;
+     }
+     finalize(&mut ctx, line_count as u32)
+ }
+ 
+ /// Структурная проверка program_end (N12/N13/N14 → Err INVALID) + сборка Program.
+ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>> {
+     // Лимит max_ops_per_program (COVERAGE §1.2).
+-    let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
++    let ops_n = (ctx.ops.len() - /* ~ changed by cargo-mutants ~ */ ctx.notices.len()) as f64;
+     if ops_n > 200_000.0 {
+         return Err(vec![limit_err(
+             "max_ops_per_program", 200_000.0, ops_n,
+             format!("program yields {} ops, limit 200000", ops_n as u64),
+             &ctx.file, 1,
+         )]);
+     }
+     if ctx.end_count == 0 {

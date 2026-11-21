@@ -1,0 +1,26 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace plane_axes -> (usize, usize, usize) with (0, 1, 0)
+@@ -106,22 +106,17 @@
+ 
+ fn pt(x: f64, y: f64, z: f64) -> Point3 {
+     Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+ }
+ 
+ /// Плоскость → (axis_0, axis_1, axis_linear) — определение grbl gcode.c
+ /// (COVERAGE §6.11: G18 = ZX, G19 = YZ). Нормаль = +axis_linear (SPEC §6).
+ fn plane_axes(g: &GCode) -> (usize, usize, usize) {
+-    match g {
+-        GCode::PlaneXY => (0, 1, 2),
+-        GCode::PlaneZX => (2, 0, 1),
+-        GCode::PlaneYZ => (1, 2, 0),
+-        _ => (0, 1, 2),
+-    }
++    (0, 1, 0) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn wcs_from_p(p: u8) -> Wcs {
+     match p {
+         1 => Wcs::G54,
+         2 => Wcs::G55,
+         3 => Wcs::G56,
+         4 => Wcs::G57,

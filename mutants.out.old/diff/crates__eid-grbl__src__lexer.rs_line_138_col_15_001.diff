@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/lexer.rs
++++ replace += with *= in read_number
+@@ -130,17 +130,17 @@
+     let mut digits = false;
+     while i < cs.len() && cs[i].is_ascii_digit() {
+         i += 1;
+         digits = true;
+     }
+     if i < cs.len() && cs[i] == '.' {
+         i += 1;
+         while i < cs.len() && cs[i].is_ascii_digit() {
+-            i += 1;
++            i *= /* ~ changed by cargo-mutants ~ */ 1;
+             digits = true;
+         }
+     }
+     if digits {
+         (cs[start..i].iter().collect(), i)
+     } else {
+         (String::new(), start)
+     }

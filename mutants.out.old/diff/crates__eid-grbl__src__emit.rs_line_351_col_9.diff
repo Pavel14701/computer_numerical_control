@@ -1,0 +1,24 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete match arm Op::Arc{dir, ..} in motion_code
+@@ -343,20 +343,17 @@
+         ));
+     }
+ }
+ 
+ fn motion_code(op: &Op) -> &'static str {
+     match op {
+         Op::Rapid { .. } => "G0",
+         Op::Linear { .. } => "G1",
+-        Op::Arc { dir, .. } => match dir {
+-            eid_core::ast::Dir::Cw => "G2",
+-            eid_core::ast::Dir::Ccw => "G3",
+-        },
++         /* ~ changed by cargo-mutants ~ */
+         _ => "",
+     }
+ }
+ 
+ /// decode_hex — payload валидирован (grammar D9); не-hex уже отбракован.
+ fn decode_hex(s: &str) -> Vec<u8> {
+     (0..s.len())
+         .step_by(2)

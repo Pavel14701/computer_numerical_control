@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm (Some(x), Some(y), Some(z)) in resolve_end
+@@ -684,17 +684,17 @@
+             None => match rv {
+                 Some(r) => Some(num_f64(r[i])),
+                 None if at_start => Some(num_f64(0.0)), // дефолт контроллера
+                 None => None,
+             },
+         };
+     }
+     match (v[0].take(), v[1].take(), v[2].take()) {
+-        (Some(x), Some(y), Some(z)) => Ok(Some(Point3 { x, y, z })),
++         /* ~ changed by cargo-mutants ~ */
+         _ => {
+             if reading.is_none() {
+                 Err(vec![err(
+                     ErrorCode::RuntimeState,
+                     "partial end with unknown reading inherits unknown (SPEC §2)",
+                     &ctx.file, b.line_no, b.raw.len(),
+                 )])
+             } else {

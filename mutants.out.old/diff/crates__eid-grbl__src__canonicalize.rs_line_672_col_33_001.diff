@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace match guard at_start with false in resolve_end
+@@ -664,17 +664,17 @@
+     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
+         v[i] = match b.word(w) {
+             Some(n) => {
+                 if ctx.dist_abs {
+                     Some(verbatim(n))
+                 } else {
+                     let base = match rv {
+                         Some(r) => r,
+-                        None if at_start => [0.0, 0.0, 0.0],
++                        None if false /* ~ changed by cargo-mutants ~ */ => [0.0, 0.0, 0.0],
+                         None => {
+                             return Err(vec![err(
+                                 ErrorCode::RuntimeState,
+                                 "incremental move requires known current position (SPEC §2)",
+                                 &ctx.file, b.line_no, b.raw.len(),
+                             )]);
+                         }
+                     };

@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace span -> SrcSpan with Default::default()
+@@ -64,17 +64,17 @@
+     Num::new(s, v)
+ }
+ 
+ fn verbatim(n: &Num) -> Num {
+     n.clone()
+ }
+ 
+ fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+-    SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Диагностика с явным этапом: Parse — лексические пути GRBL, Verify —
+ /// канонизационные инварианты (§6-геометрия, позиционные правила).
+ fn err_staged(
+     stage: eid_core::diag::Stage,
+     code: ErrorCode,
+     msg: impl Into<String>,

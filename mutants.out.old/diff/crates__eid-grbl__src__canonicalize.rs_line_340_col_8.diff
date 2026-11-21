@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete ! in finalize
+@@ -332,17 +332,17 @@
+     }
+     if ctx.end_count > 1 {
+         return Err(vec![err(
+             ErrorCode::InvalidInput,
+             "duplicate program end: more than one M2/M30 (CORPUS n13)",
+             &ctx.file, ctx.end_line, 0,
+         )]);
+     }
+-    if !ctx.end_is_last {
++    if  /* ~ changed by cargo-mutants ~ */ctx.end_is_last {
+         return Err(vec![err(
+             ErrorCode::InvalidInput,
+             "program end is not the last block (CORPUS n12)",
+             &ctx.file, ctx.end_line, 0,
+         )]);
+     }
+     let program = Program {
+         // grammar v0.3 — magic-строка (SPEC §10.4): изменение формата = новая версия.

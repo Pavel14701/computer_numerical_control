@@ -1,0 +1,26 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace Ctx::raw_op -> Op with Default::default()
+@@ -218,22 +218,17 @@
+         self.notices.push(Notice { kind, message, op_index: idx, op });
+     }
+ 
+     fn line(&self, b: &Block) -> u32 {
+         b.line_no
+     }
+ 
+     fn raw_op(&self, b: &Block, raw_line: &str, code: ErrorCode, reason: &str) -> Op {
+-        Op::Raw {
+-            payload_hex: payload_hex(raw_line),
+-            reason: reason.to_string(),
+-            code,
+-            src: span(&self.file, b.line_no, raw_line.len()),
+-        }
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // Входные точки
+ // ---------------------------------------------------------------------------
+ 
+ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {

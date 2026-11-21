@@ -1,6 +1,6 @@
 # REPORT-ITER23 — полный прогон корпуса через eid-harness runner
 
-- прогон: контрольная точка итераций 2–3 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)
+- прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)
 - corpus: `v0.1-pilot` (векторов: 68)
 - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)
 - сводка runner: Pass = 346, Fail = 0, Pending = 0, Skipped = 2

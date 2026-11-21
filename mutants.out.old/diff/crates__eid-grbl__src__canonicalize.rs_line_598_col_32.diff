@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace > with == in reading_now
+@@ -590,17 +590,17 @@
+     Ok(())
+ }
+ 
+ /// Текущее чтение позиции в целевом фрейме хода (None = точка разрыва, SPEC §2).
+ fn reading_now(ctx: &Ctx, g53: bool) -> Result<Option<Point3>, Vec<Diagnostic>> {
+     if g53 {
+         // (c) §5.3: (a) нет позиционно-относительных фреймовых операций;
+         // (b) каждая WCS, выбранная до хода, определена in-text до хода.
+-        if ctx.frame_def_count > 0 {
++        if ctx.frame_def_count == /* ~ changed by cargo-mutants ~ */ 0 {
+             return Err(vec![err(
+                 ErrorCode::RuntimeState,
+                 "machine-frame move after frame_preset/wcs_set_here (SPEC §5.3a; CORPUS n16)",
+                 &ctx.file, 0, 0,
+             )]);
+         }
+         for p in &ctx.selected_wcs {
+             if ctx.origin_of(*p).is_none() {

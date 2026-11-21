@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete ! in validate_grbl
+@@ -302,17 +302,17 @@
+     if ends == 0 {
+         v.push(err(
+             code("program_end_missing"),
+             "program_end missing: GRBL emission requires M2 (CORPUS n14)",
+             None,
+         ));
+     } else if ends > 1 {
+         v.push(err(code("program_end_duplicate"), "duplicate program_end (CORPUS n13)", None));
+-    } else if !last_is_end {
++    } else if  /* ~ changed by cargo-mutants ~ */last_is_end {
+         v.push(err(
+             code("program_end_not_last"),
+             "program_end must be the last op (CORPUS n12)",
+             None,
+         ));
+     }
+     v
+ }

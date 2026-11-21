@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ replace * with / in arc_block
+@@ -860,17 +860,17 @@
+     // Уравнение позиции: end ≈ c + Rot(n, dir, sweep)·(start − c) + pitch·n.
+     let v = {
+         let th = if mode == GCode::ArcCw { -sweep } else { sweep };
+         let rv = [s[0] - c[0], s[1] - c[1], s[2] - c[2]];
+         let cos = th.cos();
+         let sin = th.sin();
+         let nv = [rv[0] * normal[0] + rv[1] * normal[1] + rv[2] * normal[2]];
+         let cr = [
+-            normal[1] * rv[2] - normal[2] * rv[1],
++            normal[1] / /* ~ changed by cargo-mutants ~ */ rv[2] - normal[2] * rv[1],
+             normal[2] * rv[0] - normal[0] * rv[2],
+             normal[0] * rv[1] - normal[1] * rv[0],
+         ];
+         [
+             rv[0] * cos + cr[0] * sin + normal[0] * nv[0] * (1.0 - cos),
+             rv[1] * cos + cr[1] * sin + normal[1] * nv[0] * (1.0 - cos),
+             rv[2] * cos + cr[2] * sin + normal[2] * nv[0] * (1.0 - cos),
+         ]

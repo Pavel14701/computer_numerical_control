@@ -1,0 +1,21 @@
+--- crates/eid-grbl/src/canonicalize.rs
++++ delete match arm Wcs::G58 in wcs_to_p
+@@ -131,17 +131,17 @@
+ }
+ 
+ fn wcs_to_p(w: &Wcs) -> u8 {
+     match w {
+         Wcs::G54 => 1,
+         Wcs::G55 => 2,
+         Wcs::G56 => 3,
+         Wcs::G57 => 4,
+-        Wcs::G58 => 5,
++         /* ~ changed by cargo-mutants ~ */
+         _ => 6,
+     }
+ }
+ 
+ /// hex-кодировка байтов строки (grammar D9 v0.3: чётная длина, A–F uppercase);
+ /// байты verbatim включая line terminator (\r\n / \n).
+ fn payload_hex(line: &str) -> String {
+     let mut s = String::new();

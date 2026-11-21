@@ -1,0 +1,31 @@
+--- crates/eid-grbl/src/emit.rs
++++ delete match arm Op::Raw{payload_hex, src, ..} in validate_grbl
+@@ -268,27 +268,17 @@
+                     ));
+                 }
+                 let n = [normal.x.value(), normal.y.value(), normal.z.value()];
+                 if let Err(m) = plane_of(&n) {
+                     v.push(err(code("arc_normal_non_canonical"), m, Some(src.clone())));
+                 }
+             }
+             Op::Rapid { state, src, .. } => check_motion_state(table, &mut v, state, src, false),
+-            Op::Raw { payload_hex, src, .. } => {
+-                if payload_hex.len() % 2 != 0
+-                    || payload_hex.chars().any(|c| !c.is_ascii_hexdigit())
+-                {
+-                    v.push(err(
+-                        code("raw_payload_not_hex"),
+-                        "raw payload_hex is not valid byte hex (grammar D9 v0.3)",
+-                        Some(src.clone()),
+-                    ));
+-                }
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             Op::Dwell { state, src, .. }
+             | Op::WcsDefine { state, src, .. }
+             | Op::WcsSetHere { state, src, .. }
+             | Op::ProgramStop { state, src, .. } => {
+                 if wcs_code(&state.wcs).is_empty() {
+                     v.push(err(
+                         code("wcs_outside_g54_g59"),
+                         "state.wcs outside GRBL dictionary (G59.x; COVERAGE §2.3)",

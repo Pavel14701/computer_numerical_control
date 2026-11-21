@@ -162,7 +162,7 @@ fn full_run_generates_report_iter23() {
 
     let report = format!(
         "# REPORT-ITER23 — полный прогон корпуса через eid-harness runner\n\n\
-        - прогон: контрольная точка итераций 2–3 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)\n\
+        - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)\n\
         - corpus: `{}` (векторов: {})\n\
         - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)\n\
         - сводка runner: Pass = {}, Fail = {}, Pending = {}, Skipped = {}\n\n\

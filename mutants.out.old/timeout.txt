@@ -1,0 +1,6 @@
+crates/eid-grbl/src/lexer.rs:58:11: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:74:15: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:79:19: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:95:19: replace += with *= in lex_line
+crates/eid-grbl/src/lexer.rs:132:11: replace += with *= in read_number
+crates/eid-grbl/src/lexer.rs:138:15: replace += with *= in read_number
