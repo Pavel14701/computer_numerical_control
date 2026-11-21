@@ -1,6 +1,6 @@
 # CORPUS-CONTRACT — корпус и критерии приёмки
 
-**Версия:** v0.7 (четырёхтиражная формализация Tier A: smoke / real / edge_cases / invalid_cases — §1; mutation operators — §2), привязан к SPEC-EID-L1 **v0.15**, COVERAGE **v0.7.1**, EQUIVALENCE **v0.3.1**, grammar.ebnf **v0.3**, IMPLEMENTATION-PLAN **v0.1.3**
+**Версия:** v0.7.1 (аудит-волна: §1.2 N11/N14 — Err→line-level по SPEC v0.16, supersede CORPUS v0.5.2; §1/§2.1 #13 — drop → полный круг 360° по SPEC §3 v0.17, зонд rs274), привязан к SPEC-EID-L1 **v0.17**, COVERAGE **v0.9.1**, EQUIVALENCE **v0.3.1**, grammar.ebnf **v0.4**, IMPLEMENTATION-PLAN **v0.1.3**
 **Роль:** определить, что чем проверяется; сделать критерии этапов 3–6 проверяемыми, а не пожеланиями. Мастер-принцип: **самосогласованность ≠ корректность** — утверждения о корректности живут только на Tier A.
 
 ---
@@ -26,8 +26,8 @@ Tier A v0/v1 (hand-seeded 48 позитивов + 20 негативов, §1.1/�
 |---|---|---|---|
 | **smoke** (8) | пилотный набор итерации 1: #1, #2, #3, #11, #27, #36, #46 + N1 | быстрый sanity при каждой сборке: базис движения + ill-conditioned R + R4-отказ + ключевой Δ-инвариант + первый негатив | зелёный прогон = сборка принята |
 | **real** (38 не-цикловых позитивов минус edge/цели с r4-отказами... см. ниже) | v1-регенерированные пары всех не-цикловых позитивов: emit(golden AST) адаптерами (закрытие долга §1-v0.1), проверка `parse(v1) ≡ golden` и emit-стабильности | рабочий объём корректности: R3-мастер-тест на регенерированных парах | R3-golden/consistency 100% зелёные |
-| **edge_cases** (7) | #11 ill-conditioned R-семи-круг, #13 zero-sweep drop+notice, #39 mode-mix инкрементальных центров, #47 CRLF-RAW-фиделити, #36 Δ-инвариант EQUIVALENCE §1.3, #31/#37 unknown-start точки разрыва | каждый — **минимизированный repro известного класса багов**: вектор обязывает реализацию держать конкретную семантическую ветку; красный edge_case = регресс известного класса, не «новый баг» | персональное ревью красного по §9 |
-| **invalid_cases** (20) | N1–N19 (с N5a/N5b) — §1.2 | корректность диагностики: код, source map, правило двух классов | код == expect; line-level — Ok + diagnostics ⊇ expected |
+| **edge_cases** (7) | #11 ill-conditioned R-семи-круг, #13 degenerate-эндпойнт → полный круг 360° (SPEC §3 v0.17), #39 mode-mix инкрементальных центров, #47 CRLF-RAW-фиделити, #36 Δ-инвариант EQUIVALENCE §1.3, #31/#37 unknown-start точки разрыва | каждый — **минимизированный repro известного класса багов**: вектор обязывает реализацию держать конкретную семантическую ветку; красный edge_case = регресс известного класса, не «новый баг» | персональное ревью красного по §9 |
+| **invalid_cases** (20) | N1–N19 (с N5a/N5b) — §1.2 | корректность диагностики: код, source map, правило двух классов | код == expect; line-level — Ok + diagnostics ⊇ expected; notice-исход — Ok + notice без E-диага (N14, auto-PEND) |
 
 Плюс **cycle-семейство** #17–#26 (10) — вне четырёх тиров: закрыто отдельно
 (v5, развёртывание SPEC §7 v0.14/§7.7 v0.15), только LinuxCNC-source,
@@ -91,7 +91,7 @@ per-file AST несут реальные спаны, эквивалентнос�
 | 10 | `arc_helix_inch` *(v0.1)* | pitch в дюймах — float-ловушка #38 в контексте дуги |
 | 11 | `arc_R_semicircle` | **`golden_semicircle_R`**: R-форма, sweep≈179.5° — ill-conditioned case (EQUIVALENCE §4). **golden = выведенные значения** (центр −0.0351,0.0001; sweep 179.4975; single-final-rounding SPEC v0.11), не идеальная геометрия R=10 — расхождение ~0.035 mm и есть документированная амплификация (СТОП-2 отчёта D, v0.5.2) |
 | 12 | `arc_R_sweep270` *(v0.1)* | R с отрицательным знаком → sweep=270°: другая ветка R-парсинга (знак выбирает ≤/> 180°), ломается независимо от #11 |
-| 13 | `arc_degenerate_zero_sweep` *(v0.1)* | sweep=0 (нулевой ход) → отброшен **с notice, не ошибка** (SPEC §6, §3 v0.6) |
+| 13 | `arc_degenerate_zero_sweep` *(v0.1)* | эндпойнт < 4dp (квантуется в start: `X0.00004`) при center-форме с center≠start (I5) → **полный круг 360°, не drop** (SPEC §3 v0.17 — зонд rs274 `ARC_FEED rotation=-1`; CAM-идиома «X Y на полных кругах»); ревизия v0.6.7 «drop+notice» — golden regen (аудит #15); drop+notice остаётся degenerate-центру (center==start, Zero-radius — обе формы) |
 | 14 | `arc_G18` | XZ-плоскость; R4-отказов для GRBL **нет** — все три плоскости поддержаны (source-проверка, COVERAGE §6.11); I/J/K literal в обоих диалектах |
 | 15 | `arc_G19` | YZ-плоскость; см. #14 |
 | 16 | `plane_mix` | G17/G18/G19 секции; см. #14 |
@@ -134,19 +134,29 @@ per-file AST несут реальные спаны, эквивалентнос�
 ### 1.2 Негативные (20) — вектор = файл + ожидаемый код диагностики
 
 **Правило двух классов (v0.5, решение оркестратора перед итерацией 2 —
-устраняет противоречие COVERAGE `RAW(code)` ↔ ожиданиям отказов):**
+устраняет противоречие COVERAGE `RAW(code)` ↔ ожиданиям отказов; v0.7.1 —
+ревизия N11/N14 по SPEC v0.16):**
 - **Err — структурные / guard / invalid:** raw-сохранение молча исказило бы
   интерпретацию **последующих** опов (смена фрейма mid-program, смена
   единиц, нарушения структуры программы, сломанный вход, лимиты):
-  N1, N2, N4, N5a, N5b, N6, N7, N11, N12, N13, N14, N15, N16, N17, N19 →
+  N1, N2, N4, N5a, N5b, N6, N7, N12, N13, N15, N16, N17, N19 →
   parse = `Err(код)`;
 - **Ok + диагностика — line-level:** конструкция локальна (не влияет на
   последующие опы), RAW-узел сохраняется (SPEC §8), диагностика несёт код:
-  N3, N8, N9, N10, N18 → parse = `Ok`, diagnostics ⊇ `{код}`
-  (manifest: `expected_diags`). *(v0.5.2: N11 переведён в Err-класс —
-  подпрограмма структурна: после M98 поток управления расходится,
-  raw-сохранение исказило бы последующие опы; СТОП-1 отчёта D — крат
-  итерации 2 ошибочно помещал N11 в Ok.)*
+  N3, N8, N9, N10, N11, N18 → parse = `Ok`, diagnostics ⊇ `{код}`
+  (manifest: `expected_diags`);
+- **Ok + notice — line-level без E-диага (v0.7.1, отдельная форма
+  line-level-исхода):** N14 `program_end_missing` → parse = `Ok` + notice
+  `W_MISSING_PROGRAM_END` (auto-PEND: канонизатор вставляет program_end
+  последним опом — SPEC §3 v0.16). Notice ≠ E-код, `expected_diags` пуст
+  (manifest: `expect = ok`, `notice = true`). Основание: 18/32 published-
+  файлов реального корпуса заканчиваются без M2/M30 (rs274 solo-подтвер-
+  ждение) — отсутствие program_end = неявный конец, не структурный отказ.
+  *(История N11: v0.5.2 переводил в Err — «подпрограмма структурна, после
+  M98 поток управления расходится» (СТОП-1 отчёта D; крат итерации 2
+  ошибочно помещал N11 в Ok). **Superseded SPEC v0.16** — M98 → line-level
+  `Raw{E_UNSUPPORTED_SYNTAX}` (SPEC §1.1), N11 обратно в Ok+диагностику;
+  классификация §9, не silent change — manifest-ревизия 7b7cc58/83f5647.)*
 
 | # | Вектор | Ожидается |
 |---|---|---|
@@ -161,17 +171,18 @@ per-file AST несут реальные спаны, эквивалентнос�
 | N8 | `tapping_G84` | `E_UNSUPPORTED_SEMANTICS` |
 | N9 | `bare_T_linuxcnc` | `E_UNSUPPORTED_SEMANTICS` |
 | N10 | `g43_h_table` | `E_REQUIRES_MACHINE_TABLE` |
-| N11 | `m98_call` | `E_UNSUPPORTED_SYNTAX` |
+| N11 | `m98_call` | line-level: `Ok` + `E_UNSUPPORTED_SYNTAX` (M98 → `Raw{...}`, SPEC §1.1 v0.16 — supersede Err v0.5.2) |
 | N12 | `program_end_not_last` *(v0.1)* | `E_INVALID_INPUT` (инвариант §3) |
 | N13 | `program_end_duplicate` *(v0.1)* | `E_INVALID_INPUT` |
-| N14 | `program_end_missing` *(v0.1)* | `E_INVALID_INPUT` — третий режим нарушения инварианта «ровно один раз и последний» |
+| N14 | `program_end_missing` *(v0.1)* | `Ok` + notice `W_MISSING_PROGRAM_END` (auto-PEND — SPEC §3 v0.16, 18/32 published; Notice ≠ E-код, не `E_INVALID_INPUT`) |
 | N15 | `wcs_set_here_mid` *(v0.2)* | `E_UNSUPPORTED_SEMANTICS`: G10 L20 после motion-опа — позиционно-зависим вне пресетки (SPEC §5.3) |
 | N16 | `g53_after_preset` *(v0.2)* | `E_RUNTIME_STATE`: G53 при активном frame_preset/wcs_set_here — правило §5.3(a); та же диспозиция, что N1, **другая причина** |
 | N17 | `multiple_preset_at_start` *(v0.2)* | `E_UNSUPPORTED_SEMANTICS`: два G92 подряд в начале (Q5, класс зафиксирован SPEC v0.7) |
 | N18 | `css_g96` *(v0.2)* | `E_UNSUPPORTED_SEMANTICS`: токарный CSS, вне скоупа §1.2 (класс уже в COVERAGE §2.6 — вектор закрепляет его для парсера этапа 3) |
 | N19 | `arc_R_full_circle` *(v0.2)* | `E_INVALID_INPUT`: R-форма при start == end — центр неоднозначен, знак R не разрешает (SPEC §6 v0.7) |
 
-*(sweep=0 не в негативных: по SPEC §6 это drop+notice — вектор #13.)*
+*(sweep=0 не в негативных: center-форма при start==end = полный круг 360°
+(SPEC §3 v0.17) — вектор #13; drop+notice остаётся degenerate-центру.)*
 
 **Правило:** для каждой конструкции Tier A есть узел или код из SPEC §8 — третьего нет (SPEC §15). Покрытие узлов: каждый из 10 типов опов встречается минимум в одном позитивном векторе.
 
@@ -202,7 +213,7 @@ parse-результат и есть мутированная программа
 
 | # | Оператор | Трансформация (валидный AST) | Таргет-класс | Ожидаемая диспозиция |
 |---|---|---|---|---|
-| M1 | `sweep→0+ε` | `sweep_deg = ε ∈ (0; 1e-3]` при start==end | zero-sweep notice-путь (#13) | `Ok+notice` (drop), не ошибка |
+| M1 | `sweep→0+ε` | `sweep_deg = ε ∈ (0; 1e-3]` при start==end | full-circle граница (SPEC §3 v0.17, #13) | `Ok` — перепарс читает мутанта как 360°-дугу (center≠start: ε-эндпойнт квантуется в start); `Ok+notice`-drop после v0.17 недостижим — красный |
 | M2 | `sweep→360` | `sweep_deg = 360°` при start==end | full-circle vs zero-ход (#8) | `Ok` (дуга 360°) |
 | M3 | `sweep→near-180` | `sweep_deg ∈ {179.9; 180.1}`, центр из R-вывода | амплификация центра q·A (EQUIVALENCE §4, #11) | `Ok`; R3 против unmuted — без `R3-div` только при допуск-конформности |
 | M4 | `R-form near-degenerate` | R-дуга с `|sweep−180°| ≤ 0.12°` (cap-зона a_cap) | ill-conditioned R→центр (#11, notice-зона SPEC §6) | `Ok` (+notice «near-degenerate R-arc» — профилем) |
@@ -276,10 +287,13 @@ invalid_cases — код == expect по правилу двух классов �
 #17–#26 — приёмка как real (§7-шаблон v0.15, LinuxCNC-source only).
 
 **Правило notice-файлов (v0.2):** файлы, в которых канонизатор применил
-drop-with-notice (zero-length, sweep=0 — SPEC §3/§6), назначаются **только
+drop-with-notice (zero-length, degenerate-центр sweep→0 — SPEC §3/§6),
+назначаются **только
 под R1-AST**: R1-text на них красный **по определению, не по багу** (текст
 закономерно меняется — опа больше нет). Назначение per-file в manifest
 (§6) обязано отражать это явно: поле `notice: true` исключает R1-text.
+*(#13 после SPEC §3 v0.17 — 360°-дуга, `notice = false` — не notice-файл,
+несмотря на имя вектора; N11/N14 v0.16 — `notice = true` при Ok-исходе.)*
 
 ---
 

@@ -233,6 +233,22 @@ sim.rs: mock-sim (обратный parse + structural + axis_limits) + real-dete
    back-compatible superset, magic «EID/L1 v0.3» НЕ меняется — золотовы
    не трогаются).
 
+### v0.16 — 2026-11-21 (M98/O-code → line-level Raw; auto-PEND; запись добавлена ретроактивно — аудит-волна 2026-11-22)
+
+1. **§1.1:** O-code / макро-подпрограммы и их вызовы (`G65`, `M98`/`M99`) →
+   **line-level `Raw{E_UNSUPPORTED_SYNTAX}`** — программа продолжает
+   парситься, RAW сохраняется same-dialect (verbatim), кросс-диалект —
+   `E_RAW_UNTRANSLATABLE` (правило двух классов: line-level → Raw,
+   структурный → Err). Supersede CORPUS v0.5.2 (N11 → Err).
+2. **§3 инвариант program_end:** отсутствие M2/M30 — **auto-PEND**:
+   канонизатор вставляет `program_end` последним опом + notice
+   `W_MISSING_PROGRAM_END` (ревизия по Tier B-данным: 18/32
+   published-файлов без program end; rs274 solo-подтверждение).
+   N14 → Ok + notice (не E-код).
+3. Следствия: manifest N11/N14 expect-ревизия (7b7cc58), класс-листы
+   CORPUS (§1.2 v0.7.1), harness-пины (83f5647/c5bc0d1), COVERAGE §4
+   (`%`-маркеры, O-слова — auto-PEND/хвост-subs-оговорки).
+
 ### v0.15 — 2026-11-20 (красный-протокол round 2: шаблон развёртки + payload-граница)
 
 1. **§7.7 канонический шаблон развёртки** (Spec-ambiguous: семейство 10
@@ -510,6 +526,36 @@ WCS давали бы неразличимые EID с разной геомет�
 ---
 
 ## COVERAGE
+
+### v0.9.1 — 2026-11-22 (аудит-волна: rulings eid-fanuc + probe-строки rs274)
+
+Документ-ревизия вслед за кодом (eid-fanuc этапы 2–3; аудиты #17/#18, зонды
+rs274 2026-11-21). Код не затронут.
+
+1. **§2.1 G38.2/.3/.4/.5 — Fanuc-ячейка:** «N/A (класс…)» →
+   **RAW(E_UNSUPPORTED_SEMANTICS) «пробинг, класс G31/G37»** — ruling
+   этапа-3 eid-fanuc, реализовано в `g_raw_disposition` (тест
+   `g38_probing_family_raw`); Fanuc-диспозиция синхронизирована с
+   GRBL/LinuxCNC-колонками; G38/G39 остаются в семействе G40 (§1.3).
+2. **§5.1 числа:** «округление до least increment с notice» →
+   **4dp вербатим, notice НЕ эмитится** — Fanuc терпит 4dp на входе
+   (ruling этапа-3; emit.rs п.5). Haas-строка (§5.2) не трогалась.
+3. **§5.1 program_end:** добавлено — **Raw-хвост после PEND легален на
+   эмиссии Fanuc** (subs-тела O#### DNC-файлов; исключение «последний
+   не-Raw оп = PEND» в `validate_fanuc`; не-Raw опыт после PEND — отказ).
+4. **§2.5 K0/L0-строка + §6.67:** **K0 в G90 = no-op 0 повторов** — паритет
+   LinuxCNC L0 (ruling оркестратора, eid-fanuc; тест-комментарий
+   `cycle_k0_g91_raw`); K0/L0 **в G91** остаётся `?` (поз. 17); IS-C-5dp
+   (поз. 26) — без изменений.
+5. **§4 +2 probe-строки (rs274 2026-11-21):** **вложенные комментарии**
+   `( (c) x )` — отказ и у нас (`E_INVALID_INPUT`), и у rs274 («Nested
+   comment found») — диспозиция честна (аудит #17; LinuxCNC + Fanuc
+   колонки; GRBL вложенность не детектирует); **пробел внутри слова**
+   `X 10.5` — rs274 принимает → LinuxCNC-лексер принимает
+   (rs274-симметрия, аудит #18); GRBL-ячейка `?` (зонда нет, парсер
+   строг) + Fanuc `?` — реестр §6.68.
+6. Шапка: v0.9.1; привязки синхронизированы (SPEC v0.17,
+   CORPUS-CONTRACT v0.7.1, grammar v0.4; fanuc analysis v0.0.1).
 
 ### v0.9 — 2026-11-21 (этап 10-подготовка: Haas = 6-я диалект-колонка)
 
@@ -823,6 +869,47 @@ G4 секунды).
 ---
 
 ## CORPUS-CONTRACT
+
+### v0.7.1 — 2026-11-22 (аудит-волна: N11/N14 line-level, #13 → 360°-дуга)
+
+1. **§1.2 — SPEC v0.16 supersede CORPUS v0.5.2:** N11 (M98) и N14
+   (program_end_missing) выведены из Err-класса. **N11 → Ok +
+   `E_UNSUPPORTED_SYNTAX`** (M98 → line-level Raw, SPEC §1.1);
+   **N14 → Ok + notice `W_MISSING_PROGRAM_END`** (auto-PEND, SPEC §3:
+   18/32 published без M2/M30, rs274 solo-подтверждение) — **отдельная
+   форма line-level-исхода**: Notice ≠ E-код, `expected_diags` пуст
+   (manifest: `expect = ok`, `notice = true`). История v0.5.2
+   (N11 → Err, СТОП-1 отчёта D) помечена superseded; классификация §9,
+   не silent change — manifest 7b7cc58/83f5647, harness-пины c5bc0d1
+   (оркестратор).
+2. **#13 — SPEC §3 v0.17 (зонд rs274):** диспозиция drop+notice →
+   **полный круг 360°**; обновлены: §1 edge_cases-строка, §1.1 строка #13
+   (эндпойнт < 4dp квантуется в start при center≠start → 360°, golden
+   regen — аудит #15), сноска «sweep=0 не в негативных», §2.1 оператор M1
+   (`Ok+notice`-drop после v0.17 недостижим — перепарс читает ε-мутанта
+   как 360°-дугу; drop = красный), §4 правило notice-файлов (#13
+   `notice = false` — не notice-файл).
+3. **§1 invalid_cases-приёмка:** добавлена notice-форма исхода
+   («код == expect; line-level — Ok + diagnostics ⊇ expected;
+   notice-исход — Ok + notice без E-диага»).
+4. Шапка: v0.7.1; привязки синхронизированы (SPEC v0.17, COVERAGE v0.9.1,
+   grammar v0.4).
+
+### v0.7 — 2026-11-21 (четырёхтиражная формализация Tier A; запись добавлена ретроактивно — аудит-волна 2026-11-22)
+
+§1: Tier A v0/v1 разбит на **четыре тира** — smoke (8) / real (38
+не-цикловых) / edge_cases (7) / invalid_cases (20) — по роли в приёмке
+(`tier_a_kind` в manifest, пересечения запрещены); cycle-семейство
+#17–#26 — вне тиров, приёмка как real. §2.1: спека mutation-операторов
+M1–M17 (ожидаемая диспозиция — часть оператора; красный мутант =
+кандидат-баг). Реализация — eid-harness v0.2 (generator/mutate/fuzz,
+итерация 5).
+
+### v0.6.6 — 2026-11-21 (сбор Tier B batch 2 запущен; запись добавлена ретроактивно — аудит-волна 2026-11-22)
+
+§7 collection roadmap: diversity-targeted 3-осевой mill-сбор (Agent D)
+переведён из post-acceptance в «в работе»; корпус 144 файла (fanuc ×17,
+dialect-ключи ∈ {grbl-1.1, linuxcnc, marlin-3dp, fanuc} — commit 5376fb5).
 
 ### v0.6.5 — 2026-11-20 (collection roadmap: diversity после acceptance)
 
