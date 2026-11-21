@@ -326,13 +326,12 @@ crash'ами, отказами без диагностики и красным R
   публикация.
 - Журнал источников — `corpus/tier_b/PROVENANCE.md` (источник, дата,
   лицензия, sha256).
-- **Collection roadmap (v0.6.5):** первый published-батч — 2D/2.5D-скew
-  (SVG/гравировка/роутер; задокументировано в PROVENANCE).
-  Diversity-targeted сбор (3-осевой mill-контент: карманы, реальные
-  цепочки сверловки, G18/G19 из живых файлов, helical ramp'ы) —
-  **post-acceptance, итерация 5**, по постоянному content-diversity
-  чек-листу (сбор без него даёт перекос — прецедент первого батча).
-  До того момента claim по Tier B published — с пометкой скew'а.
+- **Collection roadmap (v0.6.5, обновлено v0.6.6 — сбор запущен):** первый
+  published-батч — 2D/2.5D-скew (таг `corpus-tierb-2d-batch`). Second batch
+  (Agent D, в работе): **diversity-targeted 3-осевой mill-контент** —
+  карманы с Z-проходами, реальные цепочки сверловки, G18/G19 из живых
+  файлов, helical ramp'ы. Приёмка — parse-or-diagnose как batch 1;
+  published-claim после батча 2 — по разбивке 2D/2.5D/3D в PROVENANCE.
 - Без персональных данных; пути/имена станков обезличены.
 - Файлы без ясной лицензии — в `local/`, в published не входят до решения.
 
