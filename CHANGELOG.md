@@ -125,6 +125,48 @@ CORPUS §1.2 v0.5). Изменение управляемое: поле конс
 
 ---
 
+## EID-HARNESS (crates/eid-harness)
+
+### v0.2 — 2026-11-21 (итерация 5: Tier A v1 механизм — generator/mutations/fuzzer + tier_b + stage-отчёты)
+
+Блок Агента B (fuzz/generator/tier_b по PLAN v0.1.3; 60 тестов зелёных):
+
+1. **generator.rs** — AST-driven генератор валидных программ (seeded LCG,
+   детерминированные прогоны): честный Q11 (якорь L20/preset → Known; без
+   якоря → Unknown + полный end; wcs-смена гарантированно на другую СК),
+   resolved-state (modal feed, none до первого F, G0 не сбрасывает), плоские
+   дуги с центром по §6.3-геометрии. Тест: 20 seedов — emit/parse/emit
+   байт-стабильно, notices 0.
+2. **mutate.rs** — операторы M1–M17 (CORPUS §2.1) с ожидаемыми диспозициями
+   (Ok / Notice / Err-код / AnyErr-семейство для уровневых расхождений);
+   диалект-уровневые M8/M9/M10/M15 — на linuxcnc-тексте; текстовые M12/M17 —
+   на eid-тексте.
+3. **fuzz.rs** (tests) — три петли: M-петля (сверка диспозиций),
+   byte-level panic-freedom (empty/LF/CRLF/unicode-soup/обрезки/byte-noise/
+   random × grbl+linuxcnc; инвариант «парсер никогда не паникует», интерфейс
+   &str — байты lossy-представлением), метаморфические отношения (comment/
+   line-ending LF-CRLF-MIXED/whitespace/lowercase/N-слово → один AST;
+   RAW-файлы исключены из line-ending-ветки — payload семантичен, D9).
+   **Shrinker** (halving) — минимальный паник-repro. Итог v5: **0 паник**;
+   18 находок — уточнения уровней мутаторов + метаморфные кандидаты
+   (см. отчёт итерации 5); детерминизм подтверждён (один seed — идентичные
+   находки).
+4. **eq4-матрица** (15 тестов) — EQUIVALENCE §4 × within/out по полям
+   (позиция с bbox-масштабом L, центр с амплификацией A по sweep 179.9/170/90,
+   sweep-граница 1e-4°, pitch, feed floor/relative, rpm floor/relative, dwell,
+   min-per-side симметрия); точки разрыва (a)–(c) unknown-vs-known; M1 в
+   начале/середине/конце + M0; чек-лист — шапка diff.rs.
+5. **tier_b wiring** — loader `[[tier_b_files]]` (92 записи), runner
+   `run_tier_b` (parse-or-diagnose, crash=0 через catch_unwind, отказы по
+   классам кодов, no-adapter для сторонних диалектов). Реальный прогон 92:
+   Ok 15, отказы 71 (по классам), no-adapter 6 (marlin-3dp), panics 0.
+6. **stage-атрибуция** — Check.stage (interface v0.1.2), секция отчёта
+   «Отказы по этапам» (Parse/Canonicalize/Verify/Emit).
+7. Мелкое: manifest-инвариант дубликатов id → Err; тестовое сравнение
+   метаморфики — семантическое (semantic_diff, EQUIVALENCE §3 — src вне).
+
+---
+
 ## SPEC-EID-L1
 
 ### v0.15 — 2026-11-20 (красный-протокол round 2: шаблон развёртки + payload-граница)

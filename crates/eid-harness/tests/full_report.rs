@@ -214,12 +214,15 @@ fn full_run_generates_report_iter23() {
     let closure: String = if rep.is_green() {
         "
 
-## ФОРМАЛЬНОЕ ЗАКРЫТИЕ итерации 3
+## ФОРМАЛЬНОЕ ЗАКРЫТИЕ — ИТЕРАЦИЯ 5 ЗАКРЫТА
 
 - 68 векторов: 48 позитивов / 20 негативов (invalid_cases);
 - R3 (any-to-any) — 48/48 (покрытие полное, отсутствующих нет);
 - two-class negatives — 20/20 (Err-класс: код == expect; line-level: Ok + diagnostics);
 - R1-text — 8 Pass, включая #47 (payload 24240D0A, D9-терминатор) и N3/N9;
+- Tier B — 92 файла parse-or-diagnose, crash=0, отказы по классам;
+- фаззер итерации 5: 0 паник (byte-level), 18 находок — уточнения мутаторов/метаморфные кандидаты (CORPUS §2.1);
+- eq4-матрица — 15 тестов EQUIVALENCE §4 × within/out;
 - R4-ожидания (r4-отказы #27/#47, warning-цели #40/#41/#45, lossy-класс #41/#45) — зелёные;
 - красных нет.
 "

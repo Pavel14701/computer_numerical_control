@@ -48,11 +48,14 @@ R3 (any-to-any) доказывается ТОЛЬКО на материализ�
 - `R4` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc→linuxcnc` | ожидалось: emit отказ E_RAW_UNTRANSLATABLE | фактически: Skipped: same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)
 
 
-## ФОРМАЛЬНОЕ ЗАКРЫТИЕ итерации 3
+## ФОРМАЛЬНОЕ ЗАКРЫТИЕ — ИТЕРАЦИЯ 5 ЗАКРЫТА
 
 - 68 векторов: 48 позитивов / 20 негативов (invalid_cases);
 - R3 (any-to-any) — 48/48 (покрытие полное, отсутствующих нет);
 - two-class negatives — 20/20 (Err-класс: код == expect; line-level: Ok + diagnostics);
 - R1-text — 8 Pass, включая #47 (payload 24240D0A, D9-терминатор) и N3/N9;
+- Tier B — 92 файла parse-or-diagnose, crash=0, отказы по классам;
+- фаззер итерации 5: 0 паник (byte-level), 18 находок — уточнения мутаторов/метаморфные кандидаты (CORPUS §2.1);
+- eq4-матрица — 15 тестов EQUIVALENCE §4 × within/out;
 - R4-ожидания (r4-отказы #27/#47, warning-цели #40/#41/#45, lossy-класс #41/#45) — зелёные;
 - красных нет.
