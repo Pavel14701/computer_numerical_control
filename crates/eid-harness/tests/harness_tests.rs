@@ -1083,7 +1083,6 @@ fn registry_basics() {
 // Tier B wiring (итерация 5): loader [[tier_b_files]] + run_tier_b
 // ===========================================================================
 
-use eid_harness::manifest::TierBFile;
 use eid_harness::runner::run_tier_b;
 
 #[test]
@@ -1145,10 +1144,6 @@ fn tier_b_runner_mock_synthetic() {
     std::fs::write(&f_err, "\u{1F600}мусор\n").unwrap();
     std::fs::write(&f_absent, "любой текст\n").unwrap();
 
-    let m = Manifest {
-        tier_b_files: vec![],
-        ..load_manifest()
-    };
     // Соберём синтетический манифест через toml-строку (loader проверит пути)
     let mf = dir.join("manifest.toml");
     std::fs::write(
