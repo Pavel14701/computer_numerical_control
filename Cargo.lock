@@ -18,6 +18,13 @@ name = "eid-core"
 version = "0.1.0"
 
 [[package]]
+name = "eid-fanuc"
+version = "0.1.0"
+dependencies = [
+ "eid-core",
+]
+
+[[package]]
 name = "eid-grbl"
 version = "0.1.0"
 dependencies = [

@@ -4,6 +4,7 @@ members = [
     "crates/eid-core",
     "crates/eid-grbl",
     "crates/eid-linuxcnc",
+    "crates/eid-fanuc",
     "crates/eid-harness",
     "crates/eid-integration",
     "crates/eid-cli",
