@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (92 файла: 32 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, sim mock (real LinuxCNC не установлен — см. ограничения).
 
-**Числа:** 257 тестов passed / 0 failed · 58 коммитов · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B 92/92 crash=0.
+**Числа:** **448 тестов passed / 0 failed** · 60 коммитов · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B 92/92 crash=0 · mutation-testing kill-rate 82.2% · метаморфные инварианты (комментарии/whitespace/N-слова/регистр/line-endings) зелёные · grammar-conformance 57 тестов по 33 продукциям.
 
 ---
 
@@ -28,7 +28,7 @@
 | 9 | Demo: translate grbl→linuxcnc | ✅ | e2e: pilot #01 → файл создан → parse(output) ≡ parse(input) |
 | 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5 demo-цикл) |
 | 11 | REPORT.md | ✅ | этот документ |
-| 12 | CHANGELOG актуален | ✅ | ведётся с первого коммита; каждое изменение документа = запись + bump |
+| 12 | CHANGELOG актуален | ✅ | ведётся с первого коммита; каждое изменение документа = запись + bump; **пробелы за период итераций 4–5 найдены аудитом и заполнены** (SPEC v0.15/v0.15.1, CORPUS v0.6.5, PLAN v0.1.3/§5а/§5б) |
 
 **Итог: 11/12 полностью, 1 (#8) — mock с честной пометкой. Блокеров нет.**
 
