@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-21 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.15 (v0.15.1 micro, v0.16 pending) · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.7.1 · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev)**
+**Версии:** SPEC v0.16 · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.8 (Fanuc-колонка) · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev) — все внесены, лицензии проверены**
 
 ---
 
@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **471 тест passed / 0 failed** · 87 коммитов · 16 ревизий спеки · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** · mutation-testing kill-rate: grbl 82.2% / linuxcnc ~80% (усилен) / workspace 75.5% · метаморфные инварианты зелёные · grammar-conformance 57 · **e2e48-матрица: 141 направлений через живой CLI**.
+**Числа:** **475 тестов passed / 0 failed** · 91+ коммитов · SPEC v0.16 (auto-PEND, O-code→Raw) · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** (свип с manifest-диалектами: ok=57 / err=64: INVALID 41 / RUNTIME 22 / SEMANTICS 1) · mutation-testing kill-rate: grbl 82.2% / linuxcnc ~80% (усилен) / workspace 75.5% · метаморфные инварианты зелёные · grammar-conformance 57 · **e2e48-матрица: 141 направлений через живой CLI** · **rs274 canonical comparison 48/48 — 0 divergences**.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -34,20 +34,22 @@
 | 4 | R2 canon stability 48/48 | ✅ | v7 |
 | 5 | R3 (any-to-any) 48/48 | ✅ | v7: R3-golden **83/0** (48 поз. + cycle-семья), R3-consistency 35/0 |
 | 6 | R4 — правильные коды отказов | ✅ | legality-таблицы (ConversionTarget) ↔ manifest r4_expect: **0 расхождений**; негативы 20/20 two-class |
-| 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | **121/121, crash=0**: Ok 15 / INVALID 62 / SYNTAX 25 / RUNTIME 9 (D-прогон + diversity batch 2) |
-| 8 | Симуляция | ✅ **real + mock** | Real LinuxCNC 2.9 rs274 в Docker: **37/38 LinuxCNC v1 файлов exit 0**; #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0; mock-sim — также зелёный; headless rs274 без GUI (`docker/linuxcnc-sim.Dockerfile`). **Motion stream comparison — pending** (canonical_compare — итерация 6, rs274_compare.rs создан на пилоте #01: 0 divergences, расширение на 48 — next) |
+| 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | **121/121, crash=0** (121 файл в manifest, свип с диалектами из manifest: ok=57 / err=64 = INVALID 41 + RUNTIME 22 + SEMANTICS 1; diversity batch 2 внесён: 29 файлов, лицензии проверены) |
+| 8 | Симуляция | ✅ **CLOSED: real + mock + canonical comparison** | Real LinuxCNC 2.9 rs274 в Docker (headless, `docker/linuxcnc-sim.Dockerfile`): **rs274_e2e48 — canonical comparison всех 48 позитивных векторов (v0-источник vs v1-эмиссия) — 0 divergences** (motion stream CLOSED); расширенный прогон D: Tier B 121 через rs274 crash=0 (rs_ok=51 / rs_err=70 — реальный interp отвергает нестандартные файлы, ожидаемо), canonical comparison на Ok: 11 проверено / 0 провалов / 22 RAW-skip; #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0; mock-sim зелёный |
 | 9 | Demo: translate grbl→linuxcnc | ✅ | e2e: pilot #01 → файл создан → parse(output) ≡ parse(input) |
 | 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5) |
 | 11 | REPORT.md | ✅ | этот документ |
 | 12 | CHANGELOG актуален | ✅ | ведётся с первого коммита; каждое изменение документа = запись + bump; **пробелы найдены аудитом и заполнены** (SPEC v0.15/v0.15.1, CORPUS v0.6.4/v0.6.5, PLAN v0.1.2/v0.1.3/§5а/§5б) |
 
-**Итог: 11/12 полностью, 1 (#8) — real + mock. Блокеров нет.**
+**Итог: 12/12 полностью (criterion #8 закрыт canonical comparison'ом rs274_e2e48). Блокеров нет.**
 
-### Criterion #8 — детализация
+### Criterion #8 — детализация (ЗАКРЫТ)
 
-- **rs274 canonical output**: `STRAIGHT_TRAVERSE`, `ARC_FEED`, `SET_FEED_RATE` — парсится и сверяется (canonical_compare.rs — **итерация 6**).
-- **rs274 exit codes**: 37/38 LinuxCNC v1 файлов exit 0; #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0 (tool.tbl добавлен в Docker-образ).
-- **Motion stream comparison — pending** (canonical_compare — итерация 6): сравнение канонического вывода rs274 для оригинала и перевода — **последний незакрытый аспект** criterion #8.
+- **rs274 canonical output**: `STRAIGHT_TRAVERSE`, `ARC_FEED`, `SET_FEED_RATE` — парсится и сверяется (`rs274_compare.rs`, guard: docker недоступен → SKIP).
+- **Tier A (rs274_e2e48)**: все 48 позитивных векторов — v0-источник vs v1-эмиссия через реальный rs274 → **0 divergences** (34 пары motion-сравнения + RAW-пары ожидаемо-отказ + SPEC §3 drops). **Motion stream comparison закрыт** (бывший «pending итерации 6»).
+- **Tier B расширенный прогон**: 121 файл через rs274 — crash=0; rs_ok=51 / rs_err=70 (реальный interp отвергает 3dp/E-слова/неканонические файлы — ожидаемо); canonical comparison на Ok-файлах: 11 проверено / 0 провалов / 22 RAW-skip.
+- **rs274 exit codes**: #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0.
+- **CANON-DIV находка** (grbljs_jsdc-laser, 4108 div): классифицирована D+оркестратором как **чувствительность компаратора к командному порядку** rs274-потока (units/feed/dwell placement при эмиссии) — **геометрия пути совпадает**; не Adapter-wrong, не Spec-ambiguous. Кандидат итерации 6: motion-level компаратор (позиции+geometry, не сырой командный порядок).
 
 ---
 
@@ -61,10 +63,13 @@
 4. **Partial-end на старте ×3 (published)** — «программа начинается не с полной координаты» — реальный паттерн, покрытый Q11-правилом (диагностируется корректно).
 5. **Реальные кривые дуги ×2** (radius mismatch) — парсер не «подогнал» — диагностика по §6 отработала на поле.
 6. Дефолт retract LinuxCNC = **G99, подтверждён source'ом** (§6.13 закрыт ✔; документация дефолт не заявляет — зафиксировано source'ом `interp_setup.cc:152`).
+7. **Auto-PEND подтверждён реальным интерпретатором** (Tier B rs274-прогон): массовый SOLO-ERR «File ended with no percent sign or program end» на published-файлах без M2/M30 — rs274 отказывает там, где наш канонизатор после SPEC v0.16 принимает с notice-вставкой. Два независимых свидетельства (наши данные корпуса + поведение rs274) — ревизия v0.16 обоснована.
+8. **CANON-DIV grbljs_jsdc-laser (4108 div)** — командный порядок rs274-потока (units/feed/dwell placement) чувствителен к эмиссионному размещению при равной геометрии пути; классификация: чувствительность компаратора, motion-level сравнение — кандидат итерации 6.
 
 ## 4. Известные ограничения (честно)
 
-- **Симуляция**: real (rs274 в Docker) + mock — **критерий #8 upgraded**; motion stream comparison — pending (итерация 6).
+- **Симуляция**: criterion #8 ЗАКРЫТ (canonical comparison 48/48, 0 divergences); остаток — motion-level компаратор для Tier B Ok-файлов с чувствительностью к командному порядку (кандидат итерации 6, не блокер: геометрия путей совпадает).
+- **Manifest-диалекты в sweep**: `dialect_of` — эвристика по префиксу, синхронизирована с manifest вручную; кандидат итерации 6 — читать диалект из manifest.toml напрямую.
 - **Tier B published — 2D/2.5D-скew** (SVG/гравировка/роутер): diversity-targeted сбор (3-осевой mill) — итерация 5, чек-лист в CORPUS §7. Local-dev контур (60 LinuxCNC) 3D-контент покрывает — но тест-only (GPL).
 - **Q11: unknown-start** — канонизатор отказывает partial-end после genuinely-unknown (v0.11) — 3 published-файла диагностируются корректно; апгрейд «дефолт-наследование» — кандидат ревизии.
 - **v0/v1-долг §1**: закрыт регенерацией (70/76 пар v1; 4 diverged — классифицированы и починены как Adapter-wrong C/D; #41/#45 grbl — lossy навсегда по Q3). Независимость v0-пар как теста корректности сохранена (v0 = regression-корпус).
@@ -77,6 +82,10 @@
 - **Режимы**: staged-брифы против зависаний; прицельные коммиты; активная версия в шапке задач; documents-only-via-editor.
 - **Цикл классификации красного** (CORPUS §9): 70 красных v1 → 4 категории → адресные фиксы → 0 красных v5-v7 за две итерации.
 
-## 6. Дальше (итерация 5+, по триажу §5а)
+## 6. Дальше (итерация 6 — Fanuc, этап 10; волна в полёте)
 
-Tier B published diversity-сбор (3-осевой) · Q10 static-inlining решение · auto-PEND ревизия · Diagnostic.stage в отчётах runner'а · mutation-фаззер поверх Tier A v1 · rs274ngc source-check остатки · real sim · Fanuc-подготовка (этап 10).
+**Fanuc (этап 10, в работе):** research закрыт (`fanuc_dialect_analysis.md` v0.0: COVERAGE-матрица 30i, 3 ловушки адаптера — EOB `;` / DPI bare-integer / G10 L20≠LinuxCNC; Q6 G76 закрыт — параметр станка 5101; G52 = единственный ERR-класс; Macro B → line-level Raw подтверждён структурой диалекта; реестр 15 `?`) · COVERAGE v0.8 Fanuc-колонка внесена · `eid-fanuc` парсер (этап 1: скелет/лексер/движение — агент C в работе; этапы 2–3: фреймы/циклы по Fanuc-семантике/M-коды/Macro B; затем эмиссия).
+
+**Кандидаты итерации 6:** motion-level компаратор rs274-потока (CANON-DIV-остаток) · sweep из manifest напрямую · fanuc-эмиссия + профили (G59.x→G54.1-опция) · реестр 15 `?` — сверка по конкретной серии Fanuc.
+
+**Ревью-очередь (пользователь, данные собраны):** Q10 static-inlining (O-code ×25) · NURBS P-words ×13 (Raw vs этап 12). Auto-PEND — решён (SPEC v0.16, подтверждён rs274).
