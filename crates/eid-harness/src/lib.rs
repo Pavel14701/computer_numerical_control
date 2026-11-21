@@ -6,5 +6,6 @@ pub mod diff;
 pub mod manifest;
 pub mod generator;
 pub mod mutate;
+pub mod rs274_compare;
 pub mod runner;
 pub mod translate;
