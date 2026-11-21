@@ -1,8 +1,10 @@
 //! Покрытие diff.rs (итерация 5, cargo-mutants): planimetric_radius —
 //! граница допуска радиуса (max(ε_pos, k_R·R)) различает in/out-tolerance.
 
-use eid_core::ast::{Dir, Frame, Num, Op, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs};
-use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
+use eid_core::ast::{
+    Dir, Frame, Num, Op, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs,
+};
+use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
 
 fn n(v: f64) -> Num {
     Num::new(format!("{v}"), v)
@@ -15,10 +17,26 @@ fn arc_prog(center_x: f64) -> Program {
         path_mode: eid_core::ast::PathMode::ExactPath,
         frame_preset: None,
         ops: vec![Op::Arc {
-            start: StartPoint::Known(Point3 { x: n(0.0), y: n(0.0), z: n(0.0) }),
-            end: Point3 { x: n(5.0), y: n(5.0), z: n(0.0) },
-            center: Point3 { x: n(center_x), y: n(5.0), z: n(0.0) },
-            normal: Point3 { x: n(0.0), y: n(0.0), z: n(1.0) },
+            start: StartPoint::Known(Point3 {
+                x: n(0.0),
+                y: n(0.0),
+                z: n(0.0),
+            }),
+            end: Point3 {
+                x: n(5.0),
+                y: n(5.0),
+                z: n(0.0),
+            },
+            center: Point3 {
+                x: n(center_x),
+                y: n(5.0),
+                z: n(0.0),
+            },
+            normal: Point3 {
+                x: n(0.0),
+                y: n(0.0),
+                z: n(1.0),
+            },
             dir: Dir::Cw,
             sweep_deg: n(90.0),
             pitch: n(0.0),
@@ -30,7 +48,13 @@ fn arc_prog(center_x: f64) -> Program {
                 frame: Frame::Wcs,
                 wcs: Wcs::G54,
             },
-            src: SrcSpan { file: "t".into(), line_start: 1, col_start: 1, line_end: 1, col_end: 2 },
+            src: SrcSpan {
+                file: "t".into(),
+                line_start: 1,
+                col_start: 1,
+                line_end: 1,
+                col_end: 2,
+            },
             sub: None,
         }],
     }
@@ -46,12 +70,24 @@ fn planimetric_radius_tolerance_boundary() {
     let b_out = arc_prog(0.002);
     let d_in = semantic_diff(&a, &b_in, &DiffConfig::default());
     assert!(
-        d_in.iter().all(|d| !matches!(d, Divergence::Geometry { field: "center", .. })),
+        d_in.iter().all(|d| !matches!(
+            d,
+            Divergence::Geometry {
+                field: "center",
+                ..
+            }
+        )),
         "in-tolerance центр не должен дивергировать: {d_in:?}"
     );
     let d_out = semantic_diff(&a, &b_out, &DiffConfig::default());
     assert!(
-        d_out.iter().any(|d| matches!(d, Divergence::Geometry { field: "center", .. })),
+        d_out.iter().any(|d| matches!(
+            d,
+            Divergence::Geometry {
+                field: "center",
+                ..
+            }
+        )),
         "out-tolerance центр обязан дивергировать: {d_out:?}"
     );
 }
@@ -75,7 +111,10 @@ fn planimetric_radius_self_consistency_boundary() {
     assert!(d_in.is_empty(), "радиус в допуске: {d_in:?}");
     let b_out = mk(5.002);
     let d_out = semantic_diff(&a, &b_out, &DiffConfig::default());
-    assert!(!d_out.is_empty(), "радиус вне допуска обязан дивергировать: {d_out:?}");
+    assert!(
+        !d_out.is_empty(),
+        "радиус вне допуска обязан дивергировать: {d_out:?}"
+    );
 }
 
 #[test]
@@ -86,6 +125,14 @@ fn asts_equal_direct_true_and_false() {
     if let Op::Arc { state, .. } = &mut b.ops[0] {
         state.feed = Some(n(150.0));
     }
-    assert!(eid_harness::diff::asts_equal(&a, &a.clone(), &DiffConfig::default()));
-    assert!(!eid_harness::diff::asts_equal(&a, &b, &DiffConfig::default()));
+    assert!(eid_harness::diff::asts_equal(
+        &a,
+        &a.clone(),
+        &DiffConfig::default()
+    ));
+    assert!(!eid_harness::diff::asts_equal(
+        &a,
+        &b,
+        &DiffConfig::default()
+    ));
 }

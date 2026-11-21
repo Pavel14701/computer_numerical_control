@@ -7,36 +7,36 @@
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GCode {
-    Rapid,      // G0
-    Linear,     // G1
-    ArcCw,      // G2
-    ArcCcw,     // G3
-    Dwell,      // G4 (P сек, COVERAGE §7.3)
-    SetCoordSystem, // G10 — L2/L20 различает block::g10_kind
-    PlaneXY,    // G17
-    PlaneZX,    // G18
-    PlaneYZ,    // G19
-    UnitsIn,    // G20
-    UnitsMm,    // G21
-    Home,       // G28  → RAW(REQUIRES_MACHINE_TABLE)
-    SetHome,    // G28.1
-    Home2,      // G30
-    SetHome2,   // G30.1
-    Probe(u8),  // G38.2/.3/.4/.5 → RAW(UNSUPPORTED_SEMANTICS)
-    CutterCompOff, // G40 (правило семейств §1.3)
-    ToolLenDynamic, // G43.1 → RAW(UNSUPPORTED_SEMANTICS)
-    ToolLenOff, // G49 (правило семейств §1.3)
-    MachineFrame, // G53 — модификатор кадра
-    Wcs(u8),    // G54..G59 (u8 = 1..=6)
-    PathExact,  // G61 → META(exact_path), Q3
-    CycleCancel, // G80 → IGNORED_SAFE
-    DistAbs,    // G90
-    DistInc,    // G91
-    ArcDistInc, // G91.1 (единственный режим центра дуг в GRBL)
-    FramePreset, // G92 → META(frame_preset)
+    Rapid,            // G0
+    Linear,           // G1
+    ArcCw,            // G2
+    ArcCcw,           // G3
+    Dwell,            // G4 (P сек, COVERAGE §7.3)
+    SetCoordSystem,   // G10 — L2/L20 различает block::g10_kind
+    PlaneXY,          // G17
+    PlaneZX,          // G18
+    PlaneYZ,          // G19
+    UnitsIn,          // G20
+    UnitsMm,          // G21
+    Home,             // G28  → RAW(REQUIRES_MACHINE_TABLE)
+    SetHome,          // G28.1
+    Home2,            // G30
+    SetHome2,         // G30.1
+    Probe(u8),        // G38.2/.3/.4/.5 → RAW(UNSUPPORTED_SEMANTICS)
+    CutterCompOff,    // G40 (правило семейств §1.3)
+    ToolLenDynamic,   // G43.1 → RAW(UNSUPPORTED_SEMANTICS)
+    ToolLenOff,       // G49 (правило семейств §1.3)
+    MachineFrame,     // G53 — модификатор кадра
+    Wcs(u8),          // G54..G59 (u8 = 1..=6)
+    PathExact,        // G61 → META(exact_path), Q3
+    CycleCancel,      // G80 → IGNORED_SAFE
+    DistAbs,          // G90
+    DistInc,          // G91
+    ArcDistInc,       // G91.1 (единственный режим центра дуг в GRBL)
+    FramePreset,      // G92 → META(frame_preset)
     ResetFramePreset, // G92.1 → RAW(UNSUPPORTED_SEMANTICS)
-    FeedInverse, // G93
-    FeedPerMin, // G94
+    FeedInverse,      // G93
+    FeedPerMin,       // G94
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,7 +56,18 @@ pub enum MCode {
 /// Остальные буквы (A/B/C/U/V/W/H/Q/D/O...) словарём не классифицируются.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordKind {
-    F, I, J, K, L, P, R, S, T, X, Y, Z,
+    F,
+    I,
+    J,
+    K,
+    L,
+    P,
+    R,
+    S,
+    T,
+    X,
+    Y,
+    Z,
 }
 
 impl GCode {

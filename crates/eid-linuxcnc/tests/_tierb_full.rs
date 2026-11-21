@@ -140,9 +140,8 @@ fn tier_a_canonical_comparison_all_v1() {
         };
         let orig = std::fs::read_to_string(&orig_path).unwrap();
 
-        let has_raw = v1_text
-            .lines()
-            .any(|l| !l.trim().is_empty() && !l.trim().starts_with('(') && !l.starts_with('%') && {
+        let has_raw = v1_text.lines().any(|l| {
+            !l.trim().is_empty() && !l.trim().starts_with('(') && !l.starts_with('%') && {
                 // эвристика RAW-строки: строка не распознаётся как G-код слово-поток
                 let t = l.trim();
                 !(t.starts_with('G')
@@ -152,8 +151,12 @@ fn tier_a_canonical_comparison_all_v1() {
                     || t.starts_with(';')
                     || t.starts_with('%')
                     || t.starts_with('/')
-                    || t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
-            });
+                    || t.chars()
+                        .next()
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false))
+            }
+        });
         let key = dir.replace('/', "_");
         // #43 linear_zero_length_dropped: zero-length ход → drop по SPEC §3 →
         // поток rs274 короче — известное различие, не баг. #13 (degenerate)
@@ -173,7 +176,11 @@ fn tier_a_canonical_comparison_all_v1() {
         match canon_pair(&key, &orig, &v1_text) {
             Ok(divs) => {
                 ran += 1;
-                assert!(divs.is_empty(), "Tier A {dir}: {} divergences: {divs:?}", divs.len());
+                assert!(
+                    divs.is_empty(),
+                    "Tier A {dir}: {} divergences: {divs:?}",
+                    divs.len()
+                );
             }
             Err(e) => {
                 panic!("Tier A {dir}: rs274 fail: {e}");
@@ -221,7 +228,8 @@ fn tier_b_parse_or_diagnose_rs274() {
     let mut rs_ok = 0usize;
     let mut rs_err = 0usize;
     let mut adapter_ok = 0usize;
-    let mut adapter_err: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut adapter_err: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     let mut canon_checked = 0usize;
     let mut canon_raw_skip = 0usize;
     let mut canon_fail = 0usize;
@@ -289,7 +297,11 @@ fn tier_b_parse_or_diagnose_rs274() {
                             // Отчёт — Agent B/E для motion-level компаратора.
                             writeln_ok(
                                 &mut report,
-                                &format!("CANON-DIV | {tier} | {fname} | {} div | первый: {:?}", divs.len(), divs.first()),
+                                &format!(
+                                    "CANON-DIV | {tier} | {fname} | {} div | первый: {:?}",
+                                    divs.len(),
+                                    divs.first()
+                                ),
                             );
                         }
                     }

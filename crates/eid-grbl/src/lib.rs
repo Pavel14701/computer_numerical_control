@@ -5,14 +5,14 @@
 //! G61.1/path_mode → warning (Q3), не отказ; G43 H → E_REQUIRES_MACHINE_TABLE.
 #![allow(dead_code)]
 
-use std::cell::RefCell;
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
+use std::cell::RefCell;
 
 pub mod block;
-pub mod emit;
 pub mod canonicalize;
+pub mod emit;
 pub mod gcode;
 pub mod lexer;
 
@@ -28,7 +28,10 @@ pub struct GrblAdapter {
 
 impl GrblAdapter {
     pub fn new() -> Self {
-        Self { notices: RefCell::new(Vec::new()), warnings: RefCell::new(Vec::new()) }
+        Self {
+            notices: RefCell::new(Vec::new()),
+            warnings: RefCell::new(Vec::new()),
+        }
     }
 
     /// Q3-warnings последнего `emit` (потери метаданных цели, напр.
@@ -59,21 +62,30 @@ impl GrblAdapter {
                 "raw",
             ],
             illegal: vec![
-                ("tool_change", SYN),                 // M6 вне словаря GRBL (#27)
-                ("wcs_outside_g54_g59", SYN),         // G59.x вне словаря GRBL
-                ("motion_feed_none", INVAL),          // канон-форма §3/§4
-                ("arc_unknown_start", INVAL),         // IJK требует числового старта
-                ("arc_normal_non_canonical", INVAL),  // нормаль не +ось (§6)
-                ("raw_payload_not_hex", INVAL),       // grammar D9 v0.3
-                ("program_end_missing", INVAL),       // структура (CORPUS n14)
-                ("program_end_duplicate", INVAL),     // n13
-                ("program_end_not_last", INVAL),      // n12
+                ("tool_change", SYN),                // M6 вне словаря GRBL (#27)
+                ("wcs_outside_g54_g59", SYN),        // G59.x вне словаря GRBL
+                ("motion_feed_none", INVAL),         // канон-форма §3/§4
+                ("arc_unknown_start", INVAL),        // IJK требует числового старта
+                ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
+                ("raw_payload_not_hex", INVAL),      // grammar D9 v0.3
+                ("program_end_missing", INVAL),      // структура (CORPUS n14)
+                ("program_end_duplicate", INVAL),    // n13
+                ("program_end_not_last", INVAL),     // n12
             ],
             warnings: vec![
                 // Q3 (COVERAGE §6.1/§5): PATH_MODE не выражается в GRBL-шапке.
-                ("path_mode_exact_path", "junction blending behaviour lost on GRBL (COVERAGE §6.1)"),
-                ("path_mode_exact_stop", "exact stop not representable on GRBL (no G61.1; COVERAGE §5)"),
-                ("path_mode_blend", "target G64 P- tolerance not representable"),
+                (
+                    "path_mode_exact_path",
+                    "junction blending behaviour lost on GRBL (COVERAGE §6.1)",
+                ),
+                (
+                    "path_mode_exact_stop",
+                    "exact stop not representable on GRBL (no G61.1; COVERAGE §5)",
+                ),
+                (
+                    "path_mode_blend",
+                    "target G64 P- tolerance not representable",
+                ),
             ],
         }
     }

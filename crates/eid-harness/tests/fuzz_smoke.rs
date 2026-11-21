@@ -65,7 +65,11 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
     for op_id in mutate::OPERATORS {
         for i in 0..n {
             let seed = seed_base + i as u64;
-            let cfg = GenConfig { seed, max_ops: 5 + i, ..GenConfig::default() };
+            let cfg = GenConfig {
+                seed,
+                max_ops: 5 + i,
+                ..GenConfig::default()
+            };
             let program = generator::generate(&cfg);
 
             let base_text = {
@@ -117,8 +121,8 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
                 let (t, res) = match outcome {
                     Ok(Ok(v)) => v,
                     Ok(Err(msg)) => {
-                        let verified = matches!(expect, Expect::OkOrVerifyErr)
-                            && msg.contains("InvalidInput");
+                        let verified =
+                            matches!(expect, Expect::OkOrVerifyErr) && msg.contains("InvalidInput");
                         if verified {
                             println!(
                                 "[verify-ok] op={} seed={} — мутант отклонён Verify-этапом (E_INVALID_INPUT), инвариант подтверждён",
@@ -158,7 +162,10 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
                             match &res {
                                 Err(d) => format!(
                                     "Err({})",
-                                    d.iter().map(|x| x.code.as_str()).collect::<Vec<_>>().join(",")
+                                    d.iter()
+                                        .map(|x| x.code.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
                                 ),
                                 Ok(o) => format!("Ok + {} notices", o.notices.len()),
                             },
@@ -198,7 +205,10 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
                             match &res {
                                 Err(d) => format!(
                                     "Err({})",
-                                    d.iter().map(|x| x.code.as_str()).collect::<Vec<_>>().join(",")
+                                    d.iter()
+                                        .map(|x| x.code.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
                                 ),
                                 Ok(_) => "Ok".into(),
                             }
@@ -264,14 +274,22 @@ fn soup_inputs(seed: u64, corpus: &[Vec<u8>]) -> Vec<(String, Vec<u8>)> {
     out.push(("empty".into(), Vec::new()));
     out.push(("lf-only".into(), b"\n".to_vec()));
     out.push(("crlf-only".into(), b"\r\n".to_vec()));
-    out.push(("headers-repeated".into(), "G21 G90\n".repeat(100).into_bytes()));
+    out.push((
+        "headers-repeated".into(),
+        "G21 G90\n".repeat(100).into_bytes(),
+    ));
     out.push((
         "unicode-soup".into(),
-        "\u{1F600}\u{00A0}\u{2028}G21\u{0000}G90\n\u{FFFD}".as_bytes().to_vec(),
+        "\u{1F600}\u{00A0}\u{2028}G21\u{0000}G90\n\u{FFFD}"
+            .as_bytes()
+            .to_vec(),
     ));
     for (i, b) in corpus.iter().enumerate() {
         if !b.is_empty() {
-            out.push((format!("corpus{i}-truncated-quarter"), b[..b.len() / 4].to_vec()));
+            out.push((
+                format!("corpus{i}-truncated-quarter"),
+                b[..b.len() / 4].to_vec(),
+            ));
         }
         let mut noisy = b.clone();
         for _ in 0..32 {
@@ -349,9 +367,13 @@ fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig)
     ];
     for (dir, name, dialect) in cases {
         let p = base.join(format!("{dir}/{name}.{dialect}.ngc"));
-        let Ok(orig) = std::fs::read_to_string(&p) else { continue };
+        let Ok(orig) = std::fs::read_to_string(&p) else {
+            continue;
+        };
         let adapter: &dyn Adapter = if dialect == "grbl-1.1" { &grbl } else { &lcnc };
-        let Ok(ast_a) = adapter.parse(&orig, &name) else { continue };
+        let Ok(ast_a) = adapter.parse(&orig, &name) else {
+            continue;
+        };
         // Компаратор — СЕМАНТИЧЕСКИЙ (EQUIVALENCE §3: src/provenance вне
         // эквивалентности; derive(PartialEq) ломался на line/col-сдвигах).
         let check = |tag: &'static str, txt: &str, findings: &mut Vec<Finding>| {
@@ -362,9 +384,7 @@ fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig)
                         operator: tag,
                         seed: 0,
                         dialect,
-                        detail: format!(
-                            "{name}: AST изменился семантически (инвариант нарушен)"
-                        ),
+                        detail: format!("{name}: AST изменился семантически (инвариант нарушен)"),
                     });
                 }
             }
@@ -381,7 +401,13 @@ fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig)
         let mixed: String = lf
             .lines()
             .enumerate()
-            .map(|(i, l)| if i % 2 == 0 { format!("{l}\n") } else { format!("{l}\r\n") })
+            .map(|(i, l)| {
+                if i % 2 == 0 {
+                    format!("{l}\n")
+                } else {
+                    format!("{l}\r\n")
+                }
+            })
             .collect::<Vec<_>>()
             .join("");
         check("line-ending-invariance LF", &lf, findings);
@@ -390,7 +416,13 @@ fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig)
         // whitespace-invariance
         let spaced: String = orig
             .lines()
-            .map(|l| if l.starts_with('G') || l.starts_with('M') { l.replace(' ', "  ") } else { l.to_string() })
+            .map(|l| {
+                if l.starts_with('G') || l.starts_with('M') {
+                    l.replace(' ', "  ")
+                } else {
+                    l.to_string()
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         check("whitespace-invariance", &spaced, findings);

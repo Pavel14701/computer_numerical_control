@@ -21,8 +21,14 @@ use std::sync::{Arc, Mutex};
 const SKIP: [(&str, &str); 4] = [
     ("27", "r4-отказ: tool_change → E_UNSUPPORTED_SYNTAX в GRBL"),
     ("47", "r4-отказ: RAW → E_RAW_UNTRANSLATABLE (обе цели)"),
-    ("41", "lossy: grbl-сторона — path_mode теряется (Q3), regen=lossy"),
-    ("45", "lossy: grbl-сторона — path_mode теряется (Q3), regen=lossy"),
+    (
+        "41",
+        "lossy: grbl-сторона — path_mode теряется (Q3), regen=lossy",
+    ),
+    (
+        "45",
+        "lossy: grbl-сторона — path_mode теряется (Q3), regen=lossy",
+    ),
 ];
 
 struct RedEntry {
@@ -36,13 +42,26 @@ fn rs274_run(root: &Path, rel: &str, findings: &mut Vec<RedEntry>, vid: &str) ->
     // не резолвит точки) — интерфейс v0.1.2 transit-фикс repro
     let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
     let rel_vm = format!("/repo/{}", rel.replace('\\', "/"));
-    let out_vm = format!("/repo/{}", rel.replace('\\', "/").trim_end_matches(".ngc").to_string() + ".out");
+    let out_vm = format!(
+        "/repo/{}",
+        rel.replace('\\', "/").trim_end_matches(".ngc").to_string() + ".out"
+    );
     // трейлинг backslash в источнике ломает bind-mount Docker Desktop
     // (/repo оказывается пуст — rs274 exit 1 «Unable to open file»)
     let mount = format!("{}:/repo", root.display());
     let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         std::process::Command::new("docker")
-            .args(["run", "--rm", "-v", &mount, "eid-linuxcnc-sim", "rs274", "-g", &rel_vm, &out_vm])
+            .args([
+                "run",
+                "--rm",
+                "-v",
+                &mount,
+                "eid-linuxcnc-sim",
+                "rs274",
+                "-g",
+                &rel_vm,
+                &out_vm,
+            ])
             .output()
     }));
     let output = match output {
@@ -140,21 +159,35 @@ fn e2e48_canonical_comparison_all_positives() {
                             kind: "translate-fail",
                             detail: format!(
                                 "linuxcnc emit: {}",
-                                d.iter().map(|x| x.code.as_str()).collect::<Vec<_>>().join(",")
+                                d.iter()
+                                    .map(|x| x.code.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
                             ),
                         });
                         continue;
                     }
                 };
-                let tr_file = root.join("target/simwork").join(format!("{}_translated.linuxcnc.ngc", v.id));
+                let tr_file = root
+                    .join("target/simwork")
+                    .join(format!("{}_translated.linuxcnc.ngc", v.id));
                 std::fs::write(&tr_file, &translated).unwrap();
 
                 let mut red_here = false;
                 {
                     let mut r = reds.lock().unwrap();
-                    let rel = g.path.strip_prefix(&root).expect("manifest path under root").to_string_lossy().replace('\\', "/");
+                    let rel = g
+                        .path
+                        .strip_prefix(&root)
+                        .expect("manifest path under root")
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     let ca = rs274_run(&root, &rel, &mut r, &v.id);
-                    let rel_t = tr_file.strip_prefix(&root).expect("under root").to_string_lossy().replace('\\', "/");
+                    let rel_t = tr_file
+                        .strip_prefix(&root)
+                        .expect("under root")
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     let cb = rs274_run(&root, &rel_t, &mut r, &v.id);
                     drop(r);
                     if let (Some(ta), Some(tb)) = (ca, cb) {
@@ -173,10 +206,7 @@ fn e2e48_canonical_comparison_all_positives() {
                                 r.push(RedEntry {
                                     id: v.id.clone(),
                                     kind: "divergence",
-                                    detail: format!(
-                                        "canonical: {} — {}",
-                                        d.index, d.detail
-                                    ),
+                                    detail: format!("canonical: {} — {}", d.index, d.detail),
                                 });
                             }
                         }
@@ -210,20 +240,34 @@ fn e2e48_canonical_comparison_all_positives() {
                             kind: "translate-fail",
                             detail: format!(
                                 "linuxcnc re-emit: {}",
-                                d.iter().map(|x| x.code.as_str()).collect::<Vec<_>>().join(",")
+                                d.iter()
+                                    .map(|x| x.code.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
                             ),
                         });
                         continue;
                     }
                 };
-                let tr_file = root.join("target/simwork").join(format!("{}_self.linuxcnc.ngc", v.id));
+                let tr_file = root
+                    .join("target/simwork")
+                    .join(format!("{}_self.linuxcnc.ngc", v.id));
                 std::fs::write(&tr_file, &re_emitted).unwrap();
 
                 let mut r = reds.lock().unwrap();
-                let rel = l.path.strip_prefix(&root).expect("manifest path under root").to_string_lossy().replace('\\', "/");
+                let rel = l
+                    .path
+                    .strip_prefix(&root)
+                    .expect("manifest path under root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 let ca = rs274_run(&root, &rel, &mut r, &v.id);
-                let rel_t = tr_file.strip_prefix(&root).expect("under root").to_string_lossy().replace('\\', "/");
-                    let cb = rs274_run(&root, &rel_t, &mut r, &v.id);
+                let rel_t = tr_file
+                    .strip_prefix(&root)
+                    .expect("under root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let cb = rs274_run(&root, &rel_t, &mut r, &v.id);
                 drop(r);
                 if let (Some(ta), Some(tb)) = (ca, cb) {
                     let div = eid_harness::rs274_compare::compare_canonical(
@@ -233,7 +277,10 @@ fn e2e48_canonical_comparison_all_positives() {
                     );
                     if div.is_empty() {
                         self_ok += 1;
-                        println!("[ok] {} {}: canonical self-round-trip 0 divergences", v.id, v.name);
+                        println!(
+                            "[ok] {} {}: canonical self-round-trip 0 divergences",
+                            v.id, v.name
+                        );
                     } else {
                         let mut r = reds.lock().unwrap();
                         for d in &div {
@@ -258,13 +305,7 @@ fn e2e48_canonical_comparison_all_positives() {
     println!("=== E2E48 SUMMARY ===");
     println!("total positives: {total}, pairs-ok: {pairs_ok}, self-ok: {self_ok}, skipped: {skipped}, red entries: {}", reds.len());
     for r in &reds {
-        println!(
-            "[red] {} {} {} — {}",
-            r.id,
-            r.kind,
-            r.id,
-            r.detail
-        );
+        println!("[red] {} {} {} — {}", r.id, r.kind, r.id, r.detail);
     }
     let _ = reds;
 }

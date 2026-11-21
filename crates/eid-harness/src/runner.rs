@@ -224,10 +224,7 @@ fn run_vector(
                         target: target.clone(),
                         expected: "parse(file) ≡ golden AST".into(),
                         stage: None,
-                        status: Status::Pending(format!(
-                            "no adapter for dialect `{}`",
-                            f.dialect
-                        )),
+                        status: Status::Pending(format!("no adapter for dialect `{}`", f.dialect)),
                     });
                 }
                 continue;
@@ -262,10 +259,9 @@ fn run_vector(
                             ))
                         }
                     }
-                    Outcome::Ok => Status::Fail(format!(
-                        "expected ok, refused: {}",
-                        codes.join(", ")
-                    )),
+                    Outcome::Ok => {
+                        Status::Fail(format!("expected ok, refused: {}", codes.join(", ")))
+                    }
                     Outcome::Warning => Status::Fail(format!(
                         "expected warning(ok+loss), refused: {}",
                         codes.join(", ")
@@ -364,8 +360,7 @@ fn run_vector(
                         });
                     } else {
                         let mut c = run_r1_text(&program, adapter.as_ref(), &target);
-                        c.expected =
-                            "same-dialect round-trip: RAW payload байт-в-байт (D9)".into();
+                        c.expected = "same-dialect round-trip: RAW payload байт-в-байт (D9)".into();
                         checks.push(c);
                     }
                 }
@@ -408,7 +403,11 @@ fn run_vector(
                         status: Status::Fail(format!(
                             "re-parse of {} failed: {}",
                             prev_l,
-                            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                            diags
+                                .iter()
+                                .map(|d| d.message.clone())
+                                .collect::<Vec<_>>()
+                                .join("; ")
                         )),
                     });
                     continue;
@@ -425,7 +424,11 @@ fn run_vector(
                         status: Status::Fail(format!(
                             "re-parse of {} failed: {}",
                             label,
-                            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                            diags
+                                .iter()
+                                .map(|d| d.message.clone())
+                                .collect::<Vec<_>>()
+                                .join("; ")
                         )),
                     });
                     continue;
@@ -440,7 +443,11 @@ fn run_vector(
                 status: if ds.is_empty() {
                     Status::Pass
                 } else {
-                    Status::Fail(format!("{} divergences between dialect parses: {:?}", ds.len(), ds))
+                    Status::Fail(format!(
+                        "{} divergences between dialect parses: {:?}",
+                        ds.len(),
+                        ds
+                    ))
                 },
             });
             chain.push((dialect.clone(), label.clone()));
@@ -483,11 +490,19 @@ fn run_vector(
                             Outcome::Code(c) => Status::Fail(format!(
                                 "expected emit refusal {}, got {}",
                                 c.as_str(),
-                                diags.iter().map(|dg| dg.code.as_str()).collect::<Vec<_>>().join(", ")
+                                diags
+                                    .iter()
+                                    .map(|dg| dg.code.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             )),
                             Outcome::Ok | Outcome::Warning => Status::Fail(format!(
                                 "expected successful emit, refused: {}",
-                                diags.iter().map(|dg| dg.code.as_str()).collect::<Vec<_>>().join(", ")
+                                diags
+                                    .iter()
+                                    .map(|dg| dg.code.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             )),
                         };
                         checks.push(Check {
@@ -558,9 +573,7 @@ fn run_vector(
                         target,
                         expected: r4_expected.clone(),
                         stage: None,
-                        status: Status::Pending(format!(
-                            "no adapter for source dialect `{sd}`"
-                        )),
+                        status: Status::Pending(format!("no adapter for source dialect `{sd}`")),
                     });
                     continue;
                 }
@@ -571,26 +584,43 @@ fn run_vector(
                     Outcome::Code(c) => Status::Fail(format!(
                         "expected emit refusal {}, got {}",
                         c.as_str(),
-                        diags.iter().map(|dg| dg.code.as_str()).collect::<Vec<_>>().join(", ")
+                        diags
+                            .iter()
+                            .map(|dg| dg.code.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )),
                     Outcome::Ok | Outcome::Warning => Status::Fail(format!(
                         "expected successful emit, refused: {}",
-                        diags.iter().map(|dg| dg.code.as_str()).collect::<Vec<_>>().join(", ")
+                        diags
+                            .iter()
+                            .map(|dg| dg.code.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     )),
                 },
                 Ok(_) => match expect {
                     Outcome::Ok | Outcome::Warning => Status::Pass,
-                    Outcome::Code(c) => Status::Fail(format!(
-                        "expected emit refusal {0}, emitted ok",
-                        c.as_str()
-                    )),
+                    Outcome::Code(c) => {
+                        Status::Fail(format!("expected emit refusal {0}, emitted ok", c.as_str()))
+                    }
                 },
             };
-            checks.push(Check { relation: "R4", target, expected: r4_expected.clone(), stage: None, status });
+            checks.push(Check {
+                relation: "R4",
+                target,
+                expected: r4_expected.clone(),
+                stage: None,
+                status,
+            });
         }
     }
 
-    VectorReport { id: v.id.clone(), name: v.name.clone(), checks }
+    VectorReport {
+        id: v.id.clone(),
+        name: v.name.clone(),
+        checks,
+    }
 }
 
 /// Golden-проверки: R1-AST (parse → emit==файл байт-в-байт → parse → diff=0)
@@ -617,7 +647,11 @@ fn run_golden(
                 r1_exp,
                 format!(
                     "golden does not parse: {}",
-                    diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    diags
+                        .iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ),
             )]);
         }
@@ -638,13 +672,21 @@ fn run_golden(
                 r1_exp,
                 format!(
                     "golden emit failed: {}",
-                    diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    diags
+                        .iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ),
             )]);
         }
     };
     if emitted != text {
-        fails.push(("R1", r1_exp.clone(), "emit(golden AST) != golden file byte-exact".into()));
+        fails.push((
+            "R1",
+            r1_exp.clone(),
+            "emit(golden AST) != golden file byte-exact".into(),
+        ));
     }
     let p2 = match eid.parse(&emitted, "golden") {
         Ok(p) => p,
@@ -654,14 +696,22 @@ fn run_golden(
                 r1_exp,
                 format!(
                     "re-parse of emitted golden failed: {}",
-                    diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    diags
+                        .iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 ),
             )]);
         }
     };
     let ds = diff::semantic_diff(&p1, &p2, cfg);
     if !ds.is_empty() {
-        fails.push(("R1", r1_exp, format!("parse(emit(parse(golden))) diverges: {ds:?}")));
+        fails.push((
+            "R1",
+            r1_exp,
+            format!("parse(emit(parse(golden))) diverges: {ds:?}"),
+        ));
     }
     if !fails.is_empty() {
         return Err(fails);
@@ -693,7 +743,10 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
             .collect()
     };
     let original = payload_of(program);
-    let re = match adapter.emit(program).and_then(|text| adapter.parse(&text, target)) {
+    let re = match adapter
+        .emit(program)
+        .and_then(|text| adapter.parse(&text, target))
+    {
         Ok(p) => p,
         Err(diags) => {
             return Check {
@@ -703,7 +756,11 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
                 stage: None,
                 status: Status::Fail(format!(
                     "same-dialect round-trip failed: {}",
-                    diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>().join("; ")
+                    diags
+                        .iter()
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
                 )),
             }
         }
@@ -811,14 +868,20 @@ pub fn run_tier_b(
             }
             Ok(Err(diags)) => {
                 for d in &diags {
-                    *rep.refused_by_code.entry(d.code.as_str().to_string()).or_insert(0) += 1;
+                    *rep.refused_by_code
+                        .entry(d.code.as_str().to_string())
+                        .or_insert(0) += 1;
                 }
                 rep.entries.push(TierBOutcome {
                     path: path_str,
                     dialect: f.dialect.clone(),
                     outcome: format!(
                         "Err({})",
-                        diags.iter().map(|d| d.code.as_str()).collect::<Vec<_>>().join(",")
+                        diags
+                            .iter()
+                            .map(|d| d.code.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
                     ),
                 });
             }
@@ -832,7 +895,11 @@ impl Vector {
     fn kind_positive_with_golden(&self) -> bool {
         matches!(
             (self.kind, self.golden.as_ref(), self.tier),
-            (crate::manifest::Kind::Positive, Some(_), crate::manifest::Tier::A)
+            (
+                crate::manifest::Kind::Positive,
+                Some(_),
+                crate::manifest::Tier::A
+            )
         )
     }
 }

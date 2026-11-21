@@ -44,8 +44,8 @@
 //! раз и последний, геометрия §6, связывание Q11) — отказ пробрасывается
 //! как Err(Vec<Diagnostic>).
 
-use crate::LinuxCncAdapter;
 use crate::canonicalize::{plane_def, to_f64, Plane};
+use crate::LinuxCncAdapter;
 use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Program, Spindle, StartPoint, Units, Wcs};
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
 use eid_core::emitter::fmt_num;
@@ -80,7 +80,10 @@ pub struct EmissionLegality {
 impl EmissionLegality {
     /// Код отказа по имени условия; None = условие не объявлено.
     pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
-        self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+        self.illegal
+            .iter()
+            .find(|(c, _)| *c == condition)
+            .map(|(_, code)| *code)
     }
 
     /// Все коды отказа таблицы (без дубликатов).
@@ -119,9 +122,9 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
     // Условие обязано быть объявлено в таблице — иначе баг объявления,
     // не паника пути.
     let code = |cond: &'static str| {
-        table.code_of(cond).unwrap_or_else(|| {
-            panic!("emission-legality: условие `{cond}` не объявлено в таблице")
-        })
+        table
+            .code_of(cond)
+            .unwrap_or_else(|| panic!("emission-legality: условие `{cond}` не объявлено в таблице"))
     };
     let mut v = Vec::new();
     let mut last_is_end = false;
@@ -131,7 +134,9 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
         // ветка — защита полноты таблицы (новый вид опа ⇒ дополнить таблицу).
         if !table.is_legal_kind(op_kind(op)) {
             v.push(diag(
-                table.code_of("op_kind_not_legal").unwrap_or(ErrorCode::UnsupportedSyntax),
+                table
+                    .code_of("op_kind_not_legal")
+                    .unwrap_or(ErrorCode::UnsupportedSyntax),
                 format!(
                     "op_kind_not_legal: `{}` не легален для цели LinuxCNC",
                     op_kind(op)
@@ -139,12 +144,18 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
             ));
         }
         match op {
-            Op::Arc { start: StartPoint::Unknown, src, .. } => v.push(diag_src(
+            Op::Arc {
+                start: StartPoint::Unknown,
+                src,
+                ..
+            } => v.push(diag_src(
                 code("arc_unknown_start"),
                 "arc_unknown_start: дуга требует числового старта (SPEC §2 Q11)",
                 Some(src.clone()),
             )),
-            Op::Arc { normal, src, state, .. } => {
+            Op::Arc {
+                normal, src, state, ..
+            } => {
                 // Не-каноническая нормаль (не единичная +ось) — §6.
                 let c = [normal.x.value, normal.y.value, normal.z.value];
                 let (mut best, mut bi) = (0.0f64, 0usize);
@@ -194,7 +205,9 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                     ));
                 }
             }
-            Op::Raw { payload_hex, src, .. } => {
+            Op::Raw {
+                payload_hex, src, ..
+            } => {
                 if payload_hex.len() % 2 != 0
                     || !payload_hex
                         .bytes()
@@ -262,7 +275,10 @@ pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
     }
     let mut w = Writer::new(program);
     w.run()?;
-    Ok(EmitOut { text: w.text, warnings: w.warnings })
+    Ok(EmitOut {
+        text: w.text,
+        warnings: w.warnings,
+    })
 }
 
 // ===========================================================================
@@ -278,7 +294,14 @@ fn num_text(n: &Num) -> String {
 }
 
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
-    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src: None, options: Vec::new(), limit: None }
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: None,
+        options: Vec::new(),
+        limit: None,
+    }
 }
 
 fn diag_src(
@@ -286,7 +309,14 @@ fn diag_src(
     msg: impl Into<String>,
     src: Option<eid_core::ast::SrcSpan>,
 ) -> Diagnostic {
-    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src, options: Vec::new(), limit: None }
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src,
+        options: Vec::new(),
+        limit: None,
+    }
 }
 
 fn finite3(a: &Num, b: &Num, c: &Num, what: &'static str) -> Result<(), Vec<Diagnostic>> {
@@ -349,7 +379,11 @@ impl<'a> Writer<'a> {
 
     fn run(&mut self) -> Result<(), Vec<Diagnostic>> {
         // 1. Заголовок — всегда явно.
-        let units_word = if self.program.units == Units::In { "G20" } else { "G21" };
+        let units_word = if self.program.units == Units::In {
+            "G20"
+        } else {
+            "G21"
+        };
         self.line(format!("{units_word} G90 G94 G17 G91.1"));
         // 2. path_mode — всегда явно, одна строка (SPEC §3: одно на программу).
         match &self.program.path_mode {
@@ -358,7 +392,10 @@ impl<'a> Writer<'a> {
             eid_core::ast::PathMode::Blend { t } => match t {
                 Some(v) => {
                     if !v.value.is_finite() {
-                        return Err(vec![diag(ErrorCode::InvalidInput, "path_mode blend t: non-finite")]);
+                        return Err(vec![diag(
+                            ErrorCode::InvalidInput,
+                            "path_mode blend t: non-finite",
+                        )]);
                     }
                     self.line(format!("G64 P{}", num_text(v)));
                 }
@@ -368,7 +405,12 @@ impl<'a> Writer<'a> {
         // 3. frame_preset: выборка WCS, затем G92 (EQUIVALENCE §1.4); без
         //    запекания в G10 (golden_preset_no_bake).
         if let Some(pr) = &self.program.frame_preset {
-            finite3(&pr.values.x, &pr.values.y, &pr.values.z, "frame_preset value")?;
+            finite3(
+                &pr.values.x,
+                &pr.values.y,
+                &pr.values.z,
+                "frame_preset value",
+            )?;
             self.line(wcs_word(pr.wcs));
             self.line(format!(
                 "G92 X{} Y{} Z{}",
@@ -425,7 +467,11 @@ impl<'a> Writer<'a> {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 let f = self.feed_word(state)?;
-                let g = if state.frame == Frame::Machine { "G53 G0" } else { "G0" };
+                let g = if state.frame == Frame::Machine {
+                    "G53 G0"
+                } else {
+                    "G0"
+                };
                 self.line(format!(
                     "{g} X{} Y{} Z{}{f}",
                     num_text(&end.x),
@@ -438,7 +484,11 @@ impl<'a> Writer<'a> {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 let f = self.feed_word(state)?;
-                let g = if state.frame == Frame::Machine { "G53 G1" } else { "G1" };
+                let g = if state.frame == Frame::Machine {
+                    "G53 G1"
+                } else {
+                    "G1"
+                };
                 self.line(format!(
                     "{g} X{} Y{} Z{}{f}",
                     num_text(&end.x),
@@ -524,7 +574,10 @@ impl<'a> Writer<'a> {
                 self.line(format!("{g} {axes_part}{arc_words}{f}"));
                 Ok(())
             }
-            Op::Arc { start: StartPoint::Unknown, .. } => {
+            Op::Arc {
+                start: StartPoint::Unknown,
+                ..
+            } => {
                 // validate() отвергает такие программы ранее; защита.
                 Err(vec![diag(
                     ErrorCode::RuntimeState,
@@ -535,7 +588,10 @@ impl<'a> Writer<'a> {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 if !seconds.value.is_finite() {
-                    return Err(vec![diag(ErrorCode::InvalidInput, "dwell seconds: non-finite")]);
+                    return Err(vec![diag(
+                        ErrorCode::InvalidInput,
+                        "dwell seconds: non-finite",
+                    )]);
                 }
                 self.line(format!("G4 P{}", num_text(seconds)));
                 Ok(())
@@ -546,7 +602,9 @@ impl<'a> Writer<'a> {
                 self.cur_tool = Some(*tool);
                 Ok(())
             }
-            Op::ProgramStop { optional, state, .. } => {
+            Op::ProgramStop {
+                optional, state, ..
+            } => {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 self.line(if *optional { "M1" } else { "M0" });
@@ -556,7 +614,9 @@ impl<'a> Writer<'a> {
                 self.line("M2");
                 Ok(())
             }
-            Op::WcsDefine { p, origin, state, .. } => {
+            Op::WcsDefine {
+                p, origin, state, ..
+            } => {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 finite3(&origin.x, &origin.y, &origin.z, "wcs_define origin")?;
@@ -568,7 +628,9 @@ impl<'a> Writer<'a> {
                 ));
                 Ok(())
             }
-            Op::WcsSetHere { p, delta, state, .. } => {
+            Op::WcsSetHere {
+                p, delta, state, ..
+            } => {
                 self.pre_state(state);
                 self.check_tool_jump(state);
                 finite3(&delta.x, &delta.y, &delta.z, "wcs_set_here delta")?;

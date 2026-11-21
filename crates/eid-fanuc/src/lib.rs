@@ -24,10 +24,10 @@
 //! explicit-end полный круг (SPEC §3 v0.17) — зеркала аудита.
 #![allow(dead_code)]
 
-use std::cell::RefCell;
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
+use std::cell::RefCell;
 
 pub mod block;
 pub mod canonicalize;
@@ -48,7 +48,10 @@ pub struct FanucAdapter {
 
 impl FanucAdapter {
     pub fn new() -> Self {
-        Self { notices: RefCell::new(Vec::new()), warnings: RefCell::new(Vec::new()) }
+        Self {
+            notices: RefCell::new(Vec::new()),
+            warnings: RefCell::new(Vec::new()),
+        }
     }
 
     /// ConversionTarget-таблица легальности эмиссии в Fanuc mill

@@ -69,8 +69,20 @@ pub struct LineData {
 
 /// Управляющие ключевые слова LinuxCNC (SPEC §1.1: поток управления вне L1).
 const CONTROL_KEYWORDS: &[&str] = &[
-    "if", "else", "elseif", "endif", "while", "do", "endwhile", "repeat", "endrepeat",
-    "continue", "break", "return", "sub", "endsub",
+    "if",
+    "else",
+    "elseif",
+    "endif",
+    "while",
+    "do",
+    "endwhile",
+    "repeat",
+    "endrepeat",
+    "continue",
+    "break",
+    "return",
+    "sub",
+    "endsub",
 ];
 
 pub fn limit_diag(
@@ -93,7 +105,11 @@ pub fn limit_diag(
             col_end: col as u32,
         }),
         options: Vec::new(),
-        limit: Some(LimitInfo { threshold, threshold_value, actual }),
+        limit: Some(LimitInfo {
+            threshold,
+            threshold_value,
+            actual,
+        }),
     }
 }
 
@@ -127,7 +143,12 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
         };
         let raw = content.trim().to_string();
         let tok = lex_line(&raw, file, line_no)?;
-        out.push(LineData { line_no, raw, term, tok });
+        out.push(LineData {
+            line_no,
+            raw,
+            term,
+            tok,
+        });
     }
     Ok(out)
 }
@@ -321,18 +342,21 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
                     col_at(k),
                 )]);
             }
-            words.push(Word { letter, number, col: col_at(k) });
+            words.push(Word {
+                letter,
+                number,
+                col: col_at(k),
+            });
             k = m;
             continue;
         }
         match ch {
-            '#' => {
-                return Err(fail(
-                    ErrorCode::RuntimeState,
-                    "`#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)".into(),
-                    col_at(k),
-                ))
-            }
+            '#' => return Err(fail(
+                ErrorCode::RuntimeState,
+                "`#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)"
+                    .into(),
+                col_at(k),
+            )),
             '[' => {
                 return Err(fail(
                     ErrorCode::RuntimeState,

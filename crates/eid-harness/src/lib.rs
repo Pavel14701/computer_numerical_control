@@ -2,8 +2,8 @@
 //! Интерфейсы заморожены: v0.1-interface.
 
 pub mod diff;
-pub mod manifest;
 pub mod generator;
+pub mod manifest;
 pub mod mutate;
 pub mod rs274_compare;
 pub mod runner;

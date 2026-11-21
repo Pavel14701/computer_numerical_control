@@ -44,10 +44,10 @@
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::{Op, PathMode, StartPoint};
 use eid_core::diag::ErrorCode;
-use eid_linuxcnc::parser::NoticeKind;
-use eid_harness::diff::{semantic_diff, Divergence, DiffConfig};
-use eid_linuxcnc::LinuxCncAdapter;
+use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
 use eid_linuxcnc::canonicalize::to_f64;
+use eid_linuxcnc::parser::NoticeKind;
+use eid_linuxcnc::LinuxCncAdapter;
 use std::path::PathBuf;
 
 fn corpus(rel: &str) -> PathBuf {
@@ -78,7 +78,10 @@ fn assert_diff_empty(a: &eid_core::ast::Program, b: &eid_core::ast::Program, ctx
 
 fn assert_err_code(rel: &str, code: ErrorCode, ctx: &str) {
     match parse_linuxcnc(rel) {
-        Ok(p) => panic!("{ctx}: expected Err({code:?}), got Ok with {} ops", p.ops.len()),
+        Ok(p) => panic!(
+            "{ctx}: expected Err({code:?}), got Ok with {} ops",
+            p.ops.len()
+        ),
         Err(diags) => {
             assert!(!diags.is_empty(), "{ctx}: empty diagnostics");
             for d in &diags {
@@ -98,7 +101,10 @@ fn assert_ok_diag(rel: &str, code: ErrorCode, ctx: &str) -> eid_core::ast::Progr
         Ok(p) => p,
         Err(diags) => panic!(
             "{ctx}: expected Ok + diag {code:?}, got Err: {:?}",
-            diags.iter().map(|d| (d.code, &d.message)).collect::<Vec<_>>()
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message))
+                .collect::<Vec<_>>()
         ),
     };
     let codes: Vec<ErrorCode> = adapter.take_diagnostics().iter().map(|d| d.code).collect();
@@ -134,7 +140,8 @@ fn pilot_02_rapid_reposition() {
 
 #[test]
 fn pilot_03_feed_survives_rapid() {
-    let mine = parse_linuxcnc("03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc").expect("parses");
+    let mine =
+        parse_linuxcnc("03_feed_survives_rapid/feed_survives_rapid.linuxcnc.ngc").expect("parses");
     let golden = parse_golden("03_feed_survives_rapid/golden.eid");
     // feed=500 на rapid — модальное значение, G0 не сбрасывает (SPEC §4).
     assert_diff_empty(&mine, &golden, "#03");
@@ -155,7 +162,15 @@ fn pilot_11_arc_r_semicircle() {
 
     // Тригонометрия правила §6 на данных файла:
     let arc = match &mine.ops[2] {
-        Op::Arc { start, end, center, sweep_deg, dir, pitch, .. } => {
+        Op::Arc {
+            start,
+            end,
+            center,
+            sweep_deg,
+            dir,
+            pitch,
+            ..
+        } => {
             assert!(*dir == eid_core::ast::Dir::Cw);
             assert_eq!(pitch.value, 0.0);
             let (s, e) = match (start, end) {
@@ -184,7 +199,11 @@ fn pilot_11_arc_r_semicircle() {
     // совпадают с выводом канонизатора побитово
     // (center=-0.0351,0.0001; sweep=179.4975); расхождение итерации 2
     // устранено ревизией golden.
-    assert_diff_empty(&mine, &golden, "#11 (golden = derived values, CORPUS v0.5.2)");
+    assert_diff_empty(
+        &mine,
+        &golden,
+        "#11 (golden = derived values, CORPUS v0.5.2)",
+    );
 }
 
 #[test]
@@ -203,7 +222,8 @@ fn pilot_27_tool_change() {
 fn pilot_36_preset_g54_then_switch() {
     // Ключевой инвариант EQUIVALENCE §1.3: Δ константен по трём сегментам;
     // точки разрыва (b) Q11: смена WCS без in-text origin → start=unknown.
-    let mine = parse_linuxcnc("36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc").expect("parses");
+    let mine = parse_linuxcnc("36_preset_G54_then_switch/preset_G54_then_switch.linuxcnc.ngc")
+        .expect("parses");
     let golden = parse_golden("36_preset_G54_then_switch/golden.eid");
     let preset = mine.frame_preset.as_ref().expect("frame_preset present");
     assert_eq!(preset.wcs, eid_core::ast::Wcs::G54);
@@ -211,10 +231,14 @@ fn pilot_36_preset_g54_then_switch() {
     assert_eq!(preset.values.y.value, 0.0);
     assert_eq!(preset.values.z.value, 5.0);
     // OP1: якорь пресетки → known; OP3/OP5: смена WCS без define → unknown.
-    let starts = mine.ops.iter().map(|o| match o {
-        Op::Rapid { start, .. } | Op::Linear { start, .. } => *start == StartPoint::Unknown,
-        _ => false,
-    }).collect::<Vec<_>>();
+    let starts = mine
+        .ops
+        .iter()
+        .map(|o| match o {
+            Op::Rapid { start, .. } | Op::Linear { start, .. } => *start == StartPoint::Unknown,
+            _ => false,
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         starts,
         vec![false, false, true, false, true, false, false],
@@ -229,8 +253,17 @@ fn pilot_46_arc_r_helix() {
     let mine = parse_linuxcnc("46_arc_R_helix/arc_R_helix.linuxcnc.ngc").expect("parses");
     let golden = parse_golden("46_arc_R_helix/golden.eid");
     match &mine.ops[1] {
-        Op::Arc { center, sweep_deg, pitch, dir, .. } => {
-            assert_eq!((center.x.value, center.y.value, center.z.value), (0.0, 5.0, 0.0));
+        Op::Arc {
+            center,
+            sweep_deg,
+            pitch,
+            dir,
+            ..
+        } => {
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (0.0, 5.0, 0.0)
+            );
             assert_eq!(sweep_deg.value, 90.0);
             assert_eq!(pitch.value, 2.0, "#46 pitch = 2.0");
             assert_eq!(*dir, eid_core::ast::Dir::Cw);
@@ -246,37 +279,65 @@ fn pilot_46_arc_r_helix() {
 
 #[test]
 fn n1_g53_no_origins_err_runtime_state() {
-    assert_err_code("n1_g53_no_origins/g53_no_origins.linuxcnc.ngc", ErrorCode::RuntimeState, "N1");
+    assert_err_code(
+        "n1_g53_no_origins/g53_no_origins.linuxcnc.ngc",
+        ErrorCode::RuntimeState,
+        "N1",
+    );
 }
 
 #[test]
 fn n2_mid_g92_err_semantics() {
-    assert_err_code("n2_mid_G92/mid_G92.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N2");
+    assert_err_code(
+        "n2_mid_G92/mid_G92.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N2",
+    );
 }
 
 #[test]
 fn n5a_arc_radius_mismatch_err_invalid_input() {
-    assert_err_code("n5a_arc_radius_mismatch/arc_radius_mismatch.linuxcnc.ngc", ErrorCode::InvalidInput, "N5a");
+    assert_err_code(
+        "n5a_arc_radius_mismatch/arc_radius_mismatch.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N5a",
+    );
 }
 
 #[test]
 fn n5b_arc_chord_gt_2r_err_invalid_input() {
-    assert_err_code("n5b_arc_chord_gt_2R/arc_chord_gt_2R.linuxcnc.ngc", ErrorCode::InvalidInput, "N5b");
+    assert_err_code(
+        "n5b_arc_chord_gt_2R/arc_chord_gt_2R.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N5b",
+    );
 }
 
 #[test]
 fn n7_unit_switch_mid_err_semantics() {
-    assert_err_code("n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N7");
+    assert_err_code(
+        "n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N7",
+    );
 }
 
 #[test]
 fn n12_program_end_not_last_err_invalid_input() {
-    assert_err_code("n12_program_end_not_last/program_end_not_last.linuxcnc.ngc", ErrorCode::InvalidInput, "N12");
+    assert_err_code(
+        "n12_program_end_not_last/program_end_not_last.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N12",
+    );
 }
 
 #[test]
 fn n13_program_end_duplicate_err_invalid_input() {
-    assert_err_code("n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc", ErrorCode::InvalidInput, "N13");
+    assert_err_code(
+        "n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N13",
+    );
 }
 
 #[test]
@@ -285,34 +346,58 @@ fn n14_program_end_missing_auto_pend() {
     // notice MissingProgramEnd (ProgramEnd добавлен автоматически).
     let a = LinuxCncAdapter::new();
     let p = a
-        .parse(&read("n14_program_end_missing/program_end_missing.linuxcnc.ngc"), "n14")
+        .parse(
+            &read("n14_program_end_missing/program_end_missing.linuxcnc.ngc"),
+            "n14",
+        )
         .expect("N14: missing PEND теперь Ok (auto-PEND)");
-    assert!(matches!(p.ops.last(), Some(Op::ProgramEnd { .. })), "auto-PEND последним");
+    assert!(
+        matches!(p.ops.last(), Some(Op::ProgramEnd { .. })),
+        "auto-PEND последним"
+    );
     let notices = a.take_notices();
     assert!(
-        notices.iter().any(|n| n.kind == NoticeKind::MissingProgramEnd),
+        notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::MissingProgramEnd),
         "notice MissingProgramEnd обязателен: {notices:?}"
     );
 }
 
 #[test]
 fn n15_wcs_set_here_mid_err_semantics() {
-    assert_err_code("n15_wcs_set_here_mid/wcs_set_here_mid.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N15");
+    assert_err_code(
+        "n15_wcs_set_here_mid/wcs_set_here_mid.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N15",
+    );
 }
 
 #[test]
 fn n16_g53_after_preset_err_runtime_state() {
-    assert_err_code("n16_g53_after_preset/g53_after_preset.linuxcnc.ngc", ErrorCode::RuntimeState, "N16");
+    assert_err_code(
+        "n16_g53_after_preset/g53_after_preset.linuxcnc.ngc",
+        ErrorCode::RuntimeState,
+        "N16",
+    );
 }
 
 #[test]
 fn n17_multiple_preset_err_semantics() {
-    assert_err_code("n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N17");
+    assert_err_code(
+        "n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N17",
+    );
 }
 
 #[test]
 fn n19_arc_r_full_circle_err_invalid_input() {
-    assert_err_code("n19_arc_R_full_circle/arc_R_full_circle.linuxcnc.ngc", ErrorCode::InvalidInput, "N19");
+    assert_err_code(
+        "n19_arc_R_full_circle/arc_R_full_circle.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N19",
+    );
 }
 
 // ===========================================================================
@@ -321,11 +406,24 @@ fn n19_arc_r_full_circle_err_invalid_input() {
 
 #[test]
 fn n3_raw_vendor_block_ok_with_semantics() {
-    let p = assert_ok_diag("n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N3");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    let p = assert_ok_diag(
+        "n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N3",
+    );
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
     // Payload lossless: "M123" → hex.
     match &p.ops[0] {
-        Op::Raw { payload_hex, .. } => assert_eq!(payload_hex, "4D3132330A", "D9 v0.15: payload с терминатором"),
+        Op::Raw { payload_hex, .. } => assert_eq!(
+            payload_hex, "4D3132330A",
+            "D9 v0.15: payload с терминатором"
+        ),
         other => panic!("op 0 must be Raw, got {other:?}"),
     }
     assert_eq!(p.ops.len(), 4); // Raw + Rapid + Linear + PEND
@@ -335,9 +433,19 @@ fn n3_raw_vendor_block_ok_with_semantics() {
 fn n8_tapping_g84_ok_with_semantics() {
     // G84 — refuse-цикл: line-level RAW без цикл-парсера (COVERAGE §2.5).
     // Файл: header / G0 / G99 G84 … / M2 → ops: [Rapid, Raw, PEND].
-    let p = assert_ok_diag("n8_tapping_G84/tapping_G84.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N8");
+    let p = assert_ok_diag(
+        "n8_tapping_G84/tapping_G84.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N8",
+    );
     assert!(matches!(&p.ops[0], Op::Rapid { .. }));
-    assert!(matches!(&p.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(
+        &p.ops[1],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
     assert!(matches!(&p.ops[2], Op::ProgramEnd { .. }));
 }
 
@@ -350,7 +458,9 @@ fn n9_bare_t_ok_with_semantics() {
         "N9",
     );
     match &p.ops[0] {
-        Op::Raw { payload_hex, code, .. } => {
+        Op::Raw {
+            payload_hex, code, ..
+        } => {
             assert_eq!(payload_hex, "54350A"); // "T5" + LF — D9 v0.15
             assert_eq!(*code, ErrorCode::UnsupportedSemantics);
         }
@@ -361,14 +471,34 @@ fn n9_bare_t_ok_with_semantics() {
 
 #[test]
 fn n10_g43_h_table_ok_with_requires() {
-    let p = assert_ok_diag("n10_g43_h_table/g43_h_table.linuxcnc.ngc", ErrorCode::RequiresMachineTable, "N10");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::RequiresMachineTable, .. }));
+    let p = assert_ok_diag(
+        "n10_g43_h_table/g43_h_table.linuxcnc.ngc",
+        ErrorCode::RequiresMachineTable,
+        "N10",
+    );
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::RequiresMachineTable,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn n18_css_g96_ok_with_semantics() {
-    let p = assert_ok_diag("n18_css_g96/css_g96.linuxcnc.ngc", ErrorCode::UnsupportedSemantics, "N18");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    let p = assert_ok_diag(
+        "n18_css_g96/css_g96.linuxcnc.ngc",
+        ErrorCode::UnsupportedSemantics,
+        "N18",
+    );
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -376,14 +506,22 @@ fn n4_peck_l_over_limit() {
     // Расконсервирован (итерация 3-4): L99999 > max_unroll_iterations=10000
     // → E_LIMIT_EXCEEDED; guard проверяется до диагностики слов (в файле
     // нет F — feed-проверка не должна опередить лимит).
-    assert_err_code("n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc", ErrorCode::LimitExceeded, "N4");
+    assert_err_code(
+        "n4_peck_L_over_limit/peck_L_over_limit.linuxcnc.ngc",
+        ErrorCode::LimitExceeded,
+        "N4",
+    );
 }
 
 #[test]
 fn n6_naked_coords_after_g80() {
     // Расконсервирован (итерация 3-4): G81 в файле теперь разворачивается;
     // голые координаты после G80 → E_INVALID_INPUT (COVERAGE §2.1).
-    assert_err_code("n6_naked_coords_after_G80/naked_coords_after_G80.linuxcnc.ngc", ErrorCode::InvalidInput, "N6");
+    assert_err_code(
+        "n6_naked_coords_after_G80/naked_coords_after_G80.linuxcnc.ngc",
+        ErrorCode::InvalidInput,
+        "N6",
+    );
 }
 
 #[test]
@@ -391,13 +529,17 @@ fn n11_m98_call_line_level_raw() {
     // Ruling итерации 6 (Phase 1.2): M98/M99 → line-level Raw{SYNTAX}
     // (line-local конструкция, правило двух классов), разбор продолжается.
     let a = LinuxCncAdapter::new();
-    let p = a.parse(&read("n11_m98_call/m98_call.linuxcnc.ngc"), "n11")
+    let p = a
+        .parse(&read("n11_m98_call/m98_call.linuxcnc.ngc"), "n11")
         .expect("N11: Ok (line-level Raw)");
-    assert!(matches!(
-        &p.ops[0],
-        Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
-            if payload_hex.starts_with("4D3938")
-    ), "payload = `M98…`");
+    assert!(
+        matches!(
+            &p.ops[0],
+            Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+                if payload_hex.starts_with("4D3938")
+        ),
+        "payload = `M98…`"
+    );
     assert!(matches!(&p.ops.last(), Some(Op::ProgramEnd { .. })));
     let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax), "{codes:?}");
@@ -423,7 +565,9 @@ fn unit_g90_1_g91_1_absorb_same_ast() {
     let b = parse_str(&inc).expect("G91.1 parses");
     assert_diff_empty(&a, &b, "G90.1 ≡ G91.1 (ABSORB)");
     match &a.ops[1] {
-        Op::Arc { center, sweep_deg, .. } => {
+        Op::Arc {
+            center, sweep_deg, ..
+        } => {
             assert_eq!((center.x.value, center.y.value), (0.0, 0.0));
             assert_eq!(sweep_deg.value, 90.0);
         }
@@ -436,10 +580,16 @@ fn unit_modal_motion_and_feed_survive() {
     // Модальный motion (X30 без G-кода продолжает G0) + feed переживает G0.
     let src = "G21 G90 G94 G17\nG1 X10.0000 F150.0\nG0 X20.0000\nX30.0000\nM2\n";
     let p = parse_str(src).expect("parses");
-    assert!(matches!(&p.ops[0], Op::Linear { state, .. } if state.feed.as_ref().unwrap().value == 150.0));
-    assert!(matches!(&p.ops[1], Op::Rapid { state, .. } if state.feed.as_ref().unwrap().value == 150.0));
+    assert!(
+        matches!(&p.ops[0], Op::Linear { state, .. } if state.feed.as_ref().unwrap().value == 150.0)
+    );
+    assert!(
+        matches!(&p.ops[1], Op::Rapid { state, .. } if state.feed.as_ref().unwrap().value == 150.0)
+    );
     // Bare X30 продолжает модальную группу 1 (G0 → Rapid), feed 150 жив.
-    assert!(matches!(&p.ops[2], Op::Rapid { state, .. } if state.feed.as_ref().unwrap().value == 150.0));
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { state, .. } if state.feed.as_ref().unwrap().value == 150.0)
+    );
     assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
 }
 
@@ -459,9 +609,18 @@ fn unit_q11_wcs_switch_with_in_text_origins_known() {
     let p = parse_str(src).expect("parses");
     // ops: [WcsDefine P1, WcsDefine P2, Rapid (unknown), Rapid (known), PEND].
     // Второй ход: start = (1,2,3) + O_G54 − O_G55 = (1,2,3) + (0,0,−5) = (1,2,−2).
-    assert!(matches!(&p.ops[2], Op::Rapid { start: StartPoint::Unknown, .. }));
+    assert!(matches!(
+        &p.ops[2],
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            ..
+        }
+    ));
     match &p.ops[3] {
-        Op::Rapid { start: StartPoint::Known(s), .. } => {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            ..
+        } => {
             assert_eq!((s.x.value, s.y.value, s.z.value), (1.0, 2.0, -2.0));
         }
         other => panic!("op 3 start must be known (обе системы define), got {other:?}"),
@@ -472,7 +631,13 @@ fn unit_q11_wcs_switch_with_in_text_origins_known() {
 fn unit_q11_first_op_without_anchor_unknown() {
     let src = "G21 G90\nG0 X1.0000 Y2.0000 Z3.0000\nM2\n";
     let p = parse_str(src).expect("parses");
-    assert!(matches!(&p.ops[0], Op::Rapid { start: StartPoint::Unknown, .. }));
+    assert!(matches!(
+        &p.ops[0],
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -497,8 +662,12 @@ fn unit_zero_length_and_zero_dwell_notice() {
     let notices = adapter.take_notices();
     assert_eq!(p.ops.len(), 2); // Linear + PEND (нулевые отброшены)
     assert_eq!(notices.len(), 2);
-    assert!(notices.iter().any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroLengthMotion));
-    assert!(notices.iter().any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroDwell));
+    assert!(notices
+        .iter()
+        .any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroLengthMotion));
+    assert!(notices
+        .iter()
+        .any(|n| n.kind == eid_linuxcnc::parser::NoticeKind::ZeroDwell));
 }
 
 #[test]
@@ -506,7 +675,13 @@ fn unit_block_delete_raw_runtime_state() {
     let src = "G21 G90 G94\n/ G0 X1.0000 Y1.0000 Z1.0000\nG0 X2.0000 Y2.0000 Z2.0000\nM2\n";
     let adapter = LinuxCncAdapter::new();
     let p = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::RuntimeState, .. }));
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::RuntimeState,
+            ..
+        }
+    ));
     let codes: Vec<_> = adapter.take_diagnostics().iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::RuntimeState));
 }
@@ -515,7 +690,10 @@ fn unit_block_delete_raw_runtime_state() {
 fn unit_hash_param_err_runtime_state() {
     let src = "G21 G90\nG0 X1.0000 Y1.0000 Z1.0000\n#100 = 5\nM2\n";
     let err = parse_str(src).expect_err("E_RUNTIME_STATE");
-    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -523,8 +701,11 @@ fn unit_o_code_err_syntax() {
     // Ruling итерации 6: O-code строки → line-level Raw{SYNTAX}, разбор идёт.
     let a = LinuxCncAdapter::new();
     let p = a.parse("G21 G90\nO100\nM2\n", "o.ngc").expect("Ok + Raw");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
-        if payload_hex == "4F3130300A"), "payload = `O100`");
+    assert!(
+        matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+        if payload_hex == "4F3130300A"),
+        "payload = `O100`"
+    );
     assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
     let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
@@ -534,7 +715,10 @@ fn unit_o_code_err_syntax() {
 fn unit_while_err_syntax() {
     let src = "G21 G90\nwhile [1] do 1\nM2\n";
     let err = parse_str(src).expect_err("E_UNSUPPORTED_SYNTAX");
-    assert!(err.iter().all(|d| d.code == ErrorCode::UnsupportedSyntax), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::UnsupportedSyntax),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -553,7 +737,13 @@ fn unit_bare_t_then_m6_uses_selection() {
 fn unit_m0_m1_stops() {
     let src = "G21 G90 G94\nG0 X0 Y0 Z0\nM0\nG0 X1.0000 Y0 Z0\nM1\nG0 X2.0000 Y0 Z0\nM2\n";
     let p = parse_str(src).expect("parses");
-    assert!(matches!(&p.ops[1], Op::ProgramStop { optional: false, .. }));
+    assert!(matches!(
+        &p.ops[1],
+        Op::ProgramStop {
+            optional: false,
+            ..
+        }
+    ));
     assert!(matches!(&p.ops[3], Op::ProgramStop { optional: true, .. }));
 }
 
@@ -562,7 +752,11 @@ fn unit_path_blend_and_mid_switch_err() {
     let ok = parse_str("G21 G90\nG64 P0.0500\nG0 X0 Y0 Z0\nM2\n").expect("G64 P- parses");
     assert!(matches!(&ok.path_mode, PathMode::Blend { t } if t.as_ref().unwrap().value == 0.05));
     let err = parse_str("G21 G90\nG61\nG0 X0 Y0 Z0\nG64\nM2\n").expect_err("mid-switch");
-    assert!(err.iter().all(|d| d.code == ErrorCode::UnsupportedSemantics), "{err:?}");
+    assert!(
+        err.iter()
+            .all(|d| d.code == ErrorCode::UnsupportedSemantics),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -580,7 +774,13 @@ fn unit_unknown_g_raw_syntax() {
     let src = "G21 G90 G94\nG11\nG0 X0 Y0 Z0\nM2\n";
     let adapter = LinuxCncAdapter::new();
     let p = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }));
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -589,21 +789,30 @@ fn unit_naked_coords_after_g80_err_invalid_input() {
     // модальная группа очищена → голые координаты = E_INVALID_INPUT.
     let src = "G21 G90 G94\nG0 X0 Y0 Z0\nG80\nX20.0000 Y20.0000\nM2\n";
     let err = parse_str(src).expect_err("E_INVALID_INPUT");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
 fn unit_dwell_negative_err() {
     let src = "G21 G90 G94\nG0 X0 Y0 Z0\nG4 P-1.0\nM2\n";
     let err = parse_str(src).expect_err("E_INVALID_INPUT");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
 fn unit_modal_group_conflict_err() {
     let src = "G21 G90 G94\nG0 G1 X5.0000\nM2\n";
     let err = parse_str(src).expect_err("E_INVALID_INPUT");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -611,14 +820,20 @@ fn unit_word_len_limit_exceeded() {
     let long = "1".repeat(33);
     let src = format!("G21 G90\nG0 X{long} Y0 Z0\nM2\n");
     let err = parse_str(&src).expect_err("E_LIMIT_EXCEEDED");
-    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::LimitExceeded),
+        "{err:?}"
+    );
 }
 
 #[test]
 fn unit_arc_without_center_err() {
     let src = "G21 G90 G94 G17\nG0 X0 Y0 Z0\nG2 X5.0000 Y5.0000 F100.0\nM2\n";
     let err = parse_str(src).expect_err("E_INVALID_INPUT");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -627,10 +842,20 @@ fn unit_arc_r_negative_major_sweep() {
     let src = "G21 G90 G94 G17\nG0 X0 Y10.0000 Z0\nG2 X0.0175 Y-9.9998 R-10.0 F100.0\nM2\n";
     let p = parse_str(src).expect("parses");
     match &p.ops[1] {
-        Op::Arc { center, sweep_deg, .. } => {
+        Op::Arc {
+            center, sweep_deg, ..
+        } => {
             // Зеркальная сторона перпендикуляра; sweep = 360 − 179.4975 ≈ 180.5025.
-            assert!(sweep_deg.value > 180.0, "negative R → major arc, got {}", sweep_deg.value);
-            assert!((center.x.value - 0.0526).abs() < 1e-3, "center.x = {}", center.x.value);
+            assert!(
+                sweep_deg.value > 180.0,
+                "negative R → major arc, got {}",
+                sweep_deg.value
+            );
+            assert!(
+                (center.x.value - 0.0526).abs() < 1e-3,
+                "center.x = {}",
+                center.x.value
+            );
         }
         other => panic!("op 1 must be Arc, got {other:?}"),
     }
@@ -645,14 +870,25 @@ fn unit_arc_r_negative_major_sweep() {
 fn unit_full_circle_center_form_no_axis_words() {
     // SPEC §6 v0.12 (CORPUS #08): явный G2 с I/J/K БЕЗ слов осей — end
     // наследует старт → полный круг, sweep = 360° (не zero-sweep drop).
-    let src = "G21 G90 G94 G17 G91.1\nG0 X10.0000 Y0.0000 Z0.0000\nG2 I-5.0000 J0.0000 F120.0\nM2\n";
+    let src =
+        "G21 G90 G94 G17 G91.1\nG0 X10.0000 Y0.0000 Z0.0000\nG2 I-5.0000 J0.0000 F120.0\nM2\n";
     let p = parse_str(src).expect("parses");
     assert_eq!(p.ops.len(), 3, "RAPID + ARC(360°) + PEND");
     match &p.ops[1] {
-        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, .. } => {
+        Op::Arc {
+            start: StartPoint::Known(s),
+            end,
+            center,
+            sweep_deg,
+            dir,
+            ..
+        } => {
             assert_eq!((s.x.value, s.y.value, s.z.value), (10.0, 0.0, 0.0));
             assert_eq!((end.x.value, end.y.value, end.z.value), (10.0, 0.0, 0.0));
-            assert_eq!((center.x.value, center.y.value, center.z.value), (5.0, 0.0, 0.0));
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (5.0, 0.0, 0.0)
+            );
             assert_eq!(sweep_deg.value, 360.0);
             assert_eq!(*dir, eid_core::ast::Dir::Cw);
         }
@@ -679,11 +915,25 @@ fn audit15_explicit_end_quantized_to_start_is_full_circle() {
     let p = a.parse(src, "unit13.ngc").expect("parses");
     assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
     match &p.ops[1] {
-        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, pitch, .. } => {
+        Op::Arc {
+            start: StartPoint::Known(s),
+            end,
+            center,
+            sweep_deg,
+            dir,
+            pitch,
+            ..
+        } => {
             assert_eq!((s.x.value, s.y.value, s.z.value), (0.0, 0.0, 0.0));
             assert_eq!((end.x.value, end.y.value, end.z.value), (0.0, 0.0, 0.0));
-            assert_eq!((center.x.value, center.y.value, center.z.value), (5.0, 0.0, 0.0));
-            assert_eq!(sweep_deg.value, 360.0, "полный круг — независимо от явного end");
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (5.0, 0.0, 0.0)
+            );
+            assert_eq!(
+                sweep_deg.value, 360.0,
+                "полный круг — независимо от явного end"
+            );
             assert_eq!(*dir, eid_core::ast::Dir::Cw);
             assert_eq!(pitch.value, 0.0);
         }
@@ -728,7 +978,10 @@ fn audit15_degenerate_center_start_inherited_end_dropped() {
     let p = a.parse(src, "deg2.ngc").expect("parses");
     assert_eq!(p.ops.len(), 2, "RAPID + PEND (дуга отброшена)");
     let notices = a.take_notices();
-    assert!(notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc), "{notices:?}");
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
+        "{notices:?}"
+    );
 }
 
 #[test]
@@ -743,7 +996,9 @@ fn unit_zero_sweep_helical_explicit_end_kept() {
     );
     let p = parse_str(src).expect("parses");
     match &p.ops[1] {
-        Op::Arc { sweep_deg, pitch, .. } => {
+        Op::Arc {
+            sweep_deg, pitch, ..
+        } => {
             assert_eq!(sweep_deg.value, 360.0);
             assert_eq!(pitch.value, 5.0);
         }
@@ -771,11 +1026,22 @@ fn unit_modal_distance_and_arcdist_independent() {
     let p = parse_str(src).expect("G91 + G91.1 сосуществуют без конфликта");
     assert_eq!(p.ops.len(), 4);
     match &p.ops[2] {
-        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, state, .. } => {
+        Op::Arc {
+            start: StartPoint::Known(s),
+            end,
+            center,
+            sweep_deg,
+            dir,
+            state,
+            ..
+        } => {
             // G91: end = base + (5,5) = (15,5); G91.1: center = start + (5,0).
             assert_eq!((s.x.value, s.y.value, s.z.value), (10.0, 0.0, 0.0));
             assert_eq!((end.x.value, end.y.value, end.z.value), (15.0, 5.0, 0.0));
-            assert_eq!((center.x.value, center.y.value, center.z.value), (15.0, 0.0, 0.0));
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (15.0, 0.0, 0.0)
+            );
             assert_eq!(sweep_deg.value, 90.0);
             assert_eq!(*dir, eid_core::ast::Dir::Cw);
             assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
@@ -793,12 +1059,21 @@ fn vector_33_wcs_define_multi_linking_and_feed() {
     assert!(matches!(&mine.ops[0], Op::WcsDefine { p: 1, .. }));
     assert!(matches!(&mine.ops[1], Op::WcsDefine { p: 2, .. }));
     match &mine.ops[4] {
-        Op::Rapid { start: StartPoint::Known(s), end, state, .. } => {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            state,
+            ..
+        } => {
             // start = prev_end + O_G54 − O_G55 = (10,0,5) + (1,2,3) − (4,5,6).
             assert_eq!((s.x.value, s.y.value, s.z.value), (7.0, -3.0, 2.0));
             assert_eq!((end.x.value, end.y.value, end.z.value), (12.0, -3.0, 2.0));
             assert_eq!(state.wcs, eid_core::ast::Wcs::G55);
-            assert_eq!(state.feed.as_ref().unwrap().value, 150.0, "SPEC §4: feed живёт через G0/WCS");
+            assert_eq!(
+                state.feed.as_ref().unwrap().value,
+                150.0,
+                "SPEC §4: feed живёт через G0/WCS"
+            );
         }
         other => panic!("op 4 must be Rapid, got {other:?}"),
     }
@@ -808,7 +1083,13 @@ fn vector_33_wcs_define_multi_linking_and_feed() {
     let golden = parse_golden("33_wcs_define_multi/golden.eid");
     let d = semantic_diff(&mine, &golden, &DiffConfig::default());
     assert!(
-        d.iter().all(|x| matches!(x, Divergence::StateField { index: 4, field: "feed" })),
+        d.iter().all(|x| matches!(
+            x,
+            Divergence::StateField {
+                index: 4,
+                field: "feed"
+            }
+        )),
         "#33: расхождения вне feed на op 4 — разбор неверен: {d:?}"
     );
 }
@@ -832,12 +1113,18 @@ fn unit_cycle_g81_minimal_unroll() {
     assert_eq!(p.ops.len(), 6, "Rapid + 4 производных + PEND");
     let snap = |i: usize| -> ([f64; 3], [f64; 3], Option<u32>) {
         match &p.ops[i] {
-            Op::Rapid { start: StartPoint::Known(s), end, sub, .. } => {
-                (to_f64(s), to_f64(end), *sub)
-            }
-            Op::Linear { start: StartPoint::Known(s), end, sub, .. } => {
-                (to_f64(s), to_f64(end), *sub)
-            }
+            Op::Rapid {
+                start: StartPoint::Known(s),
+                end,
+                sub,
+                ..
+            } => (to_f64(s), to_f64(end), *sub),
+            Op::Linear {
+                start: StartPoint::Known(s),
+                end,
+                sub,
+                ..
+            } => (to_f64(s), to_f64(end), *sub),
             other => panic!("op {i} не ход: {other:?}"),
         }
     };
@@ -849,8 +1136,17 @@ fn unit_cycle_g81_minimal_unroll() {
     assert_eq!((s, e, sub), ([10.0, 10.0, 5.0], [10.0, 10.0, 2.0], Some(2)));
     // 3. feed на дно Z=-5 (linear, feed 100).
     match &p.ops[3] {
-        Op::Linear { start: StartPoint::Known(s), end, state, sub, .. } => {
-            assert_eq!((to_f64(s), to_f64(end)), ([10.0, 10.0, 2.0], [10.0, 10.0, -5.0]));
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            state,
+            sub,
+            ..
+        } => {
+            assert_eq!(
+                (to_f64(s), to_f64(end)),
+                ([10.0, 10.0, 2.0], [10.0, 10.0, -5.0])
+            );
             assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
             assert_eq!(*sub, Some(3));
         }
@@ -858,7 +1154,10 @@ fn unit_cycle_g81_minimal_unroll() {
     }
     // 4. retract (G99) на R=2.
     let (s, e, sub) = snap(4);
-    assert_eq!((s, e, sub), ([10.0, 10.0, -5.0], [10.0, 10.0, 2.0], Some(4)));
+    assert_eq!(
+        (s, e, sub),
+        ([10.0, 10.0, -5.0], [10.0, 10.0, 2.0], Some(4))
+    );
     assert!(matches!(&p.ops[5], Op::ProgramEnd { .. }));
 }
 
@@ -905,7 +1204,13 @@ fn unit_cycle_l_repeat_g90_dedup_zero_moves() {
     assert!(matches!(&p.ops[5], Op::Linear { sub: Some(7), .. }));
     assert!(matches!(&p.ops[6], Op::Rapid { sub: Some(8), .. }));
     let notices = a.take_notices();
-    assert_eq!(notices.iter().filter(|n| n.kind == NoticeKind::ZeroLengthMotion).count(), 2);
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.kind == NoticeKind::ZeroLengthMotion)
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -940,7 +1245,10 @@ fn unit_cycle_first_motion_err_runtime_state() {
     // (пресетки-якоря не считаются — strict reading).
     let src = "G21 G90 G94 G17\nG99 G81 X1.0000 Y1.0000 Z-1.0000 R1.0000 F100.0\nM2\n";
     let err = parse_str(src).expect_err("§7.6");
-    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -955,7 +1263,10 @@ fn unit_cycle_after_unknown_position_err_runtime_state() {
         "M2\n",
     );
     let err = parse_str(src).expect_err("§7.6");
-    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -979,7 +1290,10 @@ fn unit_cycle_g82_without_p_err() {
         "M2\n",
     );
     let err = parse_str(src).expect_err("G82 требует P");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 // ===========================================================================
@@ -1009,13 +1323,19 @@ fn unit_cycle_g83_peck_order_full_retract() {
                 depths.push(to_f64(end)[2]);
                 let _ = sub;
             }
-            Op::Rapid { end, sub: Some(s), .. } if *s == 4 || *s == 7 || *s == 10 || *s == 13 => {
+            Op::Rapid {
+                end, sub: Some(s), ..
+            } if *s == 4 || *s == 7 || *s == 10 || *s == 13 => {
                 retract_after_last_feed = to_f64(end)[2];
             }
             _ => {}
         }
     }
-    assert_eq!(depths, vec![0.5, -1.0, -2.5, -4.0], "пеки вниз шагами Q (порядок §7.4)");
+    assert_eq!(
+        depths,
+        vec![0.5, -1.0, -2.5, -4.0],
+        "пеки вниз шагами Q (порядок §7.4)"
+    );
     assert_eq!(retract_after_last_feed, 2.0, "G99: финальный отвод на R");
 }
 
@@ -1053,7 +1373,11 @@ fn unit_cycle_g73_chipbreak_retract_q() {
     assert_eq!(depths, vec![0.0, -2.0, -4.0], "G73 пеки");
     // De-retract на Q над последней глубиной: 2.0 (над 0.0, clamp на R),
     // 0.0 (над −2.0); финальный отвод (G99) на R=2.0.
-    assert_eq!(ups, vec![2.0, 0.0, 2.0], "G73 de-retract + финальный отвод на R");
+    assert_eq!(
+        ups,
+        vec![2.0, 0.0, 2.0],
+        "G73 de-retract + финальный отвод на R"
+    );
 }
 
 #[test]
@@ -1068,7 +1392,11 @@ fn unit_cycle_g85_bore_feed_out() {
     );
     let p = parse_str(src).expect("parses");
     match &p.ops[4] {
-        Op::Linear { start: StartPoint::Known(s), end, .. } => {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
             assert_eq!(to_f64(s)[2], -3.0, "feed-out со дна");
             assert_eq!(to_f64(end)[2], 2.0, "G99: feed-out до R");
         }
@@ -1100,7 +1428,10 @@ fn unit_cycle_peck_guard_limit_exceeded() {
         "M2\n",
     );
     let err = parse_str(src).expect_err("пек-лимит");
-    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::LimitExceeded),
+        "{err:?}"
+    );
 }
 
 // ===========================================================================
@@ -1124,9 +1455,15 @@ fn unit_cycle_g86_spindle_off_restart() {
     // subs: 1 traverse, 2 rapid-R, 3 feed, 4 dwell, 5 rapid-out (spindle=Off).
     assert!(matches!(&p.ops[4], Op::Dwell { seconds, .. } if seconds.value == 0.3));
     match &p.ops[5] {
-        Op::Rapid { end, state, sub, .. } => {
+        Op::Rapid {
+            end, state, sub, ..
+        } => {
             assert_eq!(to_f64(end)[2], 2.0, "rapid out на R");
-            assert_eq!(state.spindle, eid_core::ast::Spindle::Off, "шпиндель off на отводе");
+            assert_eq!(
+                state.spindle,
+                eid_core::ast::Spindle::Off,
+                "шпиндель off на отводе"
+            );
             assert_eq!(*sub, Some(5));
         }
         other => panic!("op 5 must be Rapid: {other:?}"),
@@ -1134,7 +1471,10 @@ fn unit_cycle_g86_spindle_off_restart() {
     // Рестарт: следующий ход несёт прежнее направление и обороты.
     match &p.ops[6] {
         Op::Linear { state, .. } => {
-            assert_eq!(state.spindle, eid_core::ast::Spindle::Cw(eid_core::ast::Num::new("8000".into(), 8000.0)));
+            assert_eq!(
+                state.spindle,
+                eid_core::ast::Spindle::Cw(eid_core::ast::Num::new("8000".into(), 8000.0))
+            );
             assert_eq!(state.feed.as_ref().unwrap().value, 100.0);
         }
         other => panic!("op 6 must be Linear: {other:?}"),
@@ -1155,20 +1495,30 @@ fn unit_cycle_g98_vs_g99_retract_target() {
     );
     let p = parse_str(src).expect("parses");
     // Цикл 1 (G99): retract → R=2.
-    assert_eq!(to_f64(match &p.ops[4] {
-        Op::Rapid { end, .. } => end,
-        other => panic!("op 4: {other:?}"),
-    })[2], 2.0);
+    assert_eq!(
+        to_f64(match &p.ops[4] {
+            Op::Rapid { end, .. } => end,
+            other => panic!("op 4: {other:?}"),
+        })[2],
+        2.0
+    );
     // G0 Z6.
-    assert_eq!(to_f64(match &p.ops[5] {
-        Op::Rapid { end, .. } => end,
-        other => panic!("op 5: {other:?}"),
-    })[2], 6.0);
+    assert_eq!(
+        to_f64(match &p.ops[5] {
+            Op::Rapid { end, .. } => end,
+            other => panic!("op 5: {other:?}"),
+        })[2],
+        6.0
+    );
     // Цикл 2 (G98): retract → initial Z = 6 (не R=4).
-    assert_eq!(to_f64(match &p.ops[9] {
-        Op::Rapid { end, .. } => end,
-        other => panic!("op 9: {other:?}"),
-    })[2], 6.0, "G98: отвод на initial Z (6), не на R (4)");
+    assert_eq!(
+        to_f64(match &p.ops[9] {
+            Op::Rapid { end, .. } => end,
+            other => panic!("op 9: {other:?}"),
+        })[2],
+        6.0,
+        "G98: отвод на initial Z (6), не на R (4)"
+    );
 }
 
 #[test]
@@ -1179,12 +1529,18 @@ fn unit_unknown_dollar_line_raw_syntax() {
     let src = "G21 G90 G94\n$$\nG0 X1.0000 Y1.0000 Z1.0000\nM2\n";
     let a = LinuxCncAdapter::new();
     let p = a.parse(src, "dollar.ngc").expect("Ok (line-level)");
-    assert!(matches!(
-        &p.ops[0],
-        Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
-            if payload_hex.as_str() == "24240A"
-    ), "payload = `$$\n` = 24240A");
-    assert!(matches!(&p.ops[1], Op::Rapid { .. }), "разбор продолжается после raw");
+    assert!(
+        matches!(
+            &p.ops[0],
+            Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
+                if payload_hex.as_str() == "24240A"
+        ),
+        "payload = `$$\n` = 24240A"
+    );
+    assert!(
+        matches!(&p.ops[1], Op::Rapid { .. }),
+        "разбор продолжается после raw"
+    );
     let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
 }
@@ -1203,10 +1559,22 @@ fn unit_raw_crlf_payload_terminator() {
         other => panic!("op 0 must be Raw: {other:?}"),
     }
     let text = a.emit(&p).expect("emit");
-    assert!(text.contains("$$\r\n"), "CRLF-терминатор сохранён дословно:\n{text:?}");
-    let p2 = LinuxCncAdapter::new().parse(&text, "rt.ngc").expect("reparse");
+    assert!(
+        text.contains("$$\r\n"),
+        "CRLF-терминатор сохранён дословно:\n{text:?}"
+    );
+    let p2 = LinuxCncAdapter::new()
+        .parse(&text, "rt.ngc")
+        .expect("reparse");
     match (&p.ops[0], &p2.ops[0]) {
-        (Op::Raw { payload_hex: h1, .. }, Op::Raw { payload_hex: h2, .. }) => {
+        (
+            Op::Raw {
+                payload_hex: h1, ..
+            },
+            Op::Raw {
+                payload_hex: h2, ..
+            },
+        ) => {
             assert_eq!(h1, h2, "R1-text-класс: payload байт-в-байт");
         }
         _ => panic!("оба должны начинаться с Raw"),
@@ -1232,12 +1600,18 @@ fn spec_cov_lcnc_nurbs_p_words_raw_semantics() {
     );
     let a = LinuxCncAdapter::new();
     let p = a.parse(src, "nurbs.ngc").expect("Ok (line-level)");
-    assert!(matches!(
-        &p.ops[1],
-        Op::Raw { code: ErrorCode::UnsupportedSemantics, payload_hex, .. }
-            if payload_hex.starts_with("4735 2E32".replace(' ', "").as_str())
-    ), "payload = `G5.2\n`-префикс (G5.2)");
-    assert!(matches!(&p.ops[2], Op::Linear { .. }), "разбор продолжается");
+    assert!(
+        matches!(
+            &p.ops[1],
+            Op::Raw { code: ErrorCode::UnsupportedSemantics, payload_hex, .. }
+                if payload_hex.starts_with("4735 2E32".replace(' ', "").as_str())
+        ),
+        "payload = `G5.2\n`-префикс (G5.2)"
+    );
+    assert!(
+        matches!(&p.ops[2], Op::Linear { .. }),
+        "разбор продолжается"
+    );
 }
 
 #[test]
@@ -1255,7 +1629,13 @@ fn spec_cov_lcnc_dollar_mid_word_raw_whole_line() {
     // Граница: `$` в середине слова — вся строка line-local raw.
     let src = "G21 G90 G94\nG0 X1$0\nM2\n";
     let p = parse_str(src).expect("Ok (line-level)");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }));
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
     assert_eq!(p.ops.len(), 2); // Raw + PEND
 }
 
@@ -1278,15 +1658,31 @@ fn spec_cov_lcnc_arc_modes_mixed_in_one_program() {
     let p = parse_str(src).expect("parses");
     assert_eq!(p.ops.len(), 4); // Rapid + Arc + Arc + PEND
     match &p.ops[1] {
-        Op::Arc { center, sweep_deg, dir, .. } => {
-            assert_eq!((center.x.value, center.y.value), (0.0, 0.0), "G90.1 абсолютный центр");
+        Op::Arc {
+            center,
+            sweep_deg,
+            dir,
+            ..
+        } => {
+            assert_eq!(
+                (center.x.value, center.y.value),
+                (0.0, 0.0),
+                "G90.1 абсолютный центр"
+            );
             assert_eq!(sweep_deg.value, 90.0);
             assert_eq!(*dir, eid_core::ast::Dir::Ccw);
         }
         other => panic!("op 1: {other:?}"),
     }
     match &p.ops[2] {
-        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, .. } => {
+        Op::Arc {
+            start: StartPoint::Known(s),
+            end,
+            center,
+            sweep_deg,
+            dir,
+            ..
+        } => {
             // G91.1: center = start(0,5) + (0,-5) = (0,0); end (5,0) —
             // cw от 90° к 0° = 90° (координаты G90-абсолютные).
             assert_eq!((s.x.value, s.y.value), (0.0, 5.0));
@@ -1321,8 +1717,16 @@ fn spec_cov_lcnc_arc_modes_all_planes() {
     // совпадают в обоих режимах → идентичный AST (ABSORB).
     let a = parse_str(g18_abs).expect("G18 G90.1");
     match &a.ops[1] {
-        Op::Arc { center, sweep_deg, dir, .. } => {
-            assert_eq!((center.x.value, center.y.value, center.z.value), (0.0, 0.0, 5.0));
+        Op::Arc {
+            center,
+            sweep_deg,
+            dir,
+            ..
+        } => {
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (0.0, 0.0, 5.0)
+            );
             assert_eq!(sweep_deg.value, 90.0);
             assert_eq!(*dir, eid_core::ast::Dir::Ccw);
         }
@@ -1331,7 +1735,10 @@ fn spec_cov_lcnc_arc_modes_all_planes() {
     let b = parse_str(g18_inc).expect("G18 G91.1");
     match &b.ops[1] {
         Op::Arc { center, .. } => {
-            assert_eq!((center.x.value, center.y.value, center.z.value), (0.0, 0.0, 5.0));
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (0.0, 0.0, 5.0)
+            );
         }
         other => panic!("op 1: {other:?}"),
     }
@@ -1346,12 +1753,24 @@ fn spec_cov_lcnc_arc_modes_all_planes() {
     );
     let c = parse_str(g19_abs).expect("G19 parses");
     match &c.ops[1] {
-        Op::Arc { center, normal, sweep_deg, dir, .. } => {
+        Op::Arc {
+            center,
+            normal,
+            sweep_deg,
+            dir,
+            ..
+        } => {
             // G19: center.x = start.x (normal), center.y = J0, center.z = K5
             // → center (0,0,5); ρ = 5; G2 cw из (0,0) в (5,5) вокруг (0,5):
             // 270° (длинный путь — легален, sweep ∈ (0°, 360°]).
-            assert_eq!((center.x.value, center.y.value, center.z.value), (0.0, 0.0, 5.0));
-            assert_eq!((normal.x.value, normal.y.value, normal.z.value), (1.0, 0.0, 0.0));
+            assert_eq!(
+                (center.x.value, center.y.value, center.z.value),
+                (0.0, 0.0, 5.0)
+            );
+            assert_eq!(
+                (normal.x.value, normal.y.value, normal.z.value),
+                (1.0, 0.0, 0.0)
+            );
             assert_eq!(sweep_deg.value, 270.0);
             assert_eq!(*dir, eid_core::ast::Dir::Cw);
         }
@@ -1379,14 +1798,18 @@ fn spec_cov_lcnc_q11_machine_frame_computable_and_chain() {
     // Первый G53-ход (2,3,4)→(2,3,4) — нулевой в machine-фрейме →
     // отбрасывается с notice (kill-поверхность знаковых мутантов подхода).
     // ops: [WcsDefine, G53-rapid(zero→drop), G53-rapid(цепочка), wcs-возврат, PEND].
-    assert!(matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
         if to_f64(s) == [2.0, 3.0, 4.0] && to_f64(end) == [6.0, 3.0, 4.0]),
-        "machine→machine: цепочка exact (§2 v0.10)");
+        "machine→machine: цепочка exact (§2 v0.10)"
+    );
     // (d): возврат в WCS — reading = M − O_P1 = (6,3,4) − (1,2,3) = (5,1,1).
     // Ненулевой origin убивает знаковые/осевые мутанты в reading = M − O.
-    assert!(matches!(&p.ops[3], Op::Rapid { start: StartPoint::Known(s), end, .. }
+    assert!(
+        matches!(&p.ops[3], Op::Rapid { start: StartPoint::Known(s), end, .. }
         if to_f64(s) == [5.0, 1.0, 1.0] && to_f64(end) == [8.0, 4.0, 4.0]),
-        "возврат в WCS: reading = M − O (§2 (d), ненулевой origin)");
+        "возврат в WCS: reading = M − O (§2 (d), ненулевой origin)"
+    );
 }
 
 #[test]
@@ -1402,10 +1825,8 @@ fn spec_cov_lcnc_q11_machine_arc_first_op_err() {
     );
     let err = parse_str(src).expect_err("arc требует числового старта / G53 требует G0/G1");
     assert!(
-        err.iter().all(|d| matches!(
-            d.code,
-            ErrorCode::RuntimeState | ErrorCode::InvalidInput
-        )),
+        err.iter()
+            .all(|d| matches!(d.code, ErrorCode::RuntimeState | ErrorCode::InvalidInput)),
         "{err:?}"
     );
 }
@@ -1423,7 +1844,10 @@ fn spec_cov_lcnc_q11_arc_after_unknown_position_runtime() {
         "M2\n",
     ))
     .expect_err("§2 Q11: ARC на неизвестном старте");
-    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
 }
 
 // ===========================================================================
@@ -1440,15 +1864,27 @@ fn spec_cov_lcnc_stage_attribution() {
 
     // Parse: line-level Raw (O-code) — диагностика stage=Parse, разбор идёт.
     let a = LinuxCncAdapter::new();
-    let p = a.parse("G21 G90 G94
+    let p = a
+        .parse(
+            "G21 G90 G94
 O100
 G0 X1.0000 Y1.0000 Z1.0000
 M2
-", "o.ngc")
+",
+            "o.ngc",
+        )
         .expect("O-code: Ok + Raw");
-    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }));
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
     let d1 = a.take_diagnostics();
-    assert!(d1.iter().all(|d| d.stage == Stage::Parse && d.code == ErrorCode::UnsupportedSyntax));
+    assert!(d1
+        .iter()
+        .all(|d| d.stage == Stage::Parse && d.code == ErrorCode::UnsupportedSyntax));
 
     // Parse: структурный отказ кадра (G53 без G0/G1) — stage=Parse.
     let err = parse_str("G21 G90 G94\nG53 G2 X5.0000 Y5.0000 I5.0000 J0.0000 F100.0\nM2\n")
@@ -1456,8 +1892,9 @@ M2
     assert!(err.iter().all(|d| d.stage == Stage::Parse));
 
     // Verify: linear без feed (инвариант §3) — stage=Verify.
-    let err = parse_str("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X2.0000 Y1.0000 Z1.0000\nM2\n")
-        .expect_err("linear без F");
+    let err =
+        parse_str("G21 G90 G94\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X2.0000 Y1.0000 Z1.0000\nM2\n")
+            .expect_err("linear без F");
     assert!(err.iter().all(|d| d.stage == Stage::Verify));
 
     // Emit: не-каноническая нормаль дуги — stage=Emit (таблица легальности).
@@ -1469,7 +1906,9 @@ M2
             normal.y = eid_core::ast::Num::new("0.8000".into(), 0.8);
         }
     }
-    let err = LinuxCncAdapter::new().emit(&p).expect_err("не-осевой normal");
+    let err = LinuxCncAdapter::new()
+        .emit(&p)
+        .expect_err("не-осевой normal");
     // eid-core validate (Canonicalize/Verify у ядра — нас интересует факт
     // отказа до прохода эмиссии) или таблица легальности (Emit).
     for d in &err {
@@ -1486,8 +1925,12 @@ M2
 // ===========================================================================
 
 fn assert_meta_invariant(base_src: &str, variant_src: &str, tag: &str) {
-    let a = LinuxCncAdapter::new().parse(base_src, tag).expect("base parses");
-    let b = LinuxCncAdapter::new().parse(variant_src, tag).expect("variant parses");
+    let a = LinuxCncAdapter::new()
+        .parse(base_src, tag)
+        .expect("base parses");
+    let b = LinuxCncAdapter::new()
+        .parse(variant_src, tag)
+        .expect("variant parses");
     let d = eid_harness::diff::semantic_diff(&a, &b, &DiffConfig::default());
     assert!(d.is_empty(), "{tag}: semantic divergences: {d:?}");
 }
@@ -1520,14 +1963,19 @@ fn metamorphic_comment_invariance() {
         "G1 X10.0000 F150.0 ; проход 1 X77 Y77\n",
         "M2\n",
     );
-    assert_meta_invariant(greedy, no_comments, "comment: жадное содержимое не протекает");
+    assert_meta_invariant(
+        greedy,
+        no_comments,
+        "comment: жадное содержимое не протекает",
+    );
 }
 
 #[test]
 fn metamorphic_whitespace_invariance() {
     // Кратность пробелов/табов между словами не меняет токенизацию.
     let base = "G21 G90 G94 G17 G91.1\nG0 X1.0000 Y2.0000 Z3.0000\nG1 X-4.0000 F100.0\nM2\n";
-    let doubled = "G21  G90  G94  G17  G91.1\nG0   X1.0000   Y2.0000   Z3.0000\nG1\tX-4.0000  F100.0\nM2\n";
+    let doubled =
+        "G21  G90  G94  G17  G91.1\nG0   X1.0000   Y2.0000   Z3.0000\nG1\tX-4.0000  F100.0\nM2\n";
     assert_meta_invariant(base, doubled, "whitespace: кратность/табы");
     let tight = "G21G90G94G17G91.1\nG0X1.0000Y2.0000Z3.0000\nG1X-4.0000F100.0\nM2\n";
     assert_meta_invariant(base, tight, "whitespace: без пробелов вовсе (RS274-стиль)");
@@ -1537,7 +1985,8 @@ fn metamorphic_whitespace_invariance() {
 fn metamorphic_n_word_invariance() {
     // N-слова — IGNORED_SAFE: вставка/удаление N-слов не меняет AST.
     let base = "G21 G90 G94 G17 G91.1\nM3 S8000\nN10 G0 X1.0000 Y1.0000 Z1.0000\nN20 G1 X5.0000 F100.0\nM2\n";
-    let no_n = "G21 G90 G94 G17 G91.1\nM3 S8000\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X5.0000 F100.0\nM2\n";
+    let no_n =
+        "G21 G90 G94 G17 G91.1\nM3 S8000\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X5.0000 F100.0\nM2\n";
     assert_meta_invariant(base, no_n, "n-word: без N ≡ с N");
     let other_n = "N1 G21 G90 G94 G17 G91.1\nM3 S8000\nN2 G0 X1.0000 Y1.0000 Z1.0000\nG1 N99 X5.0000 F100.0\nM2\n";
     assert_meta_invariant(other_n, no_n, "n-word: другие номера ≡ без N");
@@ -1561,12 +2010,20 @@ fn mutation_g93_helical_arc_feed_formula() {
     );
     let p = parse_str(src).expect("parses");
     match &p.ops[1] {
-        Op::Arc { state, sweep_deg, pitch, .. } => {
+        Op::Arc {
+            state,
+            sweep_deg,
+            pitch,
+            ..
+        } => {
             assert_eq!(sweep_deg.value, 90.0);
             assert_eq!(pitch.value, 2.0);
             let f = state.feed.as_ref().unwrap().value;
             // π/2·5 = 7.853982; +pitch² → sqrt(65.685019) = 8.104754; ×F2 = 16.209508
-            assert!((f - 16.2095).abs() < 0.001, "G93-дуга: feed = len·F = 16.2095, got {f}");
+            assert!(
+                (f - 16.2095).abs() < 0.001,
+                "G93-дуга: feed = len·F = 16.2095, got {f}"
+            );
             // Мутант «pitch выброшен» дал бы 15.708 — убит строгой границей:
             assert!(f > 16.0, "pitch вносит вклад (мутант «без pitch» убит)");
         }
@@ -1590,14 +2047,23 @@ fn mutation_approach_clearance_inch() {
     // (= последняя глубина -0.4 + clearance 0.05 inch).
     let mut approach_z = None;
     for o in &p.ops[2..] {
-        if let Op::Rapid { start: StartPoint::Known(s), end, .. } = o {
+        if let Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } = o
+        {
             let (sz, ez) = (to_f64(s)[2], to_f64(end)[2]);
             if sz.abs() < 1e-9 && (ez + 0.35).abs() < 1e-9 {
                 approach_z = Some(ez); // подход вниз после первого пека
             }
         }
     }
-    assert_eq!(approach_z, Some(-0.35), "approach(In) = 0.05 над последней глубиной");
+    assert_eq!(
+        approach_z,
+        Some(-0.35),
+        "approach(In) = 0.05 над последней глубиной"
+    );
 }
 
 #[test]
@@ -1611,7 +2077,10 @@ fn mutation_unroll_est_boundary_pass_and_fail() {
         "G99 G83 X1.0000 Y1.0000 Z-3332.0000 R0.0000 Q1.0000 F100.0\n",
         "M2\n",
     );
-    assert!(parse_str(ok_src).is_ok(), "est = 9999 ≤ 10000 — на границе изнутри");
+    assert!(
+        parse_str(ok_src).is_ok(),
+        "est = 9999 ≤ 10000 — на границе изнутри"
+    );
     let bad_src = concat!(
         "G21 G90 G94 G17\n",
         "G0 X0.0000 Y0.0000 Z0.0000\n",
@@ -1619,7 +2088,10 @@ fn mutation_unroll_est_boundary_pass_and_fail() {
         "M2\n",
     );
     let err = parse_str(bad_src).expect_err("est = 10002 > 10000");
-    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::LimitExceeded),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -1631,7 +2103,9 @@ fn mutation_l_word_boundary_pass_and_fail() {
         "G99 G81 X1.0000 Y1.0000 Z-1.0000 R0.0000 F100.0 L10000\n",
         "M2\n",
     );
-    let p = LinuxCncAdapter::new().parse(ok, "l_ok.ngc").expect("L=10000 — ровно лимит");
+    let p = LinuxCncAdapter::new()
+        .parse(ok, "l_ok.ngc")
+        .expect("L=10000 — ровно лимит");
     assert!(p.ops.len() >= 3);
     let over = concat!(
         "G21 G90 G94 G17\n",
@@ -1640,7 +2114,10 @@ fn mutation_l_word_boundary_pass_and_fail() {
         "M2\n",
     );
     let err = parse_str(over).expect_err("L=10001 > 10000");
-    assert!(err.iter().all(|d| d.code == ErrorCode::LimitExceeded), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::LimitExceeded),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -1649,8 +2126,16 @@ fn spec_cov_lcnc_partial_end_first_move_inherits() {
     // отсутствующие оси наследуют дефолт-0. G0 X10 → end (10,0,0).
     let p = parse_str("G21 G90 G94 G17\nG0 X10.0000\nM2\n").expect("parses");
     match &p.ops[0] {
-        Op::Rapid { start: StartPoint::Unknown, end, .. } => {
-            assert_eq!(to_f64(end), [10.0, 0.0, 0.0], "частичный end наследует дефолт-0");
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end,
+            ..
+        } => {
+            assert_eq!(
+                to_f64(end),
+                [10.0, 0.0, 0.0],
+                "частичный end наследует дефолт-0"
+            );
         }
         other => panic!("op 0: {other:?}"),
     }
@@ -1682,7 +2167,10 @@ fn audit33_g91_absorbed_on_raw_line_incremental_continues() {
         _ => None,
     });
     let (unknown0, end0) = rapids.next().expect("rapid #0");
-    assert!(unknown0 && end0 == [5.0, 5.0, 2.0], "первый rapid: {end0:?}");
+    assert!(
+        unknown0 && end0 == [5.0, 5.0, 2.0],
+        "первый rapid: {end0:?}"
+    );
     let (_, end1) = rapids.next().expect("rapid после RAW-строки");
     assert_eq!(
         end1,
@@ -1697,13 +2185,13 @@ fn audit33_units_absorbed_on_raw_line_g20_g43() {
     // `G20 G43 H2 X5.` — G43 → RAW, но G20 абсорбирован: units = inch,
     // следующая строка читается в inch (до фикса units терялись → mm).
     let adapter = LinuxCncAdapter::new();
-    let src = concat!(
-        "G20 G43 H2 X5.\n",
-        "G1 X1.0 F10.0\n",
-        "M2\n",
-    );
+    let src = concat!("G20 G43 H2 X5.\n", "G1 X1.0 F10.0\n", "M2\n",);
     let p = adapter.parse(src, "a33_units.ngc").expect("parses Ok");
-    assert_eq!(p.units, eid_core::ast::Units::In, "G20 абсорбирован с RAW-строки");
+    assert_eq!(
+        p.units,
+        eid_core::ast::Units::In,
+        "G20 абсорбирован с RAW-строки"
+    );
     assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
 }
 
@@ -1718,11 +2206,19 @@ fn audit33_feed_spindle_absorbed_on_raw_line() {
         "M2\n",
     );
     let p = parse_str(src).expect("parses Ok");
-    let lin = p.ops.iter().find_map(|o| match o {
-        Op::Linear { state, .. } => Some(state.clone()),
-        _ => None,
-    }).expect("linear op");
-    assert_eq!(lin.feed.as_ref().map(|f| f.value), Some(240.0), "F240 абсорбирован");
+    let lin = p
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Linear { state, .. } => Some(state.clone()),
+            _ => None,
+        })
+        .expect("linear op");
+    assert_eq!(
+        lin.feed.as_ref().map(|f| f.value),
+        Some(240.0),
+        "F240 абсорбирован"
+    );
     assert!(
         matches!(&lin.spindle, eid_core::ast::Spindle::Cw(n) if n.value == 6000.0),
         "M3 S6000 абсорбирован: {lin:?}"
@@ -1764,11 +2260,23 @@ fn audit33_g92_preset_absorbed_on_raw_line() {
         "M2\n",
     );
     let p = parse_str(src).expect("parses Ok");
-    let pr = p.frame_preset.as_ref().expect("G92 абсорбирован: пресетка задана");
+    let pr = p
+        .frame_preset
+        .as_ref()
+        .expect("G92 абсорбирован: пресетка задана");
     assert_eq!(to_f64(&pr.values), [0.0, 0.0, 5.0]);
     assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
-    match &p.ops.iter().find(|o| matches!(o, Op::Rapid { .. })).expect("rapid") {
-        Op::Rapid { start: StartPoint::Known(s), end, .. } => {
+    match &p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Rapid { .. }))
+        .expect("rapid")
+    {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
             assert_eq!(to_f64(s), [0.0, 0.0, 5.0], "start = якорь пресетки");
             assert_eq!(to_f64(end), [1.0, 1.0, 6.0]);
         }
@@ -1781,14 +2289,12 @@ fn audit33_g10_l2_absorbed_on_raw_line_emits_wcs_define() {
     // G10 L2 на RAW-строке: состояние origin абсорбировано + WcsDefine-оп
     // эмитится (ветка raw попадает только на motion/ops-построение), строка
     // дополнительно сохранена RAW (fidelity байт).
-    let src = concat!(
-        "G21 G90 G17\n",
-        "G10 L2 P2 X1.0 Y2.0 Z3.0 G28\n",
-        "M2\n",
-    );
+    let src = concat!("G21 G90 G17\n", "G10 L2 P2 X1.0 Y2.0 Z3.0 G28\n", "M2\n",);
     let p = parse_str(src).expect("parses Ok");
     assert!(
-        p.ops.iter().any(|o| matches!(o, Op::WcsDefine { p: 2, .. })),
+        p.ops
+            .iter()
+            .any(|o| matches!(o, Op::WcsDefine { p: 2, .. })),
         "WcsDefine(p=2) эмитится с RAW-строки"
     );
     assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
@@ -1807,13 +2313,19 @@ fn audit29_t_word_out_of_range_is_err_not_silent_t0() {
         err.iter().all(|d| d.code == ErrorCode::InvalidInput),
         "{err:?}"
     );
-    assert!(err.iter().any(|d| d.message.contains("out of range")), "{err:?}");
+    assert!(
+        err.iter().any(|d| d.message.contains("out of range")),
+        "{err:?}"
+    );
     // Граница домена: T4294967295 — легален (уходит в предвыбор/Raw, но не T0).
     let a = LinuxCncAdapter::new();
     let p = a
         .parse("G21 G90\nT4294967295\nM2\n", "t_max.ngc")
         .expect("T = u32::MAX легален");
-    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })), "одиночное T — Raw");
+    assert!(
+        p.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+        "одиночное T — Raw"
+    );
 }
 
 #[test]
@@ -1826,8 +2338,14 @@ fn audit29_l_word_out_of_range_is_err_not_silent_l0() {
         "M2\n",
     ))
     .expect_err("L > u32::MAX");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
-    assert!(err.iter().any(|d| d.message.contains("out of range")), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(
+        err.iter().any(|d| d.message.contains("out of range")),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -1844,7 +2362,10 @@ fn audit30_g10_p_fractional_is_err_not_silent_p1() {
         );
     }
     let err = parse_str("G21 G90 G17\nG10 L20 P1.9 X1.0 Y2.0 Z3.0\nM2\n").expect_err("L20 P1.9");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -1852,9 +2373,15 @@ fn audit30_g10_p_zero_and_ten_out_of_domain() {
     // P0 и P10 — вне домена 1..9 (D7): E_INVALID_INPUT (раньше P0 давал
     // p=0 → доменная ошибка и так; теперь единая pre-cast проверка).
     let err = parse_str("G21 G90 G17\nG10 L2 P0 X1.0 Y2.0 Z3.0\nM2\n").expect_err("P0");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
     let err = parse_str("G21 G90 G17\nG10 L2 P10 X1.0 Y2.0 Z3.0\nM2\n").expect_err("P10");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
     // Легальная граница: P1 и P9, в т.ч. verbatim-форма P1.0000 (fract == 0).
     assert!(parse_str("G21 G90 G17\nG10 L2 P1 X1.0 Y2.0 Z3.0\nM2\n").is_ok());
     assert!(parse_str("G21 G90 G17\nG10 L2 P9 X1.0 Y2.0 Z3.0\nM2\n").is_ok());
@@ -1878,21 +2405,33 @@ fn audit18_space_between_letter_and_number_accepted() {
     ))
     .expect("пробел между буквой и числом — легален (rs274-симметрия)");
     // rapid end = (10.5, 20, 0); linear end = (5, 8, 0)
-    let ends: Vec<[f64; 3]> = p.ops.iter().filter_map(|o| match o {
-        Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
-        _ => None,
-    }).collect();
+    let ends: Vec<[f64; 3]> = p
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(ends, vec![[10.5, 20.0, 0.0], [5.0, 8.0, 0.0]], "{ends:?}");
     // множественные пробелы и таб — тоже
-    let p = parse_str("G21 G90\nG0 X  10.0\nG1 Y\t3.0 F10.0\nM2\n").expect("tabs/multiple spaces ok");
-    let ends: Vec<[f64; 3]> = p.ops.iter().filter_map(|o| match o {
-        Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
-        _ => None,
-    }).collect();
+    let p =
+        parse_str("G21 G90\nG0 X  10.0\nG1 Y\t3.0 F10.0\nM2\n").expect("tabs/multiple spaces ok");
+    let ends: Vec<[f64; 3]> = p
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(ends, vec![[10.0, 0.0, 0.0], [10.0, 3.0, 0.0]]);
     // буква без числа ПОСЛЕ пропуска пробела — по-прежнему отказ
     let err = parse_str("G21 G90\nG0 X Y20\nM2\n").expect_err("X без числа (даже с пробелом)");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -1902,7 +2441,10 @@ fn audit17_nested_comment_diagnostic_mentions_rs274() {
     // причину (аудит #17 — поведение не меняется).
     let err = parse_str("G21 G90\nG1 (outer (inner) more) X10.0\nM2\n")
         .expect_err("вложенный комментарий — лексический отказ");
-    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
     assert!(
         err.iter().any(|d| d.message.contains("вложенные скобки")
             && d.message.contains("Nested comment found")),
@@ -1924,13 +2466,21 @@ fn audit17_nested_comment_diagnostic_mentions_rs274() {
 fn audit14_word_num_single_final_rounding_from_text() {
     use eid_linuxcnc::lexer::word_num;
     // .5-границы: 5-й знак ≥ 5 → вверх по ТЕКСТУ, без f64-шума парса.
-    assert_eq!(word_num("1.23455"), Some(1.2346), "старая формула давала 1.2345 (двойное округление)");
+    assert_eq!(
+        word_num("1.23455"),
+        Some(1.2346),
+        "старая формула давала 1.2345 (двойное округление)"
+    );
     assert_eq!(word_num("0.00005"), Some(0.0001));
     assert_eq!(word_num("1.99995"), Some(2.0), "перенос в целую часть");
     assert_eq!(word_num("-1.23455"), Some(-1.2346), "half AWAY from zero");
     // 5-й знак < 5 → усечение (без округления вверх).
     assert_eq!(word_num("1.23454"), Some(1.2345));
-    assert_eq!(word_num("0.00004"), Some(0.0), "CORPUS #13 — квантование к старту");
+    assert_eq!(
+        word_num("0.00004"),
+        Some(0.0),
+        "CORPUS #13 — квантование к старту"
+    );
     // ≤ 4 дробных знаков — значение текста без изменений.
     assert_eq!(word_num("10."), Some(10.0));
     assert_eq!(word_num("+5"), Some(5.0));
@@ -1949,10 +2499,26 @@ fn audit14_word_num_fmt_num_roundtrip_invariant() {
     // Инвариант (аудит #14): word_num(s) — неподвижная точка fmt_num:
     // word_num(s) == parse(fmt_num(word_num(s))) на .5-границах.
     use eid_linuxcnc::lexer::word_num;
-    for s in ["1.23455", "0.00005", "2.00005", "-1.23455", "9.99995", "1.23454", "123.45675", "0.00015"] {
+    for s in [
+        "1.23455",
+        "0.00005",
+        "2.00005",
+        "-1.23455",
+        "9.99995",
+        "1.23454",
+        "123.45675",
+        "0.00015",
+    ] {
         let v = word_num(s).expect("parses");
-        let rt: f64 = eid_core::emitter::fmt_num(v).parse().expect("fmt_num parses");
-        assert_eq!(v, rt, "инвариант сломан на {s}: {v} vs fmt_num {}", eid_core::emitter::fmt_num(v));
+        let rt: f64 = eid_core::emitter::fmt_num(v)
+            .parse()
+            .expect("fmt_num parses");
+        assert_eq!(
+            v,
+            rt,
+            "инвариант сломан на {s}: {v} vs fmt_num {}",
+            eid_core::emitter::fmt_num(v)
+        );
     }
 }
 
@@ -1975,25 +2541,45 @@ fn audit19_g55_g53_machine_frame_keeps_wcs_state() {
         "M2\n",
     );
     let p = parse_str(src).expect("parses");
-    let motions: Vec<(&eid_core::ast::Frame, eid_core::ast::Wcs, bool, [f64; 3])> =
-        p.ops.iter().filter_map(|o| match o {
-            Op::Rapid { start, end, state, .. } => Some((
+    let motions: Vec<(&eid_core::ast::Frame, eid_core::ast::Wcs, bool, [f64; 3])> = p
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Rapid {
+                start, end, state, ..
+            } => Some((
                 &state.frame,
                 state.wcs,
                 *start == StartPoint::Unknown,
                 to_f64(end),
             )),
             _ => None,
-        }).collect();
+        })
+        .collect();
     assert_eq!(motions.len(), 2, "{motions:?}");
     // Ход 1: machine-frame, wcs = G55 (p=5), end (0,0,0).
-    assert_eq!(*motions[0].0, eid_core::ast::Frame::Machine, "G53 → machine-frame");
-    assert_eq!(motions[0].1, eid_core::ast::Wcs::G55, "WCS сменён на G55 ДО machine-хода");
-    assert!(motions[0].2, "первый machine-ход: start unknown (M₀ внешний)");
+    assert_eq!(
+        *motions[0].0,
+        eid_core::ast::Frame::Machine,
+        "G53 → machine-frame"
+    );
+    assert_eq!(
+        motions[0].1,
+        eid_core::ast::Wcs::G55,
+        "WCS сменён на G55 ДО machine-хода"
+    );
+    assert!(
+        motions[0].2,
+        "первый machine-ход: start unknown (M₀ внешний)"
+    );
     assert_eq!(motions[0].3, [0.0, 0.0, 0.0]);
     // Ход 2: возврат в WCS G55: start = machine(0,0,0) − origin(G55).
     assert_eq!(*motions[1].0, eid_core::ast::Frame::Wcs);
-    assert_eq!(motions[1].1, eid_core::ast::Wcs::G55, "следующая строка — в G55");
+    assert_eq!(
+        motions[1].1,
+        eid_core::ast::Wcs::G55,
+        "следующая строка — в G55"
+    );
     assert!(!motions[1].2, "start известен: (0,0,0) − (1,2,3)");
     let _ = motions[1].3;
     // round-trip: эмиссия воспроизводит G55 + G53 G0.
@@ -2007,12 +2593,17 @@ fn audit20_m3_without_s_is_warning_not_err() {
     // Аудит #20: M3/M4 без S — notice-warning (не Err): эмитится S0.0000.
     let a = LinuxCncAdapter::new();
     let p = a
-        .parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n", "a20.ngc")
+        .parse(
+            "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n",
+            "a20.ngc",
+        )
         .expect("M3 без S — Ok, не отказ");
     let diags = a.take_diagnostics();
     assert!(
-        diags.iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")
-            && d.message.contains("задать обороты вручную")),
+        diags
+            .iter()
+            .any(|d| d.message.contains("W_SPINDLE_S_MISSING")
+                && d.message.contains("задать обороты вручную")),
         "ожидалась W_SPINDLE_S_MISSING: {diags:?}"
     );
     // AST: шпиндель Cw(0) — S0.0000 при эмиссии.
@@ -2020,18 +2611,28 @@ fn audit20_m3_without_s_is_warning_not_err() {
     assert!(emitted.contains("M3 S0.0000"), "{emitted}");
     // M4 — тот же класс.
     let a2 = LinuxCncAdapter::new();
-    a2.parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM4\nG1 X10.0000 F100.0\nM2\n", "a20b.ngc")
-        .expect("M4 без S — Ok");
+    a2.parse(
+        "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM4\nG1 X10.0000 F100.0\nM2\n",
+        "a20b.ngc",
+    )
+    .expect("M4 без S — Ok");
     assert!(
-        a2.take_diagnostics().iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
+        a2.take_diagnostics()
+            .iter()
+            .any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
         "M4: {diags:?}"
     );
     // Наследование предыдущего S-слова — БЕЗ warning (S модален).
     let a3 = LinuxCncAdapter::new();
-    a3.parse("G21 G90 G94 G17\nS5000\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n", "a20c.ngc")
-        .expect("M3 с наследованным S — Ok");
+    a3.parse(
+        "G21 G90 G94 G17\nS5000\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n",
+        "a20c.ngc",
+    )
+    .expect("M3 с наследованным S — Ok");
     assert!(
-        !a3.take_diagnostics().iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
+        !a3.take_diagnostics()
+            .iter()
+            .any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
         "наследованный S5000 — warning не нужен"
     );
 }
@@ -2053,13 +2654,27 @@ fn audit34_roundtrip_g18_arcs_negative_ik() {
     let a = LinuxCncAdapter::new();
     let p1 = a.parse(src, "a34_g18.ngc").expect("parses");
     // Контроль: полный круг присутствует (sweep=360, F2-правило для явного end).
-    let arcs: Vec<(f64, f64, eid_core::ast::Dir)> = p1.ops.iter().filter_map(|o| match o {
-        Op::Arc { sweep_deg, pitch, dir, .. } => Some((sweep_deg.value, pitch.value, *dir)),
-        _ => None,
-    }).collect();
+    let arcs: Vec<(f64, f64, eid_core::ast::Dir)> = p1
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Arc {
+                sweep_deg,
+                pitch,
+                dir,
+                ..
+            } => Some((sweep_deg.value, pitch.value, *dir)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
         arcs,
-        vec![(180.0, 0.0, eid_core::ast::Dir::Cw), (180.0, 0.0, eid_core::ast::Dir::Ccw), (180.0, 6.0, eid_core::ast::Dir::Cw), (360.0, 0.0, eid_core::ast::Dir::Cw)],
+        vec![
+            (180.0, 0.0, eid_core::ast::Dir::Cw),
+            (180.0, 0.0, eid_core::ast::Dir::Ccw),
+            (180.0, 6.0, eid_core::ast::Dir::Cw),
+            (360.0, 0.0, eid_core::ast::Dir::Cw)
+        ],
         "{arcs:?}"
     );
     let emitted = a.emit(&p1).expect("emits");
@@ -2090,15 +2705,28 @@ fn audit34_roundtrip_g19_arcs_negative_jk() {
     );
     let a = LinuxCncAdapter::new();
     let p1 = a.parse(src, "a34_g19.ngc").expect("parses");
-    let arcs: Vec<(f64, f64)> = p1.ops.iter().filter_map(|o| match o {
-        Op::Arc { sweep_deg, pitch, .. } => Some((sweep_deg.value, pitch.value)),
-        _ => None,
-    }).collect();
-    assert_eq!(arcs, vec![(180.0, 0.0), (180.0, 0.0), (180.0, 6.0), (360.0, 0.0)], "{arcs:?}");
+    let arcs: Vec<(f64, f64)> = p1
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Arc {
+                sweep_deg, pitch, ..
+            } => Some((sweep_deg.value, pitch.value)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        arcs,
+        vec![(180.0, 0.0), (180.0, 0.0), (180.0, 6.0), (360.0, 0.0)],
+        "{arcs:?}"
+    );
     let emitted = a.emit(&p1).expect("emits");
     assert!(emitted.contains("G19"), "{emitted}");
     assert!(emitted.contains("J-5.0000 K-3.0000"), "{emitted}");
-    assert!(!emitted.contains(" I-"), "{emitted} — I не in-plane для G19");
+    assert!(
+        !emitted.contains(" I-"),
+        "{emitted} — I не in-plane для G19"
+    );
     let p2 = a.parse(&emitted, "a34_g19_rt.ngc").expect("re-parses");
     let d = semantic_diff(&p1, &p2, &DiffConfig::default());
     assert!(d.is_empty(), "G19 round-trip divergences: {d:?}");
@@ -2117,5 +2745,8 @@ fn audit19_g53_partial_end_is_runtime_state() {
         "M2\n",
     ))
     .expect_err("machine-ход с частичным end — E_RUNTIME_STATE");
-    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
 }

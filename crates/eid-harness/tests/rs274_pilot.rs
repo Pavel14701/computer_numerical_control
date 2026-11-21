@@ -10,7 +10,11 @@ use eid_harness::rs274_compare::{compare_files, docker_available};
 use std::path::{Path, PathBuf};
 
 fn v1_pair(dir: &str, name: &str, dialect: &str) -> PathBuf {
-    let suffix = if dialect == "grbl-1.1" { "grbl" } else { dialect };
+    let suffix = if dialect == "grbl-1.1" {
+        "grbl"
+    } else {
+        dialect
+    };
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/tier_a/v1")
         .join(format!("{dir}_{name}"))
@@ -33,7 +37,9 @@ fn pilot_01_canonical_comparison_zero_divergences() {
     let grbl_src = std::fs::read_to_string(v1_pair("01", "linear_box", "grbl-1.1"))
         .expect("v1 grbl pair readable");
     let grbl_adapter = GrblAdapter::new();
-    let translated = grbl_adapter.parse(&grbl_src, "pilot01.grbl").expect("grbl parses");
+    let translated = grbl_adapter
+        .parse(&grbl_src, "pilot01.grbl")
+        .expect("grbl parses");
     // эмитим linuxcnc-текст через LinuxCncAdapter (перевод)
     let lcnc = eid_linuxcnc::LinuxCncAdapter::new();
     let translated_text = lcnc.emit(&translated).expect("translate to linuxcnc");

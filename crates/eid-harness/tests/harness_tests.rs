@@ -10,15 +10,14 @@
 
 use eid_core::adapter::{Adapter, EidTextAdapter};
 use eid_core::ast::{
-    Coolant, Dir, Frame, Num, Op, PathMode, Point3, Program, SrcSpan, StartPoint, State, Units,
-    Wcs,
+    Coolant, Dir, Frame, Num, Op, PathMode, Point3, Program, SrcSpan, StartPoint, State, Units, Wcs,
 };
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
-use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
 use eid_grbl::GrblAdapter;
-use eid_linuxcnc::LinuxCncAdapter;
+use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
 use eid_harness::manifest::{self, FileEntry, Kind, Manifest, Outcome, Tier, Vector};
 use eid_harness::runner::{self, Registry, Status};
+use eid_linuxcnc::LinuxCncAdapter;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,7 +35,9 @@ fn load_manifest() -> Manifest {
 }
 
 fn golden_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_a/v0").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/tier_a/v0")
+        .join(name)
 }
 
 fn num(v: f64) -> Num {
@@ -44,11 +45,21 @@ fn num(v: f64) -> Num {
 }
 
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 { x: num(x), y: num(y), z: num(z) }
+    Point3 {
+        x: num(x),
+        y: num(y),
+        z: num(z),
+    }
 }
 
 fn src() -> SrcSpan {
-    SrcSpan { file: "t".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 }
+    SrcSpan {
+        file: "t".into(),
+        line_start: 0,
+        col_start: 1,
+        line_end: 0,
+        col_end: 0,
+    }
 }
 
 fn state(feed: Option<f64>) -> State {
@@ -133,7 +144,16 @@ fn diff_position_shift_beyond_epsilon() {
         *end = p3(10.01, 0.0, 5.0); // сдвиг 0.01 > ε_pos = max(0.001, 1e-7·L)
     }
     let d = semantic_diff(&prog(base_ops()), &b, &DiffConfig::default());
-    assert!(has(&d, &Divergence::Geometry { index: 1, field: "end" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::Geometry {
+                index: 1,
+                field: "end"
+            }
+        ),
+        "{d:?}"
+    );
     assert_eq!(d.len(), 1);
 }
 
@@ -161,14 +181,32 @@ fn diff_feed_beyond_and_within_tolerance() {
         state.feed = Some(num(151.0));
     }
     let d = semantic_diff(&prog(base_ops()), &beyond, &cfg);
-    assert!(has(&d, &Divergence::StateField { index: 1, field: "feed" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::StateField {
+                index: 1,
+                field: "feed"
+            }
+        ),
+        "{d:?}"
+    );
     // none ↔ число — всегда расхождение (EQUIVALENCE §2)
     let mut none = prog(base_ops());
     if let Op::Linear { state, .. } = &mut none.ops[1] {
         state.feed = None;
     }
     let d = semantic_diff(&prog(base_ops()), &none, &cfg);
-    assert!(has(&d, &Divergence::StateField { index: 1, field: "feed" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::StateField {
+                index: 1,
+                field: "feed"
+            }
+        ),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -185,11 +223,25 @@ fn diff_unknown_vs_known() {
 fn diff_m1_filtered_m0_counts() {
     // M1 (optional=true) ≡ отсутствие (Q8, EQUIVALENCE §5): лишний M1 → 0 диффов
     let mut a = prog(base_ops());
-    a.ops.insert(2, Op::ProgramStop { optional: true, state: state(Some(150.0)), src: src() });
+    a.ops.insert(
+        2,
+        Op::ProgramStop {
+            optional: true,
+            state: state(Some(150.0)),
+            src: src(),
+        },
+    );
     assert!(semantic_diff(&a, &prog(base_ops()), &DiffConfig::default()).is_empty());
     // M0 (optional=false) — значим: OpCount + OpKind
     let mut c = prog(base_ops());
-    c.ops.insert(2, Op::ProgramStop { optional: false, state: state(Some(150.0)), src: src() });
+    c.ops.insert(
+        2,
+        Op::ProgramStop {
+            optional: false,
+            state: state(Some(150.0)),
+            src: src(),
+        },
+    );
     let d = semantic_diff(&c, &prog(base_ops()), &DiffConfig::default());
     assert!(has(&d, &Divergence::OpCount { a: 5, b: 4 }), "{d:?}");
     assert!(has(&d, &Divergence::OpKind { index: 2 }), "{d:?}");
@@ -259,10 +311,24 @@ fn diff_sweep_half_degree_from_semicircle_diverges() {
         ])
     };
     let d = semantic_diff(&mk(179.4975), &mk(180.0), &DiffConfig::default());
-    assert_eq!(d, vec![Divergence::Geometry { index: 1, field: "sweep" }], "{d:?}");
+    assert_eq!(
+        d,
+        vec![Divergence::Geometry {
+            index: 1,
+            field: "sweep"
+        }],
+        "{d:?}"
+    );
     // Симметрия эквивалентности: дифф не зависит от порядка сторон.
     let d_rev = semantic_diff(&mk(180.0), &mk(179.4975), &DiffConfig::default());
-    assert_eq!(d_rev, vec![Divergence::Geometry { index: 1, field: "sweep" }], "{d_rev:?}");
+    assert_eq!(
+        d_rev,
+        vec![Divergence::Geometry {
+            index: 1,
+            field: "sweep"
+        }],
+        "{d_rev:?}"
+    );
 }
 
 #[test]
@@ -304,7 +370,16 @@ fn diff_sweep_near_semicircle_both_sides_amplified_ok() {
         *center = p3(15.5, 0.0, 5.0);
     }
     let d = semantic_diff(&prog(base_ops()), &c, &DiffConfig::default());
-    assert!(has(&d, &Divergence::Geometry { index: 2, field: "center" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::Geometry {
+                index: 2,
+                field: "center"
+            }
+        ),
+        "{d:?}"
+    );
     // Контроль sweep: обычная дуга 90°, sweep 90 → 91 (A(91) ≈ 1.44, R = 5:
     // ε ≈ 0.0016° < 1°) → sweep расходится.
     let mut s = prog(base_ops());
@@ -312,7 +387,16 @@ fn diff_sweep_near_semicircle_both_sides_amplified_ok() {
         *sweep_deg = num(91.0);
     }
     let d = semantic_diff(&prog(base_ops()), &s, &DiffConfig::default());
-    assert!(has(&d, &Divergence::Geometry { index: 2, field: "sweep" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::Geometry {
+                index: 2,
+                field: "sweep"
+            }
+        ),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -350,7 +434,10 @@ fn diff_meta_fields() {
     let mut c = prog(base_ops());
     c.path_mode = PathMode::ExactStop;
     let d = semantic_diff(&prog(base_ops()), &c, &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "path_mode" }), "{d:?}");
+    assert!(
+        has(&d, &Divergence::MetaField { field: "path_mode" }),
+        "{d:?}"
+    );
 
     // Blend: kind-равенство; t — допуск позиции; None vs Some — расхождение
     let blend = |t: Option<f64>| {
@@ -360,24 +447,62 @@ fn diff_meta_fields() {
     };
     assert!(semantic_diff(&blend(None), &blend(None), &cfg).is_empty());
     let d = semantic_diff(&blend(None), &blend(Some(0.5)), &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "path_mode" }), "{d:?}");
+    assert!(
+        has(&d, &Divergence::MetaField { field: "path_mode" }),
+        "{d:?}"
+    );
     let d = semantic_diff(&blend(Some(0.5)), &blend(Some(0.6)), &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "path_mode.t" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::MetaField {
+                field: "path_mode.t"
+            }
+        ),
+        "{d:?}"
+    );
     assert!(semantic_diff(&blend(Some(0.5)), &blend(Some(0.5)), &cfg).is_empty());
 
     // frame_preset: присутствие / values (допуск позиции) / wcs (символ)
     let preset = |x: f64, wcs: Wcs| {
         let mut p = prog(base_ops());
-        p.frame_preset = Some(eid_core::ast::FramePreset { values: p3(x, 0.0, 5.0), wcs });
+        p.frame_preset = Some(eid_core::ast::FramePreset {
+            values: p3(x, 0.0, 5.0),
+            wcs,
+        });
         p
     };
     let d = semantic_diff(&prog(base_ops()), &preset(0.0, Wcs::G54), &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "frame_preset" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::MetaField {
+                field: "frame_preset"
+            }
+        ),
+        "{d:?}"
+    );
     let d = semantic_diff(&preset(0.0, Wcs::G54), &preset(0.01, Wcs::G54), &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "frame_preset.values" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::MetaField {
+                field: "frame_preset.values"
+            }
+        ),
+        "{d:?}"
+    );
     assert!(semantic_diff(&preset(0.0, Wcs::G54), &preset(0.0005, Wcs::G54), &cfg).is_empty());
     let d = semantic_diff(&preset(0.0, Wcs::G54), &preset(0.0, Wcs::G55), &cfg);
-    assert!(has(&d, &Divergence::MetaField { field: "frame_preset.wcs" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::MetaField {
+                field: "frame_preset.wcs"
+            }
+        ),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -389,7 +514,16 @@ fn diff_state_fields_exact_and_tolerant() {
         state.wcs = Wcs::G55;
     }
     let d = semantic_diff(&prog(base_ops()), &b, &cfg);
-    assert!(has(&d, &Divergence::StateField { index: 1, field: "wcs" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::StateField {
+                index: 1,
+                field: "wcs"
+            }
+        ),
+        "{d:?}"
+    );
 
     // spindle rpm: max(0.01, 1e-6·10000) = 0.02 → 10000.5 расходится, 10000.01 нет
     let mut c = prog(base_ops());
@@ -397,7 +531,16 @@ fn diff_state_fields_exact_and_tolerant() {
         state.spindle = eid_core::ast::Spindle::Cw(num(10000.5));
     }
     let d = semantic_diff(&prog(base_ops()), &c, &cfg);
-    assert!(has(&d, &Divergence::StateField { index: 1, field: "spindle" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::StateField {
+                index: 1,
+                field: "spindle"
+            }
+        ),
+        "{d:?}"
+    );
     let mut w = prog(base_ops());
     if let Op::Linear { state, .. } = &mut w.ops[1] {
         state.spindle = eid_core::ast::Spindle::Cw(num(10000.01));
@@ -409,18 +552,41 @@ fn diff_state_fields_exact_and_tolerant() {
         state.spindle = eid_core::ast::Spindle::Off;
     }
     let d = semantic_diff(&prog(base_ops()), &off, &cfg);
-    assert!(has(&d, &Divergence::StateField { index: 1, field: "spindle" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::StateField {
+                index: 1,
+                field: "spindle"
+            }
+        ),
+        "{d:?}"
+    );
 
     // dwell: max(0.0001, 1e-5·t): 1.00005 ok; 1.001 расходится
     let dwell = |t: f64| {
         prog(vec![
-            Op::Dwell { seconds: num(t), state: state(Some(150.0)), src: src(), sub: None },
+            Op::Dwell {
+                seconds: num(t),
+                state: state(Some(150.0)),
+                src: src(),
+                sub: None,
+            },
             Op::ProgramEnd { src: src() },
         ])
     };
     assert!(semantic_diff(&dwell(1.0), &dwell(1.00005), &cfg).is_empty());
     let d = semantic_diff(&dwell(1.0), &dwell(1.001), &cfg);
-    assert!(has(&d, &Divergence::Geometry { index: 0, field: "seconds" }), "{d:?}");
+    assert!(
+        has(
+            &d,
+            &Divergence::Geometry {
+                index: 0,
+                field: "seconds"
+            }
+        ),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -436,7 +602,13 @@ fn diff_src_and_sub_are_provenance() {
     // src/sub не входят в эквивалентность (EQUIVALENCE §3)
     let mut b = prog(base_ops());
     if let Op::Linear { src, sub, .. } = &mut b.ops[1] {
-        *src = SrcSpan { file: "other.nc".into(), line_start: 42, col_start: 1, line_end: 42, col_end: 9 };
+        *src = SrcSpan {
+            file: "other.nc".into(),
+            line_start: 42,
+            col_start: 1,
+            line_end: 42,
+            col_end: 9,
+        };
         *sub = Some(3);
     }
     assert!(semantic_diff(&prog(base_ops()), &b, &DiffConfig::default()).is_empty());
@@ -454,12 +626,22 @@ fn manifest_loads_40_vectors_20_goldens() {
     let m = load_manifest();
     let goldens = m.vectors.iter().filter(|v| v.golden.is_some()).count();
     let negatives = m.vectors.iter().filter(|v| v.golden.is_none()).count();
-    assert!(goldens >= 37, "sanity: золотых минимум 37, сейчас {goldens}");
-    assert!(negatives >= 20, "sanity: негативов минимум 20, сейчас {negatives}");
+    assert!(
+        goldens >= 37,
+        "sanity: золотых минимум 37, сейчас {goldens}"
+    );
+    assert!(
+        negatives >= 20,
+        "sanity: негативов минимум 20, сейчас {negatives}"
+    );
     assert_eq!(m.vectors.len(), goldens + negatives);
     // все пути файлов существуют (load также валидирует — двойная проверка)
     for v in &m.vectors {
-        assert!(v.files.iter().all(|f| f.path.is_file()), "vector {}: file missing", v.id);
+        assert!(
+            v.files.iter().all(|f| f.path.is_file()),
+            "vector {}: file missing",
+            v.id
+        );
         if let Some(g) = &v.golden {
             assert!(g.is_file(), "vector {}: golden missing", v.id);
         }
@@ -477,39 +659,67 @@ fn manifest_loads_40_vectors_20_goldens() {
 #[test]
 fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     let m = load_manifest();
-    let v = |id: &str| m.vectors.iter().find(|v| v.id == id).unwrap_or_else(|| panic!("no {id}"));
+    let v = |id: &str| {
+        m.vectors
+            .iter()
+            .find(|v| v.id == id)
+            .unwrap_or_else(|| panic!("no {id}"))
+    };
     // notice: true — только #43 (CORPUS §1.1; #13 снят: диспозиция drop →
     // 360°-дуга, SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
     assert_eq!(
-        m.vectors.iter().filter(|v| v.notice).map(|v| v.id.clone()).collect::<Vec<_>>(),
+        m.vectors
+            .iter()
+            .filter(|v| v.notice)
+            .map(|v| v.id.clone())
+            .collect::<Vec<_>>(),
         vec!["43".to_string()]
     );
     // r4_expect непустой: #27 (grbl E_UNSUPPORTED_SYNTAX) и #47 (обе цели E_RAW_UNTRANSLATABLE)
     let v27 = v("27");
-    assert_eq!(v27.r4_expect.get("grbl-1.1"), Some(&Outcome::Code(ErrorCode::UnsupportedSyntax)));
+    assert_eq!(
+        v27.r4_expect.get("grbl-1.1"),
+        Some(&Outcome::Code(ErrorCode::UnsupportedSyntax))
+    );
     let v47 = v("47");
-    assert_eq!(v47.r4_expect.get("grbl-1.1"), Some(&Outcome::Code(ErrorCode::RawUntranslatable)));
-    assert_eq!(v47.r4_expect.get("linuxcnc"), Some(&Outcome::Code(ErrorCode::RawUntranslatable)));
+    assert_eq!(
+        v47.r4_expect.get("grbl-1.1"),
+        Some(&Outcome::Code(ErrorCode::RawUntranslatable))
+    );
+    assert_eq!(
+        v47.r4_expect.get("linuxcnc"),
+        Some(&Outcome::Code(ErrorCode::RawUntranslatable))
+    );
     // N3 — line-level негатив: Ok-исход + expected_diags (правило двух классов)
     let n3 = v("N3");
     assert!(matches!(n3.files[0].expect, Outcome::Ok));
-    assert_eq!(n3.files[0].expected_diags, vec![ErrorCode::UnsupportedSyntax]);
+    assert_eq!(
+        n3.files[0].expected_diags,
+        vec![ErrorCode::UnsupportedSyntax]
+    );
     // N11 — Err-класс с CORPUS v0.5.2 (подпрограмма структурна: после M98
     // поток управления расходится): expect = код отказа, expected_diags пуст.
     let n11 = v("N11");
-    assert_eq!(n11.files[0].expect, Outcome::Code(ErrorCode::UnsupportedSyntax));
+    assert_eq!(
+        n11.files[0].expect,
+        Outcome::Code(ErrorCode::UnsupportedSyntax)
+    );
     assert!(n11.files[0].expected_diags.is_empty());
     // Класс-списки CORPUS §1.2 v0.5.2: Err = {N1,N2,N4,N5a,N5b,N6,N7,N11,N12,
     // N13,N14,N15,N16,N17,N19}; line-level = {N3,N8,N9,N10,N18} — сверка
     // манифеста со списком (loader не знает о классах — проверяем форму).
-    let err_class = ["N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N11", "N12", "N13", "N14", "N15", "N16", "N17", "N19"];
+    let err_class = [
+        "N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N11", "N12", "N13", "N14", "N15", "N16",
+        "N17", "N19",
+    ];
     let line_class = ["N3", "N8", "N9", "N10", "N18"];
     for id in err_class {
         let vv = v(id);
         for f in &vv.files {
             assert!(
                 matches!(f.expect, Outcome::Code(_)) && f.expected_diags.is_empty(),
-                "{id}: Err-класс, файл {:?}", f.path
+                "{id}: Err-класс, файл {:?}",
+                f.path
             );
         }
     }
@@ -518,12 +728,16 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
         for f in &vv.files {
             assert!(
                 matches!(f.expect, Outcome::Ok) && !f.expected_diags.is_empty(),
-                "{id}: line-level класс, файл {:?}", f.path
+                "{id}: line-level класс, файл {:?}",
+                f.path
             );
         }
     }
     // новые векторы присутствуют с ожидаемыми диалектами
-    assert!(v("47").files.len() >= 1, "raw_crlf_fidelity — минимум GRBL-файл (динамически: v1-regen добавил linuxcnc)");
+    assert!(
+        v("47").files.len() >= 1,
+        "raw_crlf_fidelity — минимум GRBL-файл (динамически: v1-regen добавил linuxcnc)"
+    );
     assert_eq!(v("05").files.len(), 2);
     assert_eq!(v("13").files.len(), 2);
     // r4 warning-цели (CORPUS §1.1 #40/#41/#45): grbl = warning, не отказ
@@ -582,28 +796,66 @@ fn runner_r1_r2_green_on_all_20_goldens() {
     let m = load_manifest();
     let reg = Registry::new();
     let rep = runner::run(&m, &reg);
-    assert!(rep.is_green(), "Fail'ы: {:?}", rep.vectors.iter()
-        .flat_map(|v| v.checks.iter().filter(|c| matches!(c.status, Status::Fail(_))))
-        .collect::<Vec<_>>());
+    assert!(
+        rep.is_green(),
+        "Fail'ы: {:?}",
+        rep.vectors
+            .iter()
+            .flat_map(|v| v
+                .checks
+                .iter()
+                .filter(|c| matches!(c.status, Status::Fail(_))))
+            .collect::<Vec<_>>()
+    );
     let golden_count = m.vectors.iter().filter(|v| v.golden.is_some()).count();
-    assert!(golden_count >= 37, "sanity: golden минимум 37, сейчас {golden_count}");
-    assert_eq!(rep.checks("R1").len(), golden_count, "R1 по одному на golden (динамически)");
-    assert!(rep.checks("R1").iter().all(|c| c.status == Status::Pass), "R1 все Pass");
+    assert!(
+        golden_count >= 37,
+        "sanity: golden минимум 37, сейчас {golden_count}"
+    );
+    assert_eq!(
+        rep.checks("R1").len(),
+        golden_count,
+        "R1 по одному на golden (динамически)"
+    );
+    assert!(
+        rep.checks("R1").iter().all(|c| c.status == Status::Pass),
+        "R1 все Pass"
+    );
     assert_eq!(rep.checks("R2").len(), golden_count);
-    assert!(rep.checks("R2").iter().all(|c| c.status == Status::Pass), "R2 все Pass");
+    assert!(
+        rep.checks("R2").iter().all(|c| c.status == Status::Pass),
+        "R2 все Pass"
+    );
     // диалектные проверки без адаптеров — Pending, не crash
     assert!(!rep.checks("parse").is_empty());
-    assert!(rep.checks("parse").iter().all(|c| matches!(c.status, Status::Pending(_))));
-    assert!(rep.checks("R3-golden").iter().all(|c| matches!(c.status, Status::Pending(_))));
+    assert!(rep
+        .checks("parse")
+        .iter()
+        .all(|c| matches!(c.status, Status::Pending(_))));
+    assert!(rep
+        .checks("R3-golden")
+        .iter()
+        .all(|c| matches!(c.status, Status::Pending(_))));
     // R4 — динамически: по одной проверке на каждую цель из r4_expect манифеста
-    let r4_expected_total: usize =
-        m.vectors.iter().map(|v| v.r4_expect.len()).sum();
+    let r4_expected_total: usize = m.vectors.iter().map(|v| v.r4_expect.len()).sum();
     let r4: Vec<_> = rep.checks("R4");
-    assert_eq!(r4.len(), r4_expected_total, "R4 = сумма целей r4_expect (динамически)");
-    assert!(r4_expected_total >= 5, "sanity: r4-целей минимум 5, сейчас {r4_expected_total}");
+    assert_eq!(
+        r4.len(),
+        r4_expected_total,
+        "R4 = сумма целей r4_expect (динамически)"
+    );
+    assert!(
+        r4_expected_total >= 5,
+        "sanity: r4-целей минимум 5, сейчас {r4_expected_total}"
+    );
     // Пустой registry: все R4 — Pending (нет адаптеров), не crash.
-    assert_eq!(r4.iter().filter(|c| matches!(c.status, Status::Pending(_))).count(), r4.len(),
-        "без адаптеров все R4 Pending");
+    assert_eq!(
+        r4.iter()
+            .filter(|c| matches!(c.status, Status::Pending(_)))
+            .count(),
+        r4.len(),
+        "без адаптеров все R4 Pending"
+    );
 }
 
 #[test]
@@ -613,7 +865,9 @@ fn golden_47_raw_payload_byte_exact() {
     let text = std::fs::read_to_string(&path).unwrap();
     let p = eid.parse(&text, "golden47").unwrap();
     let payload = p.ops.iter().find_map(|o| match o {
-        Op::Raw { payload_hex, code, .. } => Some((payload_hex.clone(), *code)),
+        Op::Raw {
+            payload_hex, code, ..
+        } => Some((payload_hex.clone(), *code)),
         _ => None,
     });
     let (hex, code) = payload.expect("RAW op in golden 47");
@@ -621,7 +875,10 @@ fn golden_47_raw_payload_byte_exact() {
     assert_eq!(hex, "24240D0A");
     assert_eq!(code, ErrorCode::UnsupportedSyntax);
     let emitted = eid.emit(&p).unwrap();
-    assert_eq!(emitted, text, "emit(golden 47) байт-в-байт (payload не нормализуется, D9)");
+    assert_eq!(
+        emitted, text,
+        "emit(golden 47) байт-в-байт (payload не нормализуется, D9)"
+    );
     let p2 = eid.parse(&emitted, "golden47").unwrap();
     assert!(semantic_diff(&p, &p2, &DiffConfig::default()).is_empty());
 }
@@ -639,8 +896,16 @@ fn golden_13_is_canonical_full_circle() {
     assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
     assert!(matches!(p.ops[0], Op::Rapid { .. }));
     match &p.ops[1] {
-        Op::Arc { sweep_deg, dir, center, .. } => {
-            assert_eq!(sweep_deg.value, 360.0, "полный круг — drop→360°-дуга (v0.17)");
+        Op::Arc {
+            sweep_deg,
+            dir,
+            center,
+            ..
+        } => {
+            assert_eq!(
+                sweep_deg.value, 360.0,
+                "полный круг — drop→360°-дуга (v0.17)"
+            );
             assert_eq!(*dir, Dir::Cw);
             assert_eq!(center.x.value, 5.0);
             assert_eq!(center.y.value, 0.0);
@@ -710,7 +975,14 @@ impl MockAdapter {
 }
 
 fn diag(code: ErrorCode) -> Diagnostic {
-    Diagnostic { code, stage: Stage::Parse, message: "mock refusal".into(), src: None, options: vec![], limit: None }
+    Diagnostic {
+        code,
+        stage: Stage::Parse,
+        message: "mock refusal".into(),
+        src: None,
+        options: vec![],
+        limit: None,
+    }
 }
 
 fn mock_program(raw: Option<ErrorCode>) -> Program {
@@ -756,7 +1028,8 @@ impl Adapter for MockAdapter {
     }
 }
 
-const MINIMAL_GOLDEN: &str = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
+const MINIMAL_GOLDEN: &str =
+    "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n";
 
 fn vec_negative(id: &str, file: &Path, expect: Outcome, diags: Vec<ErrorCode>) -> Vector {
     Vector {
@@ -781,17 +1054,30 @@ fn vec_negative(id: &str, file: &Path, expect: Outcome, diags: Vec<ErrorCode>) -
 fn runner_two_class_negatives() {
     let f = tmp_file("neg.txt", "mock input");
     let mut reg = Registry::new();
-    reg.register(Arc::new(MockAdapter::new("mock", Mock::Refuse(ErrorCode::RuntimeState))));
-    reg.register(Arc::new(MockAdapter::new("mock-raw-sem", Mock::OkWithRaw(ErrorCode::UnsupportedSemantics))));
+    reg.register(Arc::new(MockAdapter::new(
+        "mock",
+        Mock::Refuse(ErrorCode::RuntimeState),
+    )));
+    reg.register(Arc::new(MockAdapter::new(
+        "mock-raw-sem",
+        Mock::OkWithRaw(ErrorCode::UnsupportedSemantics),
+    )));
     reg.register(Arc::new(MockAdapter::new("mock-clean", Mock::OkClean)));
 
     // Структурный: Err(code == expect) → Pass
-    let m1 = Manifest { tier_b_files: Vec::new(),
+    let m1 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
-        vectors: vec![vec_negative("S1", &f, Outcome::Code(ErrorCode::RuntimeState), vec![])],
+        vectors: vec![vec_negative(
+            "S1",
+            &f,
+            Outcome::Code(ErrorCode::RuntimeState),
+            vec![],
+        )],
     };
     // Структурный: Ok там, где ждём отказ → Fail
-    let m2 = Manifest { tier_b_files: Vec::new(),
+    let m2 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
         vectors: vec![vec_negative(
             "S2",
@@ -801,7 +1087,8 @@ fn runner_two_class_negatives() {
         )],
     };
     // Line-level: Ok + RAW{code} ∈ expected_diags → Pass
-    let m3 = Manifest { tier_b_files: Vec::new(),
+    let m3 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
         vectors: vec![vec_negative(
             "L1",
@@ -811,7 +1098,8 @@ fn runner_two_class_negatives() {
         )],
     };
     // Line-level: Ok, но RAW-код не покрывает expected_diags → Fail
-    let m4 = Manifest { tier_b_files: Vec::new(),
+    let m4 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
         vectors: vec![vec_negative(
             "L2",
@@ -882,15 +1170,29 @@ fn runner_positive_r3_and_r1_text_via_mock() {
 
     // R3: parse(mock-eid файл) ≡ golden → Pass (минимальная программа)
     let v1 = mk("P1", "mock-eid", &golden, &golden, false);
-    let m1 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![v1] };
+    let m1 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![v1],
+    };
     let rep1 = runner::run(&m1, &reg);
     assert!(rep1.is_green(), "{:?}", rep1.vectors);
-    assert!(rep1.checks("R3-golden").iter().all(|c| c.status == Status::Pass), "{:?}", rep1.checks("R3-golden"));
+    assert!(
+        rep1.checks("R3-golden")
+            .iter()
+            .all(|c| c.status == Status::Pass),
+        "{:?}",
+        rep1.checks("R3-golden")
+    );
     assert!(rep1.checks("R1").iter().all(|c| c.status == Status::Pass));
 
     // R3 Fail: parse даёт RAW-оп, golden — нет
     let v2 = mk("P2", "mock-eid", &raw_file, &golden, false);
-    let m2 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![v2] };
+    let m2 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![v2],
+    };
     let rep2 = runner::run(&m2, &reg);
     assert!(!rep2.is_green());
     let r3 = rep2.checks("R3-golden")[0].clone();
@@ -898,7 +1200,11 @@ fn runner_positive_r3_and_r1_text_via_mock() {
 
     // R1-text: RAW-файл, same-dialect round-trip payload байт-в-байт → Pass
     let v3 = mk("P3", "mock-eid", &raw_file, &raw_file, false);
-    let m3 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![v3] };
+    let m3 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![v3],
+    };
     let rep3 = runner::run(&m3, &reg);
     let r1t = rep3.checks("R1-text");
     assert_eq!(r1t.len(), 1);
@@ -906,7 +1212,11 @@ fn runner_positive_r3_and_r1_text_via_mock() {
 
     // R1-text исключён при notice: true (CORPUS §4) → Skipped
     let v4 = mk("P4", "mock-eid", &raw_file, &raw_file, true);
-    let m4 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![v4] };
+    let m4 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![v4],
+    };
     let rep4 = runner::run(&m4, &reg);
     let r1t = rep4.checks("R1-text");
     assert_eq!(r1t.len(), 1);
@@ -921,7 +1231,10 @@ fn runner_r4_emission_expectations() {
     let golden = tmp_file("r4_golden.eid", MINIMAL_GOLDEN);
     let f = tmp_file("r4_input.txt", "mock");
     let mut reg = Registry::new();
-    reg.register(Arc::new(MockAdapter::new("mock-refuse", Mock::Refuse(ErrorCode::UnsupportedSyntax))));
+    reg.register(Arc::new(MockAdapter::new(
+        "mock-refuse",
+        Mock::Refuse(ErrorCode::UnsupportedSyntax),
+    )));
     reg.register(Arc::new(MockAdapter::new("mock-clean", Mock::OkClean)));
 
     let mk_r4 = |id: &str, dialect: &str, expect: Outcome| Vector {
@@ -942,9 +1255,14 @@ fn runner_r4_emission_expectations() {
     };
 
     // Эмиссия отказывает ожидаемым кодом → Pass (#27-диспозиция)
-    let m1 = Manifest { tier_b_files: Vec::new(),
+    let m1 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
-        vectors: vec![mk_r4("R4a", "mock-refuse", Outcome::Code(ErrorCode::UnsupportedSyntax))],
+        vectors: vec![mk_r4(
+            "R4a",
+            "mock-refuse",
+            Outcome::Code(ErrorCode::UnsupportedSyntax),
+        )],
     };
     let rep1 = runner::run(&m1, &reg);
     let r4 = rep1.checks("R4");
@@ -952,9 +1270,14 @@ fn runner_r4_emission_expectations() {
     assert!(matches!(r4[0].status, Status::Pass), "{:?}", r4[0]);
 
     // Эмиссия успешна, а ждали отказ → Fail
-    let m2 = Manifest { tier_b_files: Vec::new(),
+    let m2 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
-        vectors: vec![mk_r4("R4b", "mock-clean", Outcome::Code(ErrorCode::UnsupportedSyntax))],
+        vectors: vec![mk_r4(
+            "R4b",
+            "mock-clean",
+            Outcome::Code(ErrorCode::UnsupportedSyntax),
+        )],
     };
     let rep2 = runner::run(&m2, &reg);
     let r4 = rep2.checks("R4");
@@ -962,16 +1285,24 @@ fn runner_r4_emission_expectations() {
 
     // r4_expect у негатива (без golden AST) → Skipped, не crash (N3-диспозиция)
     let mut neg = vec_negative("R4n", &f, Outcome::Code(ErrorCode::RuntimeState), vec![]);
-    neg.r4_expect.insert("mock-refuse".to_string(), Outcome::Code(ErrorCode::RawUntranslatable));
+    neg.r4_expect.insert(
+        "mock-refuse".to_string(),
+        Outcome::Code(ErrorCode::RawUntranslatable),
+    );
     neg.files[0].dialect = "mock-refuse".into();
-    let m3 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![neg] };
+    let m3 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![neg],
+    };
     let rep3 = runner::run(&m3, &reg);
     let r4 = rep3.checks("R4");
     assert_eq!(r4.len(), 1);
     assert!(matches!(r4[0].status, Status::Skipped(_)), "{:?}", r4[0]);
 
     // Нет адаптера для цели r4_expect → Pending
-    let m4 = Manifest { tier_b_files: Vec::new(),
+    let m4 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
         vectors: vec![mk_r4("R4p", "absent-dialect", Outcome::Ok)],
     };
@@ -1010,7 +1341,10 @@ fn runner_r4_negative_file_as_source() {
     // в каждую цель → ожидаемый код. Заменяет прежний Skipped при golden=null.
     let f = tmp_file("r4neg.txt", "mock raw input");
     let mut reg = Registry::new();
-    reg.register(Arc::new(MockAdapter::new("mock-raw-sem", Mock::OkWithRaw(ErrorCode::UnsupportedSemantics))));
+    reg.register(Arc::new(MockAdapter::new(
+        "mock-raw-sem",
+        Mock::OkWithRaw(ErrorCode::UnsupportedSemantics),
+    )));
     reg.register(Arc::new(MockAdapter::new("mock-clean", Mock::OkClean)));
     reg.register(Arc::new(RawRefuseAdapter));
 
@@ -1027,35 +1361,52 @@ fn runner_r4_negative_file_as_source() {
             expected_diags: diags,
             sha256: None,
         }],
-        r4_expect: [("mock-rawrefuse".to_string(), Outcome::Code(ErrorCode::RawUntranslatable))]
-            .into_iter()
-            .collect(),
+        r4_expect: [(
+            "mock-rawrefuse".to_string(),
+            Outcome::Code(ErrorCode::RawUntranslatable),
+        )]
+        .into_iter()
+        .collect(),
         notice: false,
     };
 
     // Line-level негатив (Ok + RAW в AST), v0.5.3: same-dialect цель → Skipped
     // (RAW-эмиссия легальна, verbatim), кросс-цель → ожидаемый код отказа.
-    let mut neg = mk_neg("mock-raw-sem", Outcome::Ok, vec![ErrorCode::UnsupportedSemantics]);
-    neg.r4_expect.insert("mock-raw-sem".to_string(), Outcome::Code(ErrorCode::RawUntranslatable));
-    let m1 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![neg] };
+    let mut neg = mk_neg(
+        "mock-raw-sem",
+        Outcome::Ok,
+        vec![ErrorCode::UnsupportedSemantics],
+    );
+    neg.r4_expect.insert(
+        "mock-raw-sem".to_string(),
+        Outcome::Code(ErrorCode::RawUntranslatable),
+    );
+    let m1 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![neg],
+    };
     let rep1 = runner::run(&m1, &reg);
     let r4 = rep1.checks("R4");
     assert_eq!(r4.len(), 2, "{:?}", rep1.vectors);
     // same-dialect (source mock-raw-sem → цель mock-raw-sem): Skipped/not-applicable.
-    let same = r4.iter().find(|c| c.target.ends_with("→mock-raw-sem")).expect("same-dialect check");
+    let same = r4
+        .iter()
+        .find(|c| c.target.ends_with("→mock-raw-sem"))
+        .expect("same-dialect check");
     assert!(matches!(same.status, Status::Skipped(_)), "{:?}", same);
     // кросс (source mock-raw-sem → цель mock-rawrefuse): Pass — E_RAW_UNTRANSLATABLE.
-    let cross = r4.iter().find(|c| c.target.ends_with("→mock-rawrefuse")).expect("cross check");
+    let cross = r4
+        .iter()
+        .find(|c| c.target.ends_with("→mock-rawrefuse"))
+        .expect("cross check");
     assert!(matches!(cross.status, Status::Pass), "{:?}", cross);
     // Источник — файл, не golden.
-    assert!(
-        !cross.target.starts_with("golden"),
-        "{}",
-        cross.target
-    );
+    assert!(!cross.target.starts_with("golden"), "{}", cross.target);
 
     // Тот же негатив, но эмиссия успешна (AST без RAW) → Fail.
-    let m2 = Manifest { tier_b_files: Vec::new(),
+    let m2 = Manifest {
+        tier_b_files: Vec::new(),
         corpus_version: "t".into(),
         vectors: vec![mk_neg("mock-clean", Outcome::Ok, vec![])],
     };
@@ -1063,17 +1414,30 @@ fn runner_r4_negative_file_as_source() {
     let r4 = rep2.checks("R4");
     assert_eq!(r4.len(), 1);
     match &r4[0].status {
-        Status::Fail(msg) => assert!(msg.contains("expected emit refusal E_RAW_UNTRANSLATABLE"), "{msg}"),
+        Status::Fail(msg) => assert!(
+            msg.contains("expected emit refusal E_RAW_UNTRANSLATABLE"),
+            "{msg}"
+        ),
         s => panic!("expected Fail, got {s:?}"),
     }
 
     // Структурный негатив с r4_expect: нет Ok-источника (parse = Err) → Skipped.
     let mut nstruct = vec_negative("RS", &f, Outcome::Code(ErrorCode::RuntimeState), vec![]);
     nstruct.files[0].dialect = "mock-refuse".into();
-    nstruct.r4_expect.insert("mock-rawrefuse".to_string(), Outcome::Code(ErrorCode::RawUntranslatable));
-    let m3 = Manifest { tier_b_files: Vec::new(), corpus_version: "t".into(), vectors: vec![nstruct] };
+    nstruct.r4_expect.insert(
+        "mock-rawrefuse".to_string(),
+        Outcome::Code(ErrorCode::RawUntranslatable),
+    );
+    let m3 = Manifest {
+        tier_b_files: Vec::new(),
+        corpus_version: "t".into(),
+        vectors: vec![nstruct],
+    };
     let mut reg3 = Registry::new();
-    reg3.register(Arc::new(MockAdapter::new("mock-refuse", Mock::Refuse(ErrorCode::RuntimeState))));
+    reg3.register(Arc::new(MockAdapter::new(
+        "mock-refuse",
+        Mock::Refuse(ErrorCode::RuntimeState),
+    )));
     reg3.register(Arc::new(RawRefuseAdapter));
     let rep3 = runner::run(&m3, &reg3);
     let r4 = rep3.checks("R4");
@@ -1105,13 +1469,20 @@ fn tier_b_loader_parses_real_corpus() {
     // никаких захардкоженных счётчиков (корпус растёт — тест не должен падать).
     let total = m.tier_b_files.len();
     assert!(total > 0, "manifest Tier B пуст");
-    assert!(m.tier_b_files.iter().all(|f| f.path.is_file()), "все пути существуют");
     assert!(
-        m.tier_b_files.iter().all(|f| f.expect == "parse-or-diagnose"),
+        m.tier_b_files.iter().all(|f| f.path.is_file()),
+        "все пути существуют"
+    );
+    assert!(
+        m.tier_b_files
+            .iter()
+            .all(|f| f.expect == "parse-or-diagnose"),
         "все записи — parse-or-diagnose"
     );
     assert!(
-        m.tier_b_files.iter().all(|f| f.license.is_some() || f.source.is_some()),
+        m.tier_b_files
+            .iter()
+            .all(|f| f.license.is_some() || f.source.is_some()),
         "provenance: лицензия/источник указаны"
     );
     // Диалект-дисциплина: разбиение канонические/сторонние покрывает все записи,
@@ -1156,8 +1527,15 @@ fn tier_b_runner_parse_or_diagnose_real_corpus() {
     let rep = run_tier_b(&m, &reg, &extra);
     let total = m.tier_b_files.len();
     assert!(rep.is_crash_free(), "crash=0 инвариант Tier B");
-    assert_eq!(rep.total, total, "runner обработал ровно все manifest-записи");
-    assert_eq!(rep.entries.len(), total, "исход зафиксирован по каждой записи");
+    assert_eq!(
+        rep.total, total,
+        "runner обработал ровно все manifest-записи"
+    );
+    assert_eq!(
+        rep.entries.len(),
+        total,
+        "исход зафиксирован по каждой записи"
+    );
     assert_eq!(
         rep.parse_ok + rep.no_adapter + rep.refused_by_code.values().sum::<usize>(),
         total,
@@ -1167,7 +1545,11 @@ fn tier_b_runner_parse_or_diagnose_real_corpus() {
     let mut seen: Vec<&str> = rep.entries.iter().map(|e| e.path.as_str()).collect();
     seen.sort_unstable();
     seen.dedup();
-    assert_eq!(seen.len(), total, "пути в отчёте уникальны и покрывают manifest");
+    assert_eq!(
+        seen.len(),
+        total,
+        "пути в отчёте уникальны и покрывают manifest"
+    );
     println!(
         "tier_b: total={} ok={} no_adapter={} refused={:?}",
         rep.total, rep.parse_ok, rep.no_adapter, rep.refused_by_code
@@ -1206,7 +1588,10 @@ fn tier_b_runner_mock_synthetic() {
     let extra = BTreeMap::new();
     let rep = run_tier_b(&m, &reg, &extra);
     assert_eq!(rep.total, 3);
-    assert_eq!(rep.parse_ok, 2, "Ok-файл и мусор-файл: mock OkClean принимает всё");
+    assert_eq!(
+        rep.parse_ok, 2,
+        "Ok-файл и мусор-файл: mock OkClean принимает всё"
+    );
     assert_eq!(rep.no_adapter, 1, "absent-dialect — no-adapter");
     assert!(rep.is_crash_free());
 

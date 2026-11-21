@@ -62,12 +62,17 @@
 //!   с grbl n12.
 //! * IS-C-inch-5dp — открытый `?`-реестр (COVERAGE §6.26), не реализовано.
 
-use std::cell::RefCell;
-use eid_core::ast::{Coolant, Dir, Frame, FramePreset, Num, Op, PathMode, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs};
-use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 use crate::block::{parse_file, Block, Marker, ParsedFile};
 use crate::lexer::LexErrorKind;
-use crate::state::{plane_axes, plane_normal, g_raw_disposition, CycleKind, GCode, MCode, ModalState};
+use crate::state::{
+    g_raw_disposition, plane_axes, plane_normal, CycleKind, GCode, MCode, ModalState,
+};
+use eid_core::ast::{
+    Coolant, Dir, Frame, FramePreset, Num, Op, PathMode, Point3, Program, Spindle, SrcSpan,
+    StartPoint, State, Units, Wcs,
+};
+use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
+use std::cell::RefCell;
 
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-grbl/eid-linuxcnc; SPEC §3/§5.2/§6/§7)
@@ -158,14 +163,24 @@ fn least_increment(units: Units) -> f64 {
 /// Fanuc: станочный параметр 5100-серии → канон-константа + notice, ruling 3
 /// брифа этап 2b). 0.5 mm / 0.05 inch — как LinuxCNC-канон.
 fn approach_clearance(units: Units) -> f64 {
-    if units == Units::In { 0.05 } else { 0.5 }
+    if units == Units::In {
+        0.05
+    } else {
+        0.5
+    }
 }
 
 /// max_unroll_iterations (COVERAGE §1.2: 10 000 — сумма L/K на блок цикла).
 const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 
 fn span(file: &str, line: u32, len: usize) -> SrcSpan {
-    SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }
+    SrcSpan {
+        file: file.to_string(),
+        line_start: line,
+        col_start: 1,
+        line_end: line,
+        col_end: len as u32 + 1,
+    }
 }
 
 /// Диагностика с явным этапом: Parse — лексические пути, Verify —
@@ -178,7 +193,14 @@ fn err_staged(
     line: u32,
     len: usize,
 ) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage }
+    Diagnostic {
+        code,
+        message: msg.into(),
+        src: Some(span(file, line, len)),
+        options: Vec::new(),
+        limit: None,
+        stage,
+    }
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
@@ -198,7 +220,11 @@ fn limit_err(
         message: msg,
         src: Some(span(file, line, 0)),
         options: Vec::new(),
-        limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+        limit: Some(LimitInfo {
+            threshold,
+            threshold_value: value,
+            actual,
+        }),
         stage: eid_core::diag::Stage::Verify,
     }
 }
@@ -208,7 +234,11 @@ fn e3(p: &Point3) -> [f64; 3] {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+    Point3 {
+        x: num_f64(x),
+        y: num_f64(y),
+        z: num_f64(z),
+    }
 }
 
 fn p3(v: [f64; 3]) -> Point3 {
@@ -260,25 +290,25 @@ enum Linked {
 #[derive(Debug, Clone)]
 struct ActiveCycle {
     kind: CycleKind,
-    z: Option<f64>,     // дно отверстия (сырое слово; G91 — от R-плоскости)
-    r: Option<f64>,     // R-плоскость (G91 — от initial Z)
-    q: Option<f64>,     // пек (G73/G83)
-    p_s: Option<f64>,   // dwell в секундах (P — целые мс, §1.2)
+    z: Option<f64>,   // дно отверстия (сырое слово; G91 — от R-плоскости)
+    r: Option<f64>,   // R-плоскость (G91 — от initial Z)
+    q: Option<f64>,   // пек (G73/G83)
+    p_s: Option<f64>, // dwell в секундах (P — целые мс, §1.2)
 }
 
 struct Ctx {
     file: String,
     modal: ModalState,
-    feed: Option<Num>,        // модальный F (переживает G0, SPEC §4)
+    feed: Option<Num>, // модальный F (переживает G0, SPEC §4)
     spindle: Spindle,
     coolant: Coolant,
     tool: Option<u32>,
-    last_s: Option<Num>,      // голое S — сохранение оборотов (§3 отчёта)
-    preset: Option<FramePreset>,        // G92 (только пресетка, §3 SPEC)
-    origins: [Option<[f64; 3]>; 9],     // wcs_define in-text (p 1..9 → idx 0..8)
-    prev: Option<Reading>,              // end последнего motion-опа
-    saw_motion: bool,                   // G92-пресетка только до первого движения
-    cycle: Option<ActiveCycle>,         // группа 09 — модальный цикл
+    last_s: Option<Num>,            // голое S — сохранение оборотов (§3 отчёта)
+    preset: Option<FramePreset>,    // G92 (только пресетка, §3 SPEC)
+    origins: [Option<[f64; 3]>; 9], // wcs_define in-text (p 1..9 → idx 0..8)
+    prev: Option<Reading>,          // end последнего motion-опа
+    saw_motion: bool,               // G92-пресетка только до первого движения
+    cycle: Option<ActiveCycle>,     // группа 09 — модальный цикл
     ops: Vec<Op>,
     notices: Vec<Notice>,
     /// W_DPI_ASSUMED-сообщения слов, прочитанных до построения опа (напр.
@@ -288,9 +318,9 @@ struct Ctx {
     end_is_last: bool,
     end_line: u32,
     /// Правило семейств (COVERAGE §1.3) — пре-скан файла:
-    family_g40: bool,      // G41/G42-семья (Fanuc-состав) встречена в файле
-    family_g49: bool,      // G43/G44-семья (Fanuc-состав) встречена в файле
-    family_g10_raw: bool,  // RAW-формы G10 (L20/P0/L1+) встречены в файле
+    family_g40: bool, // G41/G42-семья (Fanuc-состав) встречена в файле
+    family_g49: bool,     // G43/G44-семья (Fanuc-состав) встречена в файле
+    family_g10_raw: bool, // RAW-формы G10 (L20/P0/L1+) встречены в файле
 }
 
 impl Ctx {
@@ -378,7 +408,12 @@ impl Ctx {
     fn push_drop(&mut self, op: Op, kind: NoticeKind, message: String) {
         let idx = self.ops.len();
         self.flush_dpi(idx, &op);
-        self.notices.push(Notice { kind, message, op_index: idx, op });
+        self.notices.push(Notice {
+            kind,
+            message,
+            op_index: idx,
+            op,
+        });
     }
 
     /// notice при ЖИВОМ опе (near-degenerate R-arc) + flush DPI.
@@ -386,7 +421,12 @@ impl Ctx {
         let idx = self.ops.len();
         self.ops.push(op.clone());
         self.flush_dpi(idx, &op);
-        self.notices.push(Notice { kind, message, op_index: idx, op });
+        self.notices.push(Notice {
+            kind,
+            message,
+            op_index: idx,
+            op,
+        });
     }
 
     fn raw_op(&self, b: &Block, code: ErrorCode, reason: &str) -> Op {
@@ -402,22 +442,17 @@ impl Ctx {
         self.end_count += 1;
         self.end_line = line;
         self.end_is_last = is_last;
-        let op = Op::ProgramEnd { src: span(&self.file, line, blen) };
+        let op = Op::ProgramEnd {
+            src: span(&self.file, line, blen),
+        };
         self.push(op);
     }
 
     /// Связывание старта (SPEC §2 принцип 2, точки разрыва (a)–(d)).
     /// `machine` — G53-ход: правило §5.3 (start вычислим ⇔ нет пресетки и
     /// origin активной WCS in-text; иначе E_RUNTIME_STATE — невыразим).
-    fn link_start(
-        &self,
-        machine: bool,
-        line: u32,
-        blen: usize,
-    ) -> Result<Linked, Vec<Diagnostic>> {
-        let rt = |msg: String| {
-            vec![err(ErrorCode::RuntimeState, msg, &self.file, line, blen)]
-        };
+    fn link_start(&self, machine: bool, line: u32, blen: usize) -> Result<Linked, Vec<Diagnostic>> {
+        let rt = |msg: String| vec![err(ErrorCode::RuntimeState, msg, &self.file, line, blen)];
         if machine {
             // §5.3(a): machine-ход при активном frame_preset — невыразим.
             if self.preset.is_some() {
@@ -426,8 +461,16 @@ impl Ctx {
                 ));
             }
             return Ok(match self.prev {
-                Some(Reading { pos, frame: Frame::Machine, .. }) => Linked::Known(pos),
-                Some(Reading { pos, frame: Frame::Wcs, wcs }) => {
+                Some(Reading {
+                    pos,
+                    frame: Frame::Machine,
+                    ..
+                }) => Linked::Known(pos),
+                Some(Reading {
+                    pos,
+                    frame: Frame::Wcs,
+                    wcs,
+                }) => {
                     // reading_M = W + O_wcs + Δ; Δ = 0 (пресетка была бы отклонена).
                     match self.origins[wcs_idx(wcs)] {
                         Some(o) => Linked::Known([pos[0] + o[0], pos[1] + o[1], pos[2] + o[2]]),
@@ -480,14 +523,22 @@ impl Ctx {
                     None => Linked::UnknownAtStart,
                 }
             }
-            Some(Reading { pos, frame: Frame::Machine, .. }) => {
+            Some(Reading {
+                pos,
+                frame: Frame::Machine,
+                ..
+            }) => {
                 // Точка разрыва (d): reading_wcs = M_after − O_wcs − Δ.
                 match self.origins[wcs_idx(self.modal.wcs)] {
                     Some(on) => Linked::Known([pos[0] - on[0], pos[1] - on[1], pos[2] - on[2]]),
                     None => Linked::UnknownRequired,
                 }
             }
-            Some(Reading { pos, frame: Frame::Wcs, wcs: prev_wcs }) => {
+            Some(Reading {
+                pos,
+                frame: Frame::Wcs,
+                wcs: prev_wcs,
+            }) => {
                 if prev_wcs == self.modal.wcs {
                     Linked::Known(pos)
                 } else {
@@ -523,9 +574,12 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     let line_count = src.lines().count() as f64;
     if line_count > 1_000_000.0 {
         return Err(vec![limit_err(
-            "max_source_lines", 1_000_000.0, line_count,
+            "max_source_lines",
+            1_000_000.0,
+            line_count,
             format!("file has {} lines, limit 1000000", src.lines().count()),
-            file, 1,
+            file,
+            1,
         )]);
     }
 
@@ -578,9 +632,10 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     let family_g49 = parsed.blocks.iter().any(|b| g_family_t(b, &G49_FAMILY));
     // Семейство G11 (COVERAGE §1.3): RAW-формы G10 = L20 / P0 / L1/L10/L11/L50+
     // ( Fanuc-семантика; L2 P1–P6 — легальный wcs_define, семью не триггерит).
-    let family_g10_raw = parsed.blocks.iter().any(|b| {
-        b.g_codes.contains(&GCode::DataRecord) && g10_form_is_raw(b)
-    });
+    let family_g10_raw = parsed
+        .blocks
+        .iter()
+        .any(|b| b.g_codes.contains(&GCode::DataRecord) && g10_form_is_raw(b));
 
     let mut ctx = Ctx {
         file: file.to_string(),
@@ -641,7 +696,9 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "duplicate program end: more than one M2/M30 (SPEC §3; analysis §4.4)",
-            &ctx.file, ctx.end_line, 0,
+            &ctx.file,
+            ctx.end_line,
+            0,
         )]);
     }
     let _ = ctx.end_is_last; // Fanuc: хвост → Raw (см. process_block), не Err
@@ -667,9 +724,12 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
     let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
     if ops_n > 200_000.0 {
         return Err(vec![limit_err(
-            "max_ops_per_program", 200_000.0, ops_n,
+            "max_ops_per_program",
+            200_000.0,
+            ops_n,
             format!("program yields {} ops, limit 200000", ops_n as u64),
-            &ctx.file, 1,
+            &ctx.file,
+            1,
         )]);
     }
     let program = Program {
@@ -756,7 +816,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         return Err(vec![err(
             ErrorCode::InvalidInput,
             format!("modal group violation in block: {group:?} after {g:?}"),
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
 
@@ -888,7 +950,10 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
 
     // (13) План кадра (приоритет Fanuc-групп: one-shot 00 > frame > 09 > 01).
     let has_axis = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
-    let has_arc_words = b.word('I').is_some() || b.word('J').is_some() || b.word('K').is_some() || b.word('R').is_some();
+    let has_arc_words = b.word('I').is_some()
+        || b.word('J').is_some()
+        || b.word('K').is_some()
+        || b.word('R').is_some();
     let explicit_motion = b.motion();
     let explicit_cycle = b.g_codes.iter().copied().find_map(CycleKind::from_gcode);
     // Триппер сверления (анализ §5.1): G90 — X/Y-слово; G91 — X/Y/Z (Z-шаг
@@ -901,11 +966,17 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     } else if b.g_codes.contains(&GCode::Preset) || b.g_codes.contains(&GCode::DataRecord) {
         Plan::Frame
     } else if explicit_cycle.is_some() {
-        Plan::Cycle { repeat: repeat_trigger }
+        Plan::Cycle {
+            repeat: repeat_trigger,
+        }
     } else if ctx.cycle.is_some() && explicit_motion.is_none() {
         // Модальность группы 09: X/Y(Z в G91)-блок без G8x = повтор (§5.1).
-        Plan::Cycle { repeat: repeat_trigger }
-    } else if explicit_motion.is_some() || (ctx.modal.motion.is_some() && (has_axis || has_arc_words)) {
+        Plan::Cycle {
+            repeat: repeat_trigger,
+        }
+    } else if explicit_motion.is_some()
+        || (ctx.modal.motion.is_some() && (has_axis || has_arc_words))
+    {
         Plan::Motion
     } else if has_axis || has_arc_words {
         // Голые координаты без активного motion-кода — сломанный вход
@@ -913,7 +984,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "naked coordinate words: no active motion mode (analysis §2.7)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     } else {
         Plan::Noop
@@ -929,9 +1002,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     // context-слова (P/Q/L/K/R/I/J/K) без контекста — сломанный вход (Err).
     // H00 = cancel TLO (COVERAGE §2.4) — потреблён как cancel-код.
     let h_zero = b.word('H').map(|w| w.value == 0.0).unwrap_or(false);
-    if let Some((code, reason)) =
-        unused_word_diagnostic(b, plan, motion_mode, h_zero)
-    {
+    if let Some((code, reason)) = unused_word_diagnostic(b, plan, motion_mode, h_zero) {
         if code == ErrorCode::InvalidInput {
             return Err(vec![err(code, reason, &ctx.file, line, blen)]);
         }
@@ -944,9 +1015,11 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     // (и H00 — cancel TLO, §2.4) — IGNORED_SAFE, если активных кодов семейства
     // в файле нет; иначе Raw (raw-наследование — иначе round-trip оставил бы
     // компенсацию активной навсегда).
-    let h_cancel = h_zero && !b.unsupported_words.iter().any(|w| {
-        w.letter == 'G' && [430.0, 431.0, 434.0, 435.0, 440.0].contains(&w.num.value)
-    });
+    let h_cancel = h_zero
+        && !b
+            .unsupported_words
+            .iter()
+            .any(|w| w.letter == 'G' && [430.0, 431.0, 434.0, 435.0, 440.0].contains(&w.num.value));
     let mut family_cancel: Option<(ErrorCode, &'static str)> = None;
     for g in &b.g_codes {
         family_cancel = match g {
@@ -987,21 +1060,27 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "G92 after motion: frame_preset only as startup preset (SPEC §3; Q4/Q5)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if ctx.preset.is_some() {
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "second G92 — multiple presets in one program (Q5; SPEC §3)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if !has_axis {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 "G92 without axis words (SPEC §3)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         // Значения = координаты, присваиваемые текущей позиции (§3); невыписанные
@@ -1012,7 +1091,10 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
                 vals[i] = ctx.dpi_num(letter, w).value();
             }
         }
-        ctx.preset = Some(FramePreset { values: p3(vals), wcs: ctx.modal.wcs });
+        ctx.preset = Some(FramePreset {
+            values: p3(vals),
+            wcs: ctx.modal.wcs,
+        });
         return Ok(());
     }
 
@@ -1028,7 +1110,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
                 return Err(vec![err(
                     ErrorCode::InvalidInput,
                     "G10 without L word (COVERAGE §2.3)",
-                    &ctx.file, line, blen,
+                    &ctx.file,
+                    line,
+                    blen,
                 )]);
             }
             Some(lv) if lv.fract() != 0.0 => {
@@ -1064,7 +1148,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
                     vec![err(
                         ErrorCode::InvalidInput,
                         "G10 L2 without P word (COVERAGE §2.3)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]
                 })?;
                 let pi = pv as i64;
@@ -1077,7 +1163,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
                     } else {
                         (
                             ErrorCode::UnsupportedSyntax,
-                            format!("G10 L2 P{pv} outside Fanuc mill wcs domain 1..6 (COVERAGE §2.3)"),
+                            format!(
+                                "G10 L2 P{pv} outside Fanuc mill wcs domain 1..6 (COVERAGE §2.3)"
+                            ),
                         )
                     };
                     let op = ctx.raw_op(b, code, &reason);
@@ -1135,14 +1223,18 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
             vec![err(
                 ErrorCode::InvalidInput,
                 "M6 without T word (COVERAGE §3; Fanuc idiom T..M6)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]
         })?;
         if tw.value.fract() != 0.0 || tw.value < 0.0 || tw.value > 9999.0 {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 format!("T{} outside integer tool-number domain 0..9999", tw.text),
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         let t = tw.value as u32;
@@ -1186,7 +1278,10 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
 }
 
 fn modal_group_is_motion(g: GCode) -> bool {
-    matches!(g, GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw)
+    matches!(
+        g,
+        GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1201,13 +1296,13 @@ fn modal_group_is_motion(g: GCode) -> bool {
 /// Macro B) — НЕ в списке: их raw-кадр не является ходом.
 const RAW_MOTION_G: &[i64] = &[
     270, 280, 290, 300, 301, // G27/G28/G29/G30/.1 — home
-    450, 460, 470, 480,     // G45–G48 — ±H positioning
-    310, 318, 370,          // G31/G31.8 probing, G37 measurement
-    330, 340, 350, 360,     // G33–G36 threading
+    450, 460, 470, 480, // G45–G48 — ±H positioning
+    310, 318, 370, // G31/G31.8 probing, G37 measurement
+    330, 340, 350, 360, // G33–G36 threading
     22, 32, 23, 33, 24, 34, 62, // G2.2/.3/.4, G3.2/.3/.4, G6.2
     740, 760, 840, 842, 843, 870, 880, // G74/G76/G84.2/.3/G87/G88 cycles
-    531, 682,               // G53.1/G68.2 RTCP
-    811,                    // G81.1 chopping
+    531, 682, // G53.1/G68.2 RTCP
+    811, // G81.1 chopping
 ];
 
 /// Абсорбция frame-level состояния кадра (SPEC §8.6 правило 6, v0.17).
@@ -1239,7 +1334,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     return Err(vec![err(
                         ErrorCode::UnsupportedSemantics,
                         "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]);
                 }
                 ctx.modal.units = u;
@@ -1267,7 +1364,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     return Err(vec![err(
                         ErrorCode::UnsupportedSemantics,
                         "path mode switch mid-program — one mode per program (SPEC §3)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]);
                 }
                 _ => {} // повтор того же режима — легальный no-op
@@ -1302,7 +1401,11 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     Some(s) => verbatim(s),
                     None => ctx.last_s.clone().unwrap_or_else(|| num_f64(0.0)),
                 };
-                ctx.spindle = if *m == MCode::SpindleCw { Spindle::Cw(n) } else { Spindle::Ccw(n) };
+                ctx.spindle = if *m == MCode::SpindleCw {
+                    Spindle::Cw(n)
+                } else {
+                    Spindle::Ccw(n)
+                };
             }
             MCode::SpindleOff => ctx.spindle = Spindle::Off,
             MCode::CoolantMist => ctx.coolant.mist = true,
@@ -1337,14 +1440,18 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "G92 after motion: frame_preset only as startup preset (SPEC §3; Q4/Q5)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if ctx.preset.is_some() {
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "second G92 — multiple presets in one program (Q5; SPEC §3)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         let mut vals = [0.0f64; 3];
@@ -1353,7 +1460,10 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
                 vals[i] = ctx.dpi_num(letter, w).value();
             }
         }
-        ctx.preset = Some(FramePreset { values: p3(vals), wcs: ctx.modal.wcs });
+        ctx.preset = Some(FramePreset {
+            values: p3(vals),
+            wcs: ctx.modal.wcs,
+        });
     }
 
     // (g) G10 L2 P1–6 ПОЛНАЯ форма → обновление таблицы origin (§8.6: G10 в
@@ -1425,7 +1535,9 @@ fn unused_word_diagnostic(
     if h_zero {
         consumed.push('H');
     }
-    for letter in ['T', 'H', 'D', 'U', 'V', 'W', 'A', 'B', 'C', 'E', 'O', 'P', 'Q', 'R', 'I', 'J', 'K', 'L'] {
+    for letter in [
+        'T', 'H', 'D', 'U', 'V', 'W', 'A', 'B', 'C', 'E', 'O', 'P', 'Q', 'R', 'I', 'J', 'K', 'L',
+    ] {
         if b.word(letter).is_none() || consumed.contains(&letter) {
             continue;
         }
@@ -1473,19 +1585,26 @@ fn dwell_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let p = b.word('P');
     let x = b.word('X');
     let u = b.word('U');
-    let present = [p.is_some(), x.is_some(), u.is_some()].iter().filter(|&&v| v).count();
+    let present = [p.is_some(), x.is_some(), u.is_some()]
+        .iter()
+        .filter(|&&v| v)
+        .count();
     if present == 0 {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "G4 without dwell word P/X/U (analysis §1.2/§2.7)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     if present > 1 {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "G4 with multiple dwell words P/X/U (analysis §1.2)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     // P — целые мс (integer-домен, DPI не участвует); X/U — секунды float
@@ -1501,7 +1620,9 @@ fn dwell_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "negative dwell (SPEC §5.2)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     if seconds == 0.0 {
@@ -1565,7 +1686,9 @@ fn resolve_end(
                         vec![err(
                             ErrorCode::RuntimeState,
                             "incremental move requires known current position (SPEC §2)",
-                            &ctx.file, line, blen,
+                            &ctx.file,
+                            line,
+                            blen,
                         )]
                     })?;
                     Some(num_f64(base[i] + num.value()))
@@ -1577,7 +1700,9 @@ fn resolve_end(
                     return Err(vec![err(
                         ErrorCode::RuntimeState,
                         "partial end inherits unknown at frame break point (SPEC §2)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]);
                 }
             },
@@ -1595,7 +1720,10 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let machine = b.g_codes.contains(&GCode::MachineCs);
 
     let has_axis = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
-    let has_arc_words = b.word('I').is_some() || b.word('J').is_some() || b.word('K').is_some() || b.word('R').is_some();
+    let has_arc_words = b.word('I').is_some()
+        || b.word('J').is_some()
+        || b.word('K').is_some()
+        || b.word('R').is_some();
     if !has_axis && !has_arc_words {
         return Ok(()); // кадр без целевых слов — движения нет (`G53;` — no-op)
     }
@@ -1607,14 +1735,18 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 "G53 machine-frame arc — G53 is rapid/linear only (SPEC §5.3)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if !matches!(explicit, Some(GCode::Rapid) | Some(GCode::Linear)) {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 "G53 requires explicit G0/G1 in the block (Fanuc manual; SPEC §5.3)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
     }
@@ -1649,12 +1781,32 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     if let StartPoint::Known(s) = &start_point {
         if len3(&sub3(&end, s)) < 1e-9 {
             let op = if mode == GCode::Rapid {
-                Op::Rapid { start: start_point.clone(), end: end.clone(), state: ctx.state_with_frame(frame), src: span(&ctx.file, line, blen), sub: None }
+                Op::Rapid {
+                    start: start_point.clone(),
+                    end: end.clone(),
+                    state: ctx.state_with_frame(frame),
+                    src: span(&ctx.file, line, blen),
+                    sub: None,
+                }
             } else {
-                Op::Linear { start: start_point.clone(), end: end.clone(), state: ctx.state_with_frame(frame), src: span(&ctx.file, line, blen), sub: None }
+                Op::Linear {
+                    start: start_point.clone(),
+                    end: end.clone(),
+                    state: ctx.state_with_frame(frame),
+                    src: span(&ctx.file, line, blen),
+                    sub: None,
+                }
             };
-            ctx.push_drop(op, NoticeKind::ZeroLengthMotion, "zero-length motion dropped (start == end, SPEC §3)".into());
-            ctx.prev = Some(Reading { pos: e3(&end), frame, wcs: ctx.modal.wcs });
+            ctx.push_drop(
+                op,
+                NoticeKind::ZeroLengthMotion,
+                "zero-length motion dropped (start == end, SPEC §3)".into(),
+            );
+            ctx.prev = Some(Reading {
+                pos: e3(&end),
+                frame,
+                wcs: ctx.modal.wcs,
+            });
             ctx.saw_motion = true;
             return Ok(());
         }
@@ -1662,13 +1814,21 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 
     // feed: G0 не требует; linear без F → INVALID (SPEC §3/§4).
     let op = if mode == GCode::Rapid {
-        Op::Rapid { start: start_point.clone(), end: end.clone(), state: ctx.state_with_frame(frame), src: span(&ctx.file, line, blen), sub: None }
+        Op::Rapid {
+            start: start_point.clone(),
+            end: end.clone(),
+            state: ctx.state_with_frame(frame),
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        }
     } else {
         if ctx.feed.is_none() {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 "linear move before any F word (SPEC §3/§4)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         let mut st = ctx.state_with_frame(frame);
@@ -1680,21 +1840,37 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     return Err(vec![err(
                         ErrorCode::RuntimeState,
                         "G93 feed resolution requires known start (SPEC §4)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]);
                 }
             };
             let f = ctx.feed.clone().expect("feed checked above");
             let len = {
-                let d = [end.x.value() - s[0], end.y.value() - s[1], end.z.value() - s[2]];
+                let d = [
+                    end.x.value() - s[0],
+                    end.y.value() - s[1],
+                    end.z.value() - s[2],
+                ];
                 (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
             };
             st.feed = Some(num_f64(len * f.value()));
         }
-        Op::Linear { start: start_point, end: end.clone(), state: st, src: span(&ctx.file, line, blen), sub: None }
+        Op::Linear {
+            start: start_point,
+            end: end.clone(),
+            state: st,
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        }
     };
     ctx.push(op);
-    ctx.prev = Some(Reading { pos: e3(&end), frame, wcs: ctx.modal.wcs });
+    ctx.prev = Some(Reading {
+        pos: e3(&end),
+        frame,
+        wcs: ctx.modal.wcs,
+    });
     ctx.saw_motion = true;
     Ok(())
 }
@@ -1708,14 +1884,25 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 /// вырожденный центр (center == start) при end == start → drop+notice.
 /// Валидация нормали по активной плоскости (SPEC §4/§6): перпендикулярная
 /// компонента (center − start) ≈ 0, иначе E_INVALID_INPUT.
-fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> Result<(), Vec<Diagnostic>> {
+fn arc_block(
+    ctx: &mut Ctx,
+    b: &Block,
+    mode: GCode,
+    base: Option<[f64; 3]>,
+) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
     let inval = |msg: String| err(ErrorCode::InvalidInput, msg, &ctx.file, line, blen);
     // ARC с start=unknown — E_RUNTIME_STATE (геометрия требует числового
     // старта, SPEC §2).
     let start = base.ok_or_else(|| {
-        vec![err(ErrorCode::RuntimeState, "arc with unknown start (SPEC §2)", &ctx.file, line, blen)]
+        vec![err(
+            ErrorCode::RuntimeState,
+            "arc with unknown start (SPEC §2)",
+            &ctx.file,
+            line,
+            blen,
+        )]
     })?;
     let end = resolve_end(ctx, b, Some(start), false)?;
 
@@ -1723,7 +1910,11 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
     let s = start;
     let e = e3(&end);
     let pitch = e[al] - s[al]; // вне-плоскостная компонента хода (винт)
-    let dir = if mode == GCode::ArcCw { Dir::Cw } else { Dir::Ccw };
+    let dir = if mode == GCode::ArcCw {
+        Dir::Cw
+    } else {
+        Dir::Ccw
+    };
     let normal = plane_normal(ctx.modal.plane);
 
     // Центр: in-plane пара; линейная компонента = start (круг в плоскости старта).
@@ -1746,7 +1937,8 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
             let h2 = 4.0 * r * r - d0 * d0 - d1 * d1;
             if h2 < -tol_r * 4.0 * r.abs().max(1.0) {
                 return Err(vec![inval(format!(
-                    "arc chord {chord_plane:.4} > 2R {}: impossible arc (SPEC §6)", r.abs()
+                    "arc chord {chord_plane:.4} > 2R {}: impossible arc (SPEC §6)",
+                    r.abs()
                 ))]);
             }
             // Формула LinuxCNC/grbl: центр = середина хорды ± h·p̂; знак
@@ -1799,7 +1991,11 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
         // дополнение до 360° при R<0.
         Some(r) => {
             let sw = 2.0 * (chord_plane / (2.0 * r.abs())).clamp(0.0, 1.0).asin();
-            if r < 0.0 { two_pi - sw } else { sw }
+            if r < 0.0 {
+                two_pi - sw
+            } else {
+                sw
+            }
         }
         // IJK: полярные углы от центра; совпадение в плоскости = 360°
         // (полная окружность: нет end-слов + center ≠ start, §6 отчёта).
@@ -1810,8 +2006,16 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
             if sweep_ccw < 1e-9 {
                 sweep_ccw = two_pi;
             }
-            let sw = if mode == GCode::ArcCw { two_pi - sweep_ccw } else { sweep_ccw };
-            if sw < 1e-9 { two_pi } else { sw }
+            let sw = if mode == GCode::ArcCw {
+                two_pi - sweep_ccw
+            } else {
+                sweep_ccw
+            };
+            if sw < 1e-9 {
+                two_pi
+            } else {
+                sw
+            }
         }
     };
 
@@ -1847,7 +2051,11 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
             NoticeKind::ZeroLengthArc,
             "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6)".into(),
         );
-        ctx.prev = Some(Reading { pos: e, frame: Frame::Wcs, wcs: ctx.modal.wcs });
+        ctx.prev = Some(Reading {
+            pos: e,
+            frame: Frame::Wcs,
+            wcs: ctx.modal.wcs,
+        });
         ctx.saw_motion = true;
         return Ok(());
     }
@@ -1898,7 +2106,9 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "arc move before any F word (SPEC §3/§4)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     let mut st = ctx.state();
@@ -1928,12 +2138,17 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, base: Option<[f64; 3]>) -> R
         ctx.push_keep(
             op,
             NoticeKind::NearDegenerateRArc,
-            "near-degenerate R-arc (±0.12° around 180°): center amplification (EQUIVALENCE §4)".into(),
+            "near-degenerate R-arc (±0.12° around 180°): center amplification (EQUIVALENCE §4)"
+                .into(),
         );
     } else {
         ctx.push(op);
     }
-    ctx.prev = Some(Reading { pos: e, frame: Frame::Wcs, wcs: ctx.modal.wcs });
+    ctx.prev = Some(Reading {
+        pos: e,
+        frame: Frame::Wcs,
+        wcs: ctx.modal.wcs,
+    });
     ctx.saw_motion = true;
     Ok(())
 }
@@ -2007,8 +2222,13 @@ fn repeat_count(ctx: &Ctx, b: &Block) -> Result<u32, Vec<Diagnostic>> {
     if w.value.fract() != 0.0 || w.value < 0.0 || w.value > 9999.0 {
         return Err(vec![err(
             ErrorCode::InvalidInput,
-            format!("K/L repeat count {} outside integer domain 0..9999 (analysis §1.2)", w.text),
-            &ctx.file, b.line_no, b.raw.len(),
+            format!(
+                "K/L repeat count {} outside integer domain 0..9999 (analysis §1.2)",
+                w.text
+            ),
+            &ctx.file,
+            b.line_no,
+            b.raw.len(),
         )]);
     }
     Ok(w.value as u32)
@@ -2023,19 +2243,23 @@ fn repeat_count(ctx: &Ctx, b: &Block) -> Result<u32, Vec<Diagnostic>> {
 /// 4. retract: G99 → RAPID (R); G98 → RAPID (initial Z); G85/G89 — отвод на
 ///    подаче; G86 — rapid при шпинделе off, рестарт в исходном направлении
 ///    (Q9) — в state последующих опов.
-fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(), Vec<Diagnostic>> {
+fn unroll_cycle(
+    ctx: &mut Ctx,
+    b: &Block,
+    cyc: &ActiveCycle,
+    k: u32,
+) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
-    let fl = |code: ErrorCode, msg: String| {
-        vec![err(code, msg, &ctx.file, line, blen)]
-    };
+    let fl = |code: ErrorCode, msg: String| vec![err(code, msg, &ctx.file, line, blen)];
 
     // §7.6: позиция до цикла должна быть определена предшествующими
     // motion-опами (пресетки-якоря не считаются — strict reading).
     if ctx.prev.is_none() {
         return Err(fl(
             ErrorCode::RuntimeState,
-            "cycle as first motion op — position not established by preceding moves (SPEC §7.6)".into(),
+            "cycle as first motion op — position not established by preceding moves (SPEC §7.6)"
+                .into(),
         ));
     }
     let base = match ctx.link_start(false, line, blen)? {
@@ -2055,26 +2279,39 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
             MAX_UNROLL_ITERATIONS as f64,
             k as f64,
             format!("cycle repeat K/L {k} exceeds max_unroll_iterations ({MAX_UNROLL_ITERATIONS})"),
-            &ctx.file, line,
+            &ctx.file,
+            line,
         )]);
     }
 
     // R и Z обязательны (Fanuc manual: «It is an error if…» — паритет LinuxCNC).
     let r_word = cyc.r.ok_or_else(|| {
-        fl(ErrorCode::InvalidInput, "cycle without R word (retract plane)".into())
+        fl(
+            ErrorCode::InvalidInput,
+            "cycle without R word (retract plane)".into(),
+        )
     })?;
     let z_word = cyc.z.ok_or_else(|| {
-        fl(ErrorCode::InvalidInput, "cycle without Z word (hole bottom)".into())
+        fl(
+            ErrorCode::InvalidInput,
+            "cycle without Z word (hole bottom)".into(),
+        )
     })?;
     // Модальный feed обязателен (feed-ходы цикла — SPEC §4).
     let feed = ctx.feed.clone().ok_or_else(|| {
-        fl(ErrorCode::InvalidInput, "cycle without F — feed moves require modal feed (SPEC §4)".into())
+        fl(
+            ErrorCode::InvalidInput,
+            "cycle without F — feed moves require modal feed (SPEC §4)".into(),
+        )
     })?;
 
     // Dwell: G82/G89 — P обязателен; G86 — опционален (`?` §10(6)).
     let dwell = match cyc.kind {
         CycleKind::DrillDwell | CycleKind::BoreDwell => Some(cyc.p_s.ok_or_else(|| {
-            fl(ErrorCode::InvalidInput, "cycle G82/G89 without P word (dwell, integer ms per Fanuc)".into())
+            fl(
+                ErrorCode::InvalidInput,
+                "cycle G82/G89 without P word (dwell, integer ms per Fanuc)".into(),
+            )
         })?),
         CycleKind::BoreStop => cyc.p_s,
         _ => None,
@@ -2083,10 +2320,16 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
     let q = match cyc.kind {
         CycleKind::Peck | CycleKind::ChipBreak => {
             let q = cyc.q.ok_or_else(|| {
-                fl(ErrorCode::InvalidInput, "peck cycle G73/G83 without Q word (peck depth)".into())
+                fl(
+                    ErrorCode::InvalidInput,
+                    "peck cycle G73/G83 without Q word (peck depth)".into(),
+                )
             })?;
             if q <= 0.0 {
-                return Err(fl(ErrorCode::InvalidInput, "Q must be > 0 (peck depth)".into()));
+                return Err(fl(
+                    ErrorCode::InvalidInput,
+                    "Q must be > 0 (peck depth)".into(),
+                ));
             }
             Some(q)
         }
@@ -2096,7 +2339,11 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
     let src = span(&ctx.file, line, blen);
     let (mut cx, mut cy, mut cz) = (base[0], base[1], base[2]);
     let initial_z = base[2];
-    let mut r_cur = if ctx.modal.dist_abs { r_word } else { initial_z };
+    let mut r_cur = if ctx.modal.dist_abs {
+        r_word
+    } else {
+        initial_z
+    };
     let mut sub = 1u32;
     let spindle_before = ctx.spindle.clone(); // рестарт G86 (Q9)
     let units = ctx.modal.units;
@@ -2108,8 +2355,8 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
 
     for _ in 0..k {
         let (fx, fy) = (cx, cy); // позиция ДО шага — оттуда traverse
-        // Позиции итерации (§5.2/§7.3): G90 — константны; G91 — шаг X/Y/R
-        // на повтор, Z = инкремент от R-плоскости.
+                                 // Позиции итерации (§5.2/§7.3): G90 — константны; G91 — шаг X/Y/R
+                                 // на повтор, Z = инкремент от R-плоскости.
         if ctx.modal.dist_abs {
             if let Some(w) = b.word('X') {
                 cx = ctx.dpi_num('X', w).value();
@@ -2126,7 +2373,11 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                 cy += ctx.dpi_num('Y', w).value();
             }
         }
-        let z_bottom = if ctx.modal.dist_abs { z_word } else { r_cur + z_word };
+        let z_bottom = if ctx.modal.dist_abs {
+            z_word
+        } else {
+            r_cur + z_word
+        };
 
         // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
         //    с подходом запрещён); нулевой (повтор той же X/Y) → drop.
@@ -2157,9 +2408,22 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
 
         // 3. Тело цикла.
         match cyc.kind {
-            CycleKind::Drill | CycleKind::DrillDwell | CycleKind::BoreFeedOut
-            | CycleKind::BoreDwell | CycleKind::BoreStop => {
-                push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, z_bottom], &feed, src.clone(), sub));
+            CycleKind::Drill
+            | CycleKind::DrillDwell
+            | CycleKind::BoreFeedOut
+            | CycleKind::BoreDwell
+            | CycleKind::BoreStop => {
+                push_cycle_move(
+                    ctx,
+                    cyc_linear(
+                        ctx,
+                        [cx, cy, cz],
+                        [cx, cy, z_bottom],
+                        &feed,
+                        src.clone(),
+                        sub,
+                    ),
+                );
                 sub += 1;
                 cz = z_bottom;
                 if let Some(p) = dwell {
@@ -2208,7 +2472,10 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
                 let clr = approach_clearance(units);
                 for kk in 1..=n {
                     let d = (r_cur - kk as f64 * q).max(z_bottom);
-                    push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, d], &feed, src.clone(), sub));
+                    push_cycle_move(
+                        ctx,
+                        cyc_linear(ctx, [cx, cy, cz], [cx, cy, d], &feed, src.clone(), sub),
+                    );
                     sub += 1;
                     cz = d;
                     if kk == n {
@@ -2263,10 +2530,24 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
         // отвода: G85/G89 — feed-out (bore); G86 — rapid при выключенном
         // шпинделе (Q9: рестарт в прежнем направлении после отвода);
         // остальные — rapid.
-        let retract = if ctx.modal.retract_g98 { initial_z } else { r_cur };
+        let retract = if ctx.modal.retract_g98 {
+            initial_z
+        } else {
+            r_cur
+        };
         match cyc.kind {
             CycleKind::BoreFeedOut | CycleKind::BoreDwell => {
-                push_cycle_move(ctx, cyc_linear(ctx, [cx, cy, cz], [cx, cy, retract], &feed, src.clone(), sub));
+                push_cycle_move(
+                    ctx,
+                    cyc_linear(
+                        ctx,
+                        [cx, cy, cz],
+                        [cx, cy, retract],
+                        &feed,
+                        src.clone(),
+                        sub,
+                    ),
+                );
                 sub += 1;
             }
             CycleKind::BoreStop => {
@@ -2314,7 +2595,11 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
     }
 
     // last: конечная позиция развёртки (связывание следующего опа).
-    ctx.prev = Some(Reading { pos: [cx, cy, cz], frame: Frame::Wcs, wcs: ctx.modal.wcs });
+    ctx.prev = Some(Reading {
+        pos: [cx, cy, cz],
+        frame: Frame::Wcs,
+        wcs: ctx.modal.wcs,
+    });
     ctx.saw_motion = true;
     Ok(())
 }
@@ -2325,8 +2610,16 @@ fn unroll_cycle(ctx: &mut Ctx, b: &Block, cyc: &ActiveCycle, k: u32) -> Result<(
 /// R-плоскость даёт нулевой ход → drop + notice, не оп).
 fn push_cycle_move(ctx: &mut Ctx, op: Op) {
     let zero = match &op {
-        Op::Rapid { start: StartPoint::Known(s), end, .. }
-        | Op::Linear { start: StartPoint::Known(s), end, .. } => {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        }
+        | Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
             let sv = e3(s);
             let ev = e3(end);
             sv.iter().zip(ev.iter()).all(|(a, b)| (a - b).abs() < 1e-9)
@@ -2346,14 +2639,7 @@ fn push_cycle_move(ctx: &mut Ctx, op: Op) {
 
 /// LINEAR-оп цикла: feed кадра цикла активен для ВСЕХ производных опов
 /// (§7.7 v0.15.1); G93 — разрешение feed = len·F (вертикальный ход).
-fn cyc_linear(
-    ctx: &Ctx,
-    from: [f64; 3],
-    to: [f64; 3],
-    feed: &Num,
-    src: SrcSpan,
-    sub: u32,
-) -> Op {
+fn cyc_linear(ctx: &Ctx, from: [f64; 3], to: [f64; 3], feed: &Num, src: SrcSpan, sub: u32) -> Op {
     let mut st = ctx.state();
     if ctx.modal.feed_inverse {
         let len = (to[2] - from[2]).abs();

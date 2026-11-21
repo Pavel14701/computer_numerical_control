@@ -47,11 +47,17 @@ fn num(v: f64) -> Num {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> eid_core::ast::Point3 {
-    eid_core::ast::Point3 { x: num(x), y: num(y), z: num(z) }
+    eid_core::ast::Point3 {
+        x: num(x),
+        y: num(y),
+        z: num(z),
+    }
 }
 
 fn parse_fanuc(src: &str) -> Program {
-    FanucAdapter::new().parse(src, "t.ngc").expect("fanuc parse ok")
+    FanucAdapter::new()
+        .parse(src, "t.ngc")
+        .expect("fanuc parse ok")
 }
 
 fn emit_fanuc(src: &str) -> String {
@@ -68,7 +74,9 @@ fn emit_w(src: &str) -> (String, Vec<String>) {
 }
 
 fn err_code_of(r: Result<String, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode {
-    let Err(d) = r else { panic!("ожидался Err") };
+    let Err(d) = r else {
+        panic!("ожидался Err")
+    };
     d[0].code
 }
 
@@ -85,9 +93,11 @@ fn roundtrip(src: &str, label: &str) {
     let d = semantic_diff(&a, &b, &DiffConfig::default());
     let d: Vec<_> = d
         .into_iter()
-        .filter(|x| !matches!(x, Divergence::MetaField { field: "path_mode" }
+        .filter(|x| {
+            !matches!(x, Divergence::MetaField { field: "path_mode" }
             if matches!(a.path_mode, PathMode::ExactPath)
-                && matches!(b.path_mode, PathMode::ExactStop)))
+                && matches!(b.path_mode, PathMode::ExactStop))
+        })
         .collect();
     assert!(d.is_empty(), "{label}: round-trip divergences: {d:?}");
 }
@@ -131,12 +141,14 @@ fn golden_minimal_motion() {
 fn golden_feed_delta_on_rapid() {
     // Развёртка: traverse (rapid) НЕСЁТ модальный feed кадра — F-дельта
     // на G0-кадре легальна (F — своя группа 05, §7.7-1 SPEC).
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG81 X10. Y0. Z-5. R1. F120.;\nM30;\n",
-    );
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG81 X10. Y0. Z-5. R1. F120.;\nM30;\n");
     let lines: Vec<&str> = text.lines().collect();
     // traverse — первый G0 с F120.
-    let tr = lines.iter().find(|l| l.starts_with("G0 X10.")).expect("traverse");
+    let tr = lines
+        .iter()
+        .find(|l| l.starts_with("G0 X10."))
+        .expect("traverse");
     assert!(*tr == "G0 X10.0000 Y0.0000 Z2.0000 F120.0000");
 }
 
@@ -150,13 +162,18 @@ fn golden_decimal_point_always() {
     assert!(text.contains("X0.0250 Y0.0500 Z0.0020"), "{text:?}");
     // Ни одного bare-числа в координатах (кроме dwell P — целые мс).
     for line in text.lines() {
-        if line.starts_with("G0 ") || line.starts_with("G1 ") || line.starts_with("G2 ")
+        if line.starts_with("G0 ")
+            || line.starts_with("G1 ")
+            || line.starts_with("G2 ")
             || line.starts_with("G3 ")
         {
             for w in line.split_whitespace().skip(1) {
                 let letters = w.chars().next().expect("word");
                 if letters.is_ascii_alphabetic() {
-                    assert!(w[1..].contains('.'), "bare number `{w}` in `{line}` (DPI trap)");
+                    assert!(
+                        w[1..].contains('.'),
+                        "bare number `{w}` in `{line}` (DPI trap)"
+                    );
                 }
             }
         }
@@ -169,7 +186,10 @@ fn golden_machine_frame_prefix() {
     let text = emit_fanuc(
         "G21 G90 G94 G17;\nG10 L2 P1 X0. Y0. Z0.;\nG0 X10. Y10. Z5.;\nG53 G0 X0. Y0. Z0.;\nM30;\n",
     );
-    assert!(text.contains("\nG53 G0 X0.0000 Y0.0000 Z0.0000\n"), "{text:?}");
+    assert!(
+        text.contains("\nG53 G0 X0.0000 Y0.0000 Z0.0000\n"),
+        "{text:?}"
+    );
 }
 
 // ===========================================================================
@@ -178,9 +198,7 @@ fn golden_machine_frame_prefix() {
 
 #[test]
 fn golden_arc_g17_ijk() {
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG3 X5. Y5. I0. J5. F100.;\nM30;\n",
-    );
+    let text = emit_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG3 X5. Y5. I0. J5. F100.;\nM30;\n");
     assert!(
         text.contains("G3 X5.0000 Y5.0000 Z0.0000 I0.0000 J5.0000 F100.0000\n"),
         "{text:?}"
@@ -190,19 +208,23 @@ fn golden_arc_g17_ijk() {
 #[test]
 fn golden_arc_g18_pair_ik() {
     // G18 = ZX: пара I+K (literal X/Z), вне-плоскостное Y — координата конца.
-    let text = emit_fanuc(
-        "G21 G90 G94 G18;\nG0 X0. Y0. Z0.;\nG2 X5. Y2. Z-5. I5. K0. F100.;\nM30;\n",
-    );
-    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
+    let text =
+        emit_fanuc("G21 G90 G94 G18;\nG0 X0. Y0. Z0.;\nG2 X5. Y2. Z-5. I5. K0. F100.;\nM30;\n");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("arc line");
     assert!(arc == "G2 X5.0000 Y2.0000 Z-5.0000 I5.0000 K0.0000 F100.0000");
 }
 
 #[test]
 fn golden_arc_g19_pair_jk() {
-    let text = emit_fanuc(
-        "G21 G90 G94 G19;\nG0 X0. Y0. Z0.;\nG3 X2. Y5. Z-5. J5. K0. F100.;\nM30;\n",
-    );
-    let arc = text.lines().find(|l| l.starts_with("G3 ")).expect("arc line");
+    let text =
+        emit_fanuc("G21 G90 G94 G19;\nG0 X0. Y0. Z0.;\nG3 X2. Y5. Z-5. J5. K0. F100.;\nM30;\n");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G3 "))
+        .expect("arc line");
     assert!(arc == "G3 X2.0000 Y5.0000 Z-5.0000 J5.0000 K0.0000 F100.0000");
 }
 
@@ -210,10 +232,11 @@ fn golden_arc_g19_pair_jk() {
 fn golden_arc_r_source_emits_ijk() {
     // EQUIVALENCE §4: R НЕ эмитится никогда — R-источник → IJK; notice
     // near-degenerate не нужен (полукруг точно 180° — вне ±0.12°).
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG2 X10. Y0. R5. F100.;\nM30;\n",
-    );
-    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
+    let text = emit_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG2 X10. Y0. R5. F100.;\nM30;\n");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("arc line");
     assert!(arc.contains('I') && arc.contains('J'), "{arc}");
     assert!(!arc.contains(" R"), "{arc}");
     assert!(arc == "G2 X10.0000 Y0.0000 Z0.0000 I5.0000 J0.0000 F100.0000");
@@ -223,18 +246,26 @@ fn golden_arc_r_source_emits_ijk() {
 fn golden_full_circle_no_end_words() {
     // COVERAGE §5.1: полный круг (sweep=360°, pitch=0) — `G2 I_ J_` БЕЗ
     // end-слов (слова end==start перепарсер квантует в zero-length drop).
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. I-5. J0. F100.;\nM30;\n",
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. I-5. J0. F100.;\nM30;\n");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("arc line");
+    assert_eq!(
+        arc, "G2 I-5.0000 J0.0000 F100.0000",
+        "без X/Y/Z на полном круге"
     );
-    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
-    assert_eq!(arc, "G2 I-5.0000 J0.0000 F100.0000", "без X/Y/Z на полном круге");
 }
 
 #[test]
 fn golden_full_circle_inherited_end_no_words() {
     // Полный круг через НАСЛЕДОВАННЫЙ end (без end-слов в источнике).
     let text = emit_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 I-5. F100.;\nM30;\n");
-    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("arc line");
     assert!(arc == "G2 I-5.0000 J0.0000 F100.0000");
 }
 
@@ -242,10 +273,12 @@ fn golden_full_circle_inherited_end_no_words() {
 fn golden_helical_full_turn() {
     // Винтовой полный оборот (pitch≠0) — ТОЛЬКО end-слово вне-плоскостной
     // оси (in-plane наследуют старт).
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. Z5. I-5. J0. F100.;\nM30;\n",
-    );
-    let arc = text.lines().find(|l| l.starts_with("G2 ")).expect("arc line");
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG2 X10. Y0. Z5. I-5. J0. F100.;\nM30;\n");
+    let arc = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("arc line");
     assert!(arc == "G2 Z5.0000 I-5.0000 J0.0000 F100.0000");
 }
 
@@ -257,9 +290,15 @@ fn golden_plane_change_line() {
     );
     let lines: Vec<&str> = text.lines().collect();
     let gi = lines.iter().position(|l| *l == "G19").expect("G19 line");
-    let ai = lines.iter().position(|l| l.starts_with("G3 ")).expect("arc");
+    let ai = lines
+        .iter()
+        .position(|l| l.starts_with("G3 "))
+        .expect("arc");
     assert!(gi < ai, "G19 до дуги: {lines:?}");
-    assert!(lines[gi + 1].starts_with("G3 "), "G19 непосредственно перед дугой");
+    assert!(
+        lines[gi + 1].starts_with("G3 "),
+        "G19 непосредственно перед дугой"
+    );
 }
 
 // ===========================================================================
@@ -311,10 +350,12 @@ fn golden_frame_preset_first() {
 
 #[test]
 fn golden_wcs_define_and_select() {
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG10 L2 P2 X5. Y0. Z0.;\nG55;\nG0 X30. Y30. Z5.;\nM30;\n",
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG10 L2 P2 X5. Y0. Z0.;\nG55;\nG0 X30. Y30. Z5.;\nM30;\n");
+    assert!(
+        text.contains("G10 L2 P2 X5.0000 Y0.0000 Z0.0000\n"),
+        "{text:?}"
     );
-    assert!(text.contains("G10 L2 P2 X5.0000 Y0.0000 Z0.0000\n"), "{text:?}");
     assert!(text.contains("\nG55\n"), "{text:?}");
 }
 
@@ -337,20 +378,24 @@ fn golden_program_end_m30() {
     // Дефолт M30 (Fanuc-конвенция rewind); профиль M02 — этап 8.
     let text = emit_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nM2;\n");
     assert!(text.ends_with("M30\n"), "{text:?}");
-    assert!(!text.contains("M2\n"), "голый M2 не эмитится (только M30): {text:?}");
+    assert!(
+        !text.contains("M2\n"),
+        "голый M2 не эмитится (только M30): {text:?}"
+    );
 }
 
 #[test]
 fn golden_m5_m9_tail_not_emitted() {
     // Ruling COVERAGE §5: хвост M5/M9 перед program_end НЕ эмитится
     // (AST не хранит пост-конечное состояние; M30 сам глушит).
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nM3 S1200.;\nM8;\nG0 X0. Y0. Z5.;\nM30;\n",
-    );
+    let text = emit_fanuc("G21 G90 G94 G17;\nM3 S1200.;\nM8;\nG0 X0. Y0. Z5.;\nM30;\n");
     // M3/M8 должны быть эмитены ДО хода (дельты снапшота), но НЕ после.
     let pend = text.rfind("M30").expect("M30");
     let tail = &text[pend..];
-    assert!(!tail.contains("M5") && !tail.contains("M9"), "хвост M5/M9: {text:?}");
+    assert!(
+        !tail.contains("M5") && !tail.contains("M9"),
+        "хвост M5/M9: {text:?}"
+    );
     assert!(text.contains("M3 S1200.0000"), "{text:?}");
 }
 
@@ -380,7 +425,10 @@ fn golden_path_exact_stop_no_warning() {
     // warnings (1:1 по значению).
     let (text, warnings) = emit_w("G21 G90 G94 G17;\nG61;\nG0 X0. Y0. Z5.;\nM30;\n");
     assert!(text.contains("\nG61\n"), "{text:?}");
-    assert!(warnings.is_empty(), "ExactStop 1:1 — без warnings: {warnings:?}");
+    assert!(
+        warnings.is_empty(),
+        "ExactStop 1:1 — без warnings: {warnings:?}"
+    );
 }
 
 #[test]
@@ -402,7 +450,10 @@ fn golden_exact_path_warning() {
         warnings[0].contains("Fanuc exact_path эквивалента нет"),
         "{warnings:?}"
     );
-    assert!(warnings[0].contains("этап 8"), "профиль-опция задокументирована: {warnings:?}");
+    assert!(
+        warnings[0].contains("этап 8"),
+        "профиль-опция задокументирована: {warnings:?}"
+    );
 }
 
 #[test]
@@ -436,11 +487,13 @@ fn golden_cycle_unroll_verbose() {
     // Развёрнутые циклы — self-выход: G81 → traverse + approach + drill +
     // retract (§7.7 SPEC); verbose — документировано (SPEC §1.2);
     // обратное свёртывание запрещено.
-    let text = emit_fanuc(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG81 X10. Y0. Z-5. R1. F120.;\nM30;\n",
-    );
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z2.;\nG81 X10. Y0. Z-5. R1. F120.;\nM30;\n");
     let lines: Vec<&str> = text.lines().collect();
-    let tr = lines.iter().position(|l| l.starts_with("G0 X10.")).expect("traverse");
+    let tr = lines
+        .iter()
+        .position(|l| l.starts_with("G0 X10."))
+        .expect("traverse");
     let ap = lines
         .iter()
         .position(|l| l.starts_with("G0 X10.0000 Y0.0000 Z1.0000"))
@@ -472,14 +525,28 @@ fn legality_table_composition() {
     // 10 узлов словаря op_kind; 9 легальны (wcs_set_here запрещён — ловушка
     // №3), frame_preset — мета (G92).
     let kinds = [
-        "rapid", "linear", "arc", "dwell", "tool_change", "program_stop",
-        "program_end", "wcs_define", "wcs_set_here", "raw",
+        "rapid",
+        "linear",
+        "arc",
+        "dwell",
+        "tool_change",
+        "program_stop",
+        "program_end",
+        "wcs_define",
+        "wcs_set_here",
+        "raw",
     ];
     for k in kinds {
-        assert!(t.legal.contains(&k) || k == "wcs_set_here", "{k}: нет в таблице");
+        assert!(
+            t.legal.contains(&k) || k == "wcs_set_here",
+            "{k}: нет в таблице"
+        );
     }
     assert!(t.is_legal_kind("rapid"));
-    assert!(t.is_legal_kind("frame_preset"), "frame_preset (G92) легален");
+    assert!(
+        t.is_legal_kind("frame_preset"),
+        "frame_preset (G92) легален"
+    );
     assert!(!t.is_legal_kind("wcs_set_here"), "wcs_set_here НЕ легален");
     // illegal-условия с кодами (COVERAGE §5.1 + канон-форма).
     let expect = [
@@ -511,7 +578,10 @@ fn legality_table_composition() {
     // warnings-условия.
     assert!(t.warning_of("path_mode_exact_path").is_some());
     assert!(t.warning_of("path_mode_blend_t").is_some());
-    assert!(t.warning_of("path_mode_exact_stop").is_none(), "ExactStop 1:1 — без warning");
+    assert!(
+        t.warning_of("path_mode_exact_stop").is_none(),
+        "ExactStop 1:1 — без warning"
+    );
     // op_kind — словарь имён таблицы.
     let p = parse_fanuc("G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nM30;\n");
     assert_eq!(op_kind(&p.ops[0]), "rapid");
@@ -542,7 +612,12 @@ fn illegal_wcs_set_here() {
         path_mode: PathMode::ExactStop,
         frame_preset: None,
         ops: vec![
-            Op::WcsSetHere { p: 1, delta: pt(0.0, 0.0, 0.0), state: st.clone(), src: span(1) },
+            Op::WcsSetHere {
+                p: 1,
+                delta: pt(0.0, 0.0, 0.0),
+                state: st.clone(),
+                src: span(1),
+            },
             Op::Rapid {
                 start: StartPoint::Known(pt(0.0, 0.0, 0.0)),
                 end: pt(5.0, 5.0, 5.0),
@@ -553,7 +628,9 @@ fn illegal_wcs_set_here() {
             Op::ProgramEnd { src: span(3) },
         ],
     };
-    let Err(d) = FanucAdapter::new().emit(&p) else { panic!("ожидался Err") };
+    let Err(d) = FanucAdapter::new().emit(&p) else {
+        panic!("ожидался Err")
+    };
     assert_eq!(d[0].code, legality_table().code_of("wcs_set_here").unwrap());
     assert!(d[0].message.contains("L20"), "{}", d[0].message);
     assert_eq!(d[0].stage, eid_core::diag::Stage::Emit);
@@ -601,14 +678,14 @@ fn illegal_machine_frame_arc() {
     // поэтому первый код — E_INVALID_INPUT verify; условие machine_frame_arc
     // в таблице — defensive-полнота (второй барьер). Эмиссия = Err в обоих
     // случаях — контракт §5.1 соблюдён.
-    let mut p = parse_fanuc(
-        "G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG2 X5. Y5. I0. J5. F100.;\nM30;\n",
-    );
+    let mut p = parse_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG2 X5. Y5. I0. J5. F100.;\nM30;\n");
     match &mut p.ops[1] {
         Op::Arc { state, .. } => state.frame = Frame::Machine,
         other => panic!("оп не Arc: {other:?}"),
     }
-    let Err(d) = FanucAdapter::new().emit(&p) else { panic!("ожидался Err") };
+    let Err(d) = FanucAdapter::new().emit(&p) else {
+        panic!("ожидался Err")
+    };
     assert!(
         matches!(
             d[0].code,
@@ -665,7 +742,9 @@ fn illegal_program_end_not_last() {
             sub: None,
         },
     );
-    let Err(d) = FanucAdapter::new().emit(&p2) else { panic!("ожидался Err") };
+    let Err(d) = FanucAdapter::new().emit(&p2) else {
+        panic!("ожидался Err")
+    };
     assert_eq!(d[0].code, ErrorCode::InvalidInput);
     assert_eq!(
         legality_table().code_of("program_end_not_last"),
@@ -689,14 +768,14 @@ fn illegal_magic_version() {
 fn legality_behavior_cross_check() {
     let t = legality_table();
     // wcs_set_here — код из таблицы.
-    assert_eq!(t.code_of("wcs_set_here"), Some(ErrorCode::UnsupportedSemantics));
+    assert_eq!(
+        t.code_of("wcs_set_here"),
+        Some(ErrorCode::UnsupportedSemantics)
+    );
     // Таблица declarations ↔ фактически возвращённые коды (см. illegal_*):
     // достаточно исчерпывающей проверки соответствия классов.
     for (cond, _) in &t.illegal {
-        assert!(
-            t.code_of(cond).is_some(),
-            "условие {cond} без кода"
-        );
+        assert!(t.code_of(cond).is_some(), "условие {cond} без кода");
     }
 }
 
@@ -802,7 +881,13 @@ fn adapter_take_warnings() {
 // ===========================================================================
 
 fn span(line: u32) -> SrcSpan {
-    SrcSpan { file: "t.ngc".into(), line_start: line, col_start: 1, line_end: line, col_end: 0 }
+    SrcSpan {
+        file: "t.ngc".into(),
+        line_start: line,
+        col_start: 1,
+        line_end: line,
+        col_end: 0,
+    }
 }
 
 fn state_of(op: &Op) -> State {

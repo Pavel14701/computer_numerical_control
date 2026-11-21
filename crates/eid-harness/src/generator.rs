@@ -26,7 +26,15 @@ pub struct GenConfig {
 
 impl Default for GenConfig {
     fn default() -> Self {
-        Self { seed: 1, max_ops: 6, arc_w: 300, dwell_w: 100, stop_w: 60, wcs_switch_w: 80, preset_w: 300 }
+        Self {
+            seed: 1,
+            max_ops: 6,
+            arc_w: 300,
+            dwell_w: 100,
+            stop_w: 60,
+            wcs_switch_w: 80,
+            preset_w: 300,
+        }
     }
 }
 
@@ -35,15 +43,26 @@ pub struct Lcg(u64);
 
 impl Lcg {
     pub fn new(seed: u64) -> Self {
-        Self(seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) | 1)
+        Self(
+            seed.wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407)
+                | 1,
+        )
     }
     pub fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0
     }
     /// Равномерно [0, bound).
     pub fn below(&mut self, bound: usize) -> usize {
-        if bound == 0 { 0 } else { (self.next_u64() % bound as u64) as usize }
+        if bound == 0 {
+            0
+        } else {
+            (self.next_u64() % bound as u64) as usize
+        }
     }
     /// В тысячных долях: true с вероятностью permille/1000.
     pub fn permille(&mut self, permille: u32) -> bool {
@@ -57,11 +76,21 @@ fn num(v: f64) -> Num {
 }
 
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 { x: num(x), y: num(y), z: num(z) }
+    Point3 {
+        x: num(x),
+        y: num(y),
+        z: num(z),
+    }
 }
 
 fn src(i: usize) -> SrcSpan {
-    SrcSpan { file: format!("gen{i}.ngc"), line_start: 1, col_start: 1, line_end: 1, col_end: 1 }
+    SrcSpan {
+        file: format!("gen{i}.ngc"),
+        line_start: 1,
+        col_start: 1,
+        line_end: 1,
+        col_end: 1,
+    }
 }
 
 fn state(feed: Option<f64>, wcs: Wcs) -> State {
@@ -105,7 +134,11 @@ pub fn arc_center(sx: f64, sy: f64, ex: f64, ey: f64, sweep_deg: f64, dir: Dir) 
         half / t // |t| ≥ MIN_TAN ⇒ |d| ≤ half/MIN_TAN = 10⁴·half
     };
     // перпендикуляр единичной длины: ccw — слева, cw — справа
-    let (px, py) = if dir == Dir::Ccw { (-dy / l2, dx / l2) } else { (dy / l2, -dx / l2) };
+    let (px, py) = if dir == Dir::Ccw {
+        (-dy / l2, dx / l2)
+    } else {
+        (dy / l2, -dx / l2)
+    };
     let mx = (sx + ex) / 2.0;
     let my = (sy + ey) / 2.0;
     (mx + px * d, my + py * d)
@@ -124,7 +157,12 @@ pub fn generate(cfg: &GenConfig) -> Program {
     if preset {
         // пресетка: G92 читает текущую позицию как (px,py,pz) -> первый ход Known
         let (px, py, pz) = (0.0, 0.0, num_range(&mut rng, 2.0, 6.0));
-        ops.push(Op::WcsSetHere { p: 1, delta: p3(px, py, pz), state: state(None, wcs), src: src(ops.len()) });
+        ops.push(Op::WcsSetHere {
+            p: 1,
+            delta: p3(px, py, pz),
+            state: state(None, wcs),
+            src: src(ops.len()),
+        });
         cur = (px, py, pz);
         start_known = true; // якорь L20 той же WCS: reading = delta
     }
@@ -165,7 +203,11 @@ pub fn generate(cfg: &GenConfig) -> Program {
         let end = rand_end(&mut rng, cur);
         let roll = rng.below(1000);
 
-        if roll < cfg.arc_w as usize && feed.is_some() && start_known && (end.0 - cur.0).abs() + (end.1 - cur.1).abs() > 0.5 {
+        if roll < cfg.arc_w as usize
+            && feed.is_some()
+            && start_known
+            && (end.0 - cur.0).abs() + (end.1 - cur.1).abs() > 0.5
+        {
             // плоская дуга XY (Z не меняется: pitch = 0, §6.2), центр согласован §6.3
             let sweeps = [90.0_f64, 180.0, 270.0];
             let sweep = sweeps[rng.below(3)];
@@ -216,13 +258,21 @@ pub fn generate(cfg: &GenConfig) -> Program {
                 sub: None,
             });
         } else {
-            ops.push(Op::Rapid { start, end: p3(end.0, end.1, end.2), state: state(feed, wcs), src: src(ops.len()), sub: None });
+            ops.push(Op::Rapid {
+                start,
+                end: p3(end.0, end.1, end.2),
+                state: state(feed, wcs),
+                src: src(ops.len()),
+                sub: None,
+            });
         }
         cur = end;
         start_known = true;
     }
 
-    ops.push(Op::ProgramEnd { src: src(ops.len()) });
+    ops.push(Op::ProgramEnd {
+        src: src(ops.len()),
+    });
     Program {
         eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
@@ -262,11 +312,21 @@ mod tests {
     fn generated_programs_are_valid_and_byte_stable() {
         let eid = EidTextAdapter::new();
         for seed in 1..=20u64 {
-            let cfg = GenConfig { seed, ..GenConfig::default() };
+            let cfg = GenConfig {
+                seed,
+                ..GenConfig::default()
+            };
             let p = generate(&cfg);
-            let text = eid.emit(&p).unwrap_or_else(|d| panic!("seed {seed}: emit: {d:?}"));
-            let back = eid.parse(&text, "gen").unwrap_or_else(|d| panic!("seed {seed}: parse: {d:?}"));
-            assert!(eid.take_notices().is_empty(), "seed {seed}: notices — генератор обязан выдавать каноничный AST");
+            let text = eid
+                .emit(&p)
+                .unwrap_or_else(|d| panic!("seed {seed}: emit: {d:?}"));
+            let back = eid
+                .parse(&text, "gen")
+                .unwrap_or_else(|d| panic!("seed {seed}: parse: {d:?}"));
+            assert!(
+                eid.take_notices().is_empty(),
+                "seed {seed}: notices — генератор обязан выдавать каноничный AST"
+            );
             let text2 = eid.emit(&back).unwrap();
             assert_eq!(text, text2, "seed {seed}: emit нестабилен");
         }
@@ -274,10 +334,22 @@ mod tests {
 
     #[test]
     fn determinism_same_seed_same_program() {
-        let a = generate(&GenConfig { seed: 42, max_ops: 10, ..GenConfig::default() });
-        let b = generate(&GenConfig { seed: 42, max_ops: 10, ..GenConfig::default() });
+        let a = generate(&GenConfig {
+            seed: 42,
+            max_ops: 10,
+            ..GenConfig::default()
+        });
+        let b = generate(&GenConfig {
+            seed: 42,
+            max_ops: 10,
+            ..GenConfig::default()
+        });
         assert_eq!(a, b);
-        let c = generate(&GenConfig { seed: 43, max_ops: 10, ..GenConfig::default() });
+        let c = generate(&GenConfig {
+            seed: 43,
+            max_ops: 10,
+            ..GenConfig::default()
+        });
         assert_ne!(a, c, "разные seed — разные программы (sanity)");
     }
 
@@ -289,15 +361,19 @@ mod tests {
         // точный воспроизводитель находки: sweep=359.99°
         let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, 359.99, Dir::Ccw);
         assert!(cx.is_finite() && cy.is_finite(), "({cx}, {cy})");
-        assert!(cx.abs() < 1e6 && cy.abs() < 1e6, "центр улетел: ({cx}, {cy})");
+        assert!(
+            cx.abs() < 1e6 && cy.abs() < 1e6,
+            "центр улетел: ({cx}, {cy})"
+        );
 
         // вся окрестность полного оборота + вырождения, оба направления;
         // потолок |d| = half/MIN_TAN (центр не дальше 10⁴·half от середины)
         let half = 8.0_f64.hypot(4.0) / 2.0;
         let bound = 1e4 * half + 1e-6;
-        for sweep in [0.0, 0.001, 45.0, 90.0, 180.0, 270.0, 359.0, 359.9, 359.99, 359.999,
-                      359.9999, 360.0, 360.001, 400.0]
-        {
+        for sweep in [
+            0.0, 0.001, 45.0, 90.0, 180.0, 270.0, 359.0, 359.9, 359.99, 359.999, 359.9999, 360.0,
+            360.001, 400.0,
+        ] {
             for dir in [Dir::Ccw, Dir::Cw] {
                 let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, sweep, dir);
                 assert!(
@@ -312,7 +388,10 @@ mod tests {
         // NaN/±∞ sweep не отравляют результат (центр = середина хорды)
         for sweep in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             let (cx, cy) = arc_center(0.0, 0.0, 8.0, 4.0, sweep, Dir::Cw);
-            assert!(cx.is_finite() && cy.is_finite(), "sweep={sweep}: ({cx}, {cy})");
+            assert!(
+                cx.is_finite() && cy.is_finite(),
+                "sweep={sweep}: ({cx}, {cy})"
+            );
         }
     }
 
@@ -327,4 +406,3 @@ mod tests {
         assert!(!s.contains("inf") && !s.contains("NaN"), "{s}");
     }
 }
-

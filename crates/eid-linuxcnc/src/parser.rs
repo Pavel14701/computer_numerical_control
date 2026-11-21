@@ -67,7 +67,7 @@ pub struct Notice {
 use eid_core::ast::{Coolant, Spindle};
 
 /// eid_version = версия grammar.ebnf (SPEC §10.4).
-pub const EID_VERSION: &str = "EID/L1 v0.3";  // grammar v0.3 (magic bump)
+pub const EID_VERSION: &str = "EID/L1 v0.3"; // grammar v0.3 (magic bump)
 
 /// Публичный результат parse: Program + line-level диагностики + notices.
 #[derive(Debug, Clone)]
@@ -144,7 +144,7 @@ struct St {
     tool: Option<u32>,
     selected_tool: Option<u32>,
     motion: Option<MotionKind>,
-    retract_g98: bool, // ABSORB циклов (правило отвода — итерация 3)
+    retract_g98: bool,              // ABSORB циклов (правило отвода — итерация 3)
     origin: [Option<[f64; 3]>; 10], // G10 L2 (known_origin; L20 НЕ считается)
     l20: [Option<[f64; 3]>; 10],    // G10 L20 delta (якорь пресетки)
     preset: Option<eid_core::ast::FramePreset>,
@@ -225,7 +225,13 @@ impl St {
     }
 }
 
-fn fatal(file: &str, code: ErrorCode, msg: impl Into<String>, line_no: usize, line: &str) -> Vec<Diagnostic> {
+fn fatal(
+    file: &str,
+    code: ErrorCode,
+    msg: impl Into<String>,
+    line_no: usize,
+    line: &str,
+) -> Vec<Diagnostic> {
     vec![Diagnostic {
         stage: Stage::Parse,
         code,
@@ -376,7 +382,14 @@ fn parse_block(
             (90, 1) | (91, 1) => Some(("arcdist", maj)),
             (93, 0) | (94, 0) => Some(("feedmode", maj)),
             (20, 0) | (21, 0) => Some(("units", maj)),
-            (54, 0) | (55, 0) | (56, 0) | (57, 0) | (58, 0) | (59, 0) | (59, 1) | (59, 2)
+            (54, 0)
+            | (55, 0)
+            | (56, 0)
+            | (57, 0)
+            | (58, 0)
+            | (59, 0)
+            | (59, 1)
+            | (59, 2)
             | (59, 3) => Some(("wcs", maj)),
             (61, 0) | (61, 1) | (64, 0) => Some(("path", maj)),
             (98, 0) | (99, 0) => Some(("retract", maj)),
@@ -387,14 +400,21 @@ fn parse_block(
     for w in words {
         match w.letter {
             'G' => {
-                let (maj, min) = code_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad G-code `G{}`", w.number)))?;
+                let (maj, min) = code_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad G-code `G{}`", w.number)
+                    )
+                })?;
                 if let Some((name, m)) = group_of(maj, min) {
                     if let Some(&(_, prev)) = seen.iter().find(|(n, _)| *n == name) {
                         if prev != m {
                             return Err(fl!(
                                 ErrorCode::InvalidInput,
-                                format!("конфликт модальной группы `{name}` в кадре: G{} и G{}", prev, m),
+                                format!(
+                                    "конфликт модальной группы `{name}` в кадре: G{} и G{}",
+                                    prev, m
+                                ),
                             ));
                         }
                     } else {
@@ -405,8 +425,12 @@ fn parse_block(
                 gs.push((maj, minor));
             }
             'M' => {
-                let (maj, min) = code_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad M-code `M{}`", w.number)))?;
+                let (maj, min) = code_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad M-code `M{}`", w.number)
+                    )
+                })?;
                 let minor = if min == 0 { 0 } else { min };
                 ms.push((maj, minor));
                 if maj == 6 {
@@ -414,22 +438,37 @@ fn parse_block(
                 }
             }
             'F' => {
-                let v = word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad F value `{}`", w.number)))?;
+                let v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad F value `{}`", w.number)
+                    )
+                })?;
                 f_word = Some(Num::new(w.number.clone(), v));
             }
             'S' => {
-                let v = word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad S value `{}`", w.number)))?;
+                let v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad S value `{}`", w.number)
+                    )
+                })?;
                 s_word = Some(Num::new(w.number.clone(), v));
             }
             'T' => {
-                let (maj, min) = code_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad T value `{}`", w.number)))?;
+                let (maj, min) = code_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad T value `{}`", w.number)
+                    )
+                })?;
                 if min != 0 || maj < 0 {
                     return Err(fl!(
                         ErrorCode::InvalidInput,
-                        format!("T должен быть целым неотрицательным, получено `T{}`", w.number),
+                        format!(
+                            "T должен быть целым неотрицательным, получено `T{}`",
+                            w.number
+                        ),
                     ));
                 }
                 // #29: u32::try_from — T4294967296 ранее молча давал T0
@@ -444,17 +483,28 @@ fn parse_block(
                 has_t = true;
             }
             'P' => {
-                let v = word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad P value `{}`", w.number)))?;
+                let v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad P value `{}`", w.number)
+                    )
+                })?;
                 p_word = Some(Num::new(w.number.clone(), v));
             }
             'L' => {
-                let (maj, min) = code_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad L value `{}`", w.number)))?;
+                let (maj, min) = code_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad L value `{}`", w.number)
+                    )
+                })?;
                 if min != 0 || maj < 0 {
                     return Err(fl!(
                         ErrorCode::InvalidInput,
-                        format!("L должен быть целым неотрицательным, получено `L{}`", w.number),
+                        format!(
+                            "L должен быть целым неотрицательным, получено `L{}`",
+                            w.number
+                        ),
                     ));
                 }
                 // #29: u32::try_from — L4294967296 ранее молча давал L0.
@@ -467,12 +517,20 @@ fn parse_block(
                 l_word = Some(maj);
             }
             'Q' => {
-                q_word = Some(word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad Q value `{}`", w.number)))?);
+                q_word = Some(word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad Q value `{}`", w.number)
+                    )
+                })?);
             }
             'R' => {
-                r_word = Some(word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad R value `{}`", w.number)))?);
+                r_word = Some(word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad R value `{}`", w.number)
+                    )
+                })?);
             }
             'I' | 'J' | 'K' => {
                 let idx = match w.letter {
@@ -481,7 +539,10 @@ fn parse_block(
                     _ => 2,
                 };
                 ijk[idx] = Some(word_num(&w.number).ok_or_else(|| {
-                    fl!(ErrorCode::InvalidInput, format!("bad {} value `{}`", w.letter, w.number))
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad {} value `{}`", w.letter, w.number)
+                    )
                 })?);
             }
             'X' | 'Y' | 'Z' => {
@@ -490,8 +551,12 @@ fn parse_block(
                     'Y' => 1,
                     _ => 2,
                 };
-                let v = word_num(&w.number)
-                    .ok_or_else(|| fl!(ErrorCode::InvalidInput, format!("bad {} value `{}`", w.letter, w.number)))?;
+                let v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad {} value `{}`", w.letter, w.number)
+                    )
+                })?;
                 axes[idx] = Some((v, w.number.clone()));
             }
             'A' | 'B' | 'C' | 'U' | 'V' | 'W' => extra_axes.push(w.letter),
@@ -520,23 +585,66 @@ fn parse_block(
     // (правило двух классов, CORPUS §1.2 v0.5; SPEC §8.5).
     let mut raw_reason: Option<(String, ErrorCode)> = None;
     let gname = |maj: i64, min: u32| -> String {
-        if min == 0 { format!("G{maj}") } else { format!("G{maj}.{min}") }
+        if min == 0 {
+            format!("G{maj}")
+        } else {
+            format!("G{maj}.{min}")
+        }
     };
     for &(maj, min) in &gs {
         let found = match (maj, min) {
-            (5, _) | (33, _) => Some((ErrorCode::UnsupportedSemantics, "семантика не представима ходами (COVERAGE §2.1)")),
-            (7, 0) | (8, 0) => Some((ErrorCode::UnsupportedSemantics, "диаметральный режим — токарное, вне скоупа (COVERAGE §2.6)")),
-            (28, _) | (30, _) => Some((ErrorCode::RequiresMachineTable, "home-позиция из таблицы станка (COVERAGE §2.3, Q1)")),
-            (38, 2) | (38, 3) | (38, 4) | (38, 5) => Some((ErrorCode::UnsupportedSemantics, "пробинг — этап 12 (COVERAGE §2.1)")),
-            (40, 0) if family_g40 => Some((ErrorCode::UnsupportedSemantics, "G40 при активном семействе компенсаций — правило семейств (COVERAGE §1.3)")),
-            (41, _) | (42, _) => Some((ErrorCode::UnsupportedSemantics, "компенсация геометрии — не-цель §1.2 (COVERAGE §2.4)")),
-            (43, 0) | (43, 2) => Some((ErrorCode::RequiresMachineTable, "TLO из таблицы станка (COVERAGE §2.4, N10)")),
-            (43, 1) => Some((ErrorCode::UnsupportedSemantics, "динамический TLO (COVERAGE §2.4)")),
-            (49, 0) if family_g49 => Some((ErrorCode::RequiresMachineTable, "G49 при активном семействе TLO — правило семейств (COVERAGE §1.3)")),
-            (74, 0) | (84, 0) | (87, 0) | (88, 0) => Some((ErrorCode::UnsupportedSemantics, "refuse-цикл: tapping / undefined behavior (COVERAGE §2.5)")),
-            (76, 0) => Some((ErrorCode::UnsupportedSemantics, "G76 — токарный цикл резьбы, вне скоупа §1.2 (COVERAGE §2.5)")),
-            (92, 1) | (92, 2) | (92, 3) => Some((ErrorCode::UnsupportedSemantics, "сброс/приостановка G92-сдвигов (Q4, COVERAGE §2.3)")),
-            (96, _) | (97, _) => Some((ErrorCode::UnsupportedSemantics, "CSS — токарное, вне скоупа §1.2 (COVERAGE §2.6, N18)")),
+            (5, _) | (33, _) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "семантика не представима ходами (COVERAGE §2.1)",
+            )),
+            (7, 0) | (8, 0) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "диаметральный режим — токарное, вне скоупа (COVERAGE §2.6)",
+            )),
+            (28, _) | (30, _) => Some((
+                ErrorCode::RequiresMachineTable,
+                "home-позиция из таблицы станка (COVERAGE §2.3, Q1)",
+            )),
+            (38, 2) | (38, 3) | (38, 4) | (38, 5) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "пробинг — этап 12 (COVERAGE §2.1)",
+            )),
+            (40, 0) if family_g40 => Some((
+                ErrorCode::UnsupportedSemantics,
+                "G40 при активном семействе компенсаций — правило семейств (COVERAGE §1.3)",
+            )),
+            (41, _) | (42, _) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "компенсация геометрии — не-цель §1.2 (COVERAGE §2.4)",
+            )),
+            (43, 0) | (43, 2) => Some((
+                ErrorCode::RequiresMachineTable,
+                "TLO из таблицы станка (COVERAGE §2.4, N10)",
+            )),
+            (43, 1) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "динамический TLO (COVERAGE §2.4)",
+            )),
+            (49, 0) if family_g49 => Some((
+                ErrorCode::RequiresMachineTable,
+                "G49 при активном семействе TLO — правило семейств (COVERAGE §1.3)",
+            )),
+            (74, 0) | (84, 0) | (87, 0) | (88, 0) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "refuse-цикл: tapping / undefined behavior (COVERAGE §2.5)",
+            )),
+            (76, 0) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "G76 — токарный цикл резьбы, вне скоупа §1.2 (COVERAGE §2.5)",
+            )),
+            (92, 1) | (92, 2) | (92, 3) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "сброс/приостановка G92-сдвигов (Q4, COVERAGE §2.3)",
+            )),
+            (96, _) | (97, _) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "CSS — токарное, вне скоупа §1.2 (COVERAGE §2.6, N18)",
+            )),
             _ => None,
         };
         // G40/G49 без активного семейства — IGNORED_SAFE (молча, SPEC §8).
@@ -559,16 +667,43 @@ fn parse_block(
     if raw_reason.is_none() {
         for &(maj, min) in &ms {
             let found = match (maj, min) {
-                (19, 0) => Some((ErrorCode::UnsupportedSemantics, "ориентация шпинделя (COVERAGE §3)")),
-                (48, 0) | (49, 0) | (50, 0) | (51, 0) => Some((ErrorCode::UnsupportedSemantics, "override — process intent (COVERAGE §3, ревью §7.4)")),
-                (52, 0) | (53, 0) => Some((ErrorCode::RuntimeState, "adaptive feed / feed-hold — вход HAL в рантайме (COVERAGE §3)")),
-                (60, 0) => Some((ErrorCode::UnsupportedSemantics, "pallet change (COVERAGE §3)")),
-                (61, 0) => Some((ErrorCode::UnsupportedSemantics, "номер инструмента без физической смены (COVERAGE §3, ревью §7.5)")),
-                (62, 0) | (63, 0) | (64, 0) | (65, 0) => Some((ErrorCode::UnsupportedSemantics, "цифровые выходы (COVERAGE §3)")),
+                (19, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "ориентация шпинделя (COVERAGE §3)",
+                )),
+                (48, 0) | (49, 0) | (50, 0) | (51, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "override — process intent (COVERAGE §3, ревью §7.4)",
+                )),
+                (52, 0) | (53, 0) => Some((
+                    ErrorCode::RuntimeState,
+                    "adaptive feed / feed-hold — вход HAL в рантайме (COVERAGE §3)",
+                )),
+                (60, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "pallet change (COVERAGE §3)",
+                )),
+                (61, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "номер инструмента без физической смены (COVERAGE §3, ревью §7.5)",
+                )),
+                (62, 0) | (63, 0) | (64, 0) | (65, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "цифровые выходы (COVERAGE §3)",
+                )),
                 (66, 0) => Some((ErrorCode::RuntimeState, "ожидание входа (COVERAGE §3)")),
-                (67, 0) | (68, 0) => Some((ErrorCode::UnsupportedSemantics, "аналоговые выходы (COVERAGE §3)")),
-                (70, 0) | (71, 0) | (72, 0) | (73, 0) => Some((ErrorCode::UnsupportedSemantics, "стек модального состояния (COVERAGE §3)")),
-                (m, 0) if (100..=199).contains(&m) => Some((ErrorCode::UnsupportedSemantics, "user-defined M100–M199 (COVERAGE §3, N3)")),
+                (67, 0) | (68, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "аналоговые выходы (COVERAGE §3)",
+                )),
+                (70, 0) | (71, 0) | (72, 0) | (73, 0) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "стек модального состояния (COVERAGE §3)",
+                )),
+                (m, 0) if (100..=199).contains(&m) => Some((
+                    ErrorCode::UnsupportedSemantics,
+                    "user-defined M100–M199 (COVERAGE §3, N3)",
+                )),
                 _ => None,
             };
             if let Some((c, r)) = found {
@@ -581,7 +716,10 @@ fn parse_block(
         // Коды вне словаря → SYNTAX (COVERAGE §1.3: RAW(E_UNSUPPORTED_SYNTAX)).
         for &(maj, min) in &gs {
             if !is_known_g(maj, min) {
-                raw_reason = Some((format!("{}: вне словаря L1 (COVERAGE §2)", gname(maj, min)), ErrorCode::UnsupportedSyntax));
+                raw_reason = Some((
+                    format!("{}: вне словаря L1 (COVERAGE §2)", gname(maj, min)),
+                    ErrorCode::UnsupportedSyntax,
+                ));
                 break;
             }
         }
@@ -589,7 +727,10 @@ fn parse_block(
     if raw_reason.is_none() {
         for &(maj, _min) in &ms {
             if !is_known_m(maj) {
-                raw_reason = Some((format!("M{maj}: вне словаря (COVERAGE §3)"), ErrorCode::UnsupportedSyntax));
+                raw_reason = Some((
+                    format!("M{maj}: вне словаря (COVERAGE §3)"),
+                    ErrorCode::UnsupportedSyntax,
+                ));
                 break;
             }
         }
@@ -651,7 +792,11 @@ fn parse_block(
                         }
                     },
                 };
-                st.spindle = if maj == 3 { Spindle::Cw(n) } else { Spindle::Ccw(n) };
+                st.spindle = if maj == 3 {
+                    Spindle::Cw(n)
+                } else {
+                    Spindle::Ccw(n)
+                };
             }
             5 => st.spindle = Spindle::Off,
             _ => {}
@@ -767,7 +912,10 @@ fn parse_block(
                 ));
             }
             let values = axes_from_words(&axes, &[0.0; 3]);
-            st.preset = Some(eid_core::ast::FramePreset { values: p3_snap(values), wcs: st.wcs });
+            st.preset = Some(eid_core::ast::FramePreset {
+                values: p3_snap(values),
+                wcs: st.wcs,
+            });
         }
         if (maj, min) == (10, 0) {
             // L∉{2,20} — line-level REQUIRES raw (COVERAGE §2.3, скан выше):
@@ -786,7 +934,10 @@ fn parse_block(
                     if n.value.fract() != 0.0 || !(1.0..=9.0).contains(&n.value) {
                         return Err(fl!(
                             ErrorCode::InvalidInput,
-                            format!("G10 L{l} P{} вне домена 1..9 — требуется целое 1..9 (D7)", n.text),
+                            format!(
+                                "G10 L{l} P{} вне домена 1..9 — требуется целое 1..9 (D7)",
+                                n.text
+                            ),
                         ));
                     }
                     Some(n.value as u32)
@@ -794,7 +945,8 @@ fn parse_block(
             };
             match l {
                 2 => {
-                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L2 без P-слова (1..9)"))?;
+                    let p =
+                        p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L2 без P-слова (1..9)"))?;
                     // L2 honors G90/G91; старый origin отсутствует → 0
                     // (интерпретация, отчёт итерации 2).
                     let old = st.origin[p as usize].unwrap_or([0.0; 3]);
@@ -806,10 +958,17 @@ fn parse_block(
                     st.origin[p as usize] = Some(origin);
                     let state = st.snapshot(Frame::Wcs);
                     let src = st.src(line_no, line);
-                    pending.push(Op::WcsDefine { p: p as u8, origin: p3_snap(origin), state, src });
+                    pending.push(Op::WcsDefine {
+                        p: p as u8,
+                        origin: p3_snap(origin),
+                        state,
+                        src,
+                    });
                 }
                 20 => {
-                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L20 без P-слова (1..9)"))?;
+                    let p = p.ok_or_else(|| {
+                        fl!(ErrorCode::InvalidInput, "G10 L20 без P-слова (1..9)")
+                    })?;
                     if st.saw_motion {
                         return Err(fl!(
                             ErrorCode::UnsupportedSemantics,
@@ -820,7 +979,12 @@ fn parse_block(
                     st.l20[p as usize] = Some(delta);
                     let state = st.snapshot(Frame::Wcs);
                     let src = st.src(line_no, line);
-                    pending.push(Op::WcsSetHere { p: p as u8, delta: p3_snap(delta), state, src });
+                    pending.push(Op::WcsSetHere {
+                        p: p as u8,
+                        delta: p3_snap(delta),
+                        state,
+                        src,
+                    });
                 }
                 _ => unreachable!("G10 L not in {{2,20}} ушёл в line-level raw"),
             }
@@ -836,8 +1000,7 @@ fn parse_block(
         // не обновляет st.motion — модальный motion-режим не продолжается
         // (реальный контроллер продолжил бы G33/G8x-модальность).
         let raw_motion_g = gs.iter().any(|&(maj, min)| {
-            (min == 0
-                && matches!(maj, 0 | 1 | 2 | 3 | 33 | 38 | 73 | 74 | 76 | 80 | 81..=89))
+            (min == 0 && matches!(maj, 0 | 1 | 2 | 3 | 33 | 38 | 73 | 74 | 76 | 80 | 81..=89))
                 || (maj, min) == (33, 1)
         });
         if raw_motion_g {
@@ -925,7 +1088,12 @@ fn parse_block(
         }
         let state = st.snapshot(Frame::Wcs);
         let src = st.src(line_no, line);
-        pending.push(Op::Dwell { seconds: p, state, src, sub: None });
+        pending.push(Op::Dwell {
+            seconds: p,
+            state,
+            src,
+            sub: None,
+        });
     }
 
     // M0/M1 → ProgramStop.
@@ -933,7 +1101,11 @@ fn parse_block(
         if maj == 0 || maj == 1 {
             let state = st.snapshot(Frame::Wcs);
             let src = st.src(line_no, line);
-            pending.push(Op::ProgramStop { optional: maj == 1, state, src });
+            pending.push(Op::ProgramStop {
+                optional: maj == 1,
+                state,
+                src,
+            });
         }
     }
 
@@ -969,20 +1141,19 @@ fn parse_block(
 
     let has_axis_words = axes.iter().any(|a| a.is_some());
     // Оси, поглощённые G92/G10/циклом — не «голые координаты».
-    let frame_took_axes = gs
-        .iter()
-        .any(|&(maj, min)| {
-            (maj, min) == (92, 0)
-                || (maj, min) == (10, 0)
-                || matches!(
-                    (maj, min),
-                    (73, 0) | (81, 0) | (82, 0) | (83, 0) | (85, 0) | (86, 0) | (89, 0)
-                )
-        });
+    let frame_took_axes = gs.iter().any(|&(maj, min)| {
+        (maj, min) == (92, 0)
+            || (maj, min) == (10, 0)
+            || matches!(
+                (maj, min),
+                (73, 0) | (81, 0) | (82, 0) | (83, 0) | (85, 0) | (86, 0) | (89, 0)
+            )
+    });
     // Полный круг center-формой (SPEC §6 v0.12, CORPUS #08): явный G2/G3 с
     // I/J/K или R БЕЗ слов осей — end наследует старт → sweep = 360°.
-    let explicit_arc_with_data = matches!(explicit_motion, Some(MotionKind::G2) | Some(MotionKind::G3))
-        && (ijk.iter().any(|o| o.is_some()) || r_word.is_some());
+    let explicit_arc_with_data =
+        matches!(explicit_motion, Some(MotionKind::G2) | Some(MotionKind::G3))
+            && (ijk.iter().any(|o| o.is_some()) || r_word.is_some());
     let motion_block = (has_axis_words || explicit_arc_with_data) && !frame_took_axes;
     if motion_block {
         match st.motion {
@@ -1022,20 +1193,32 @@ fn parse_block(
         && (has_axis_words || explicit_arc_with_data)
         && !frame_took_axes;
     // Циклы потребляют R/Z/L/P(dwell)/Q(пеки).
-    let cycle_takes_p = matches!(cycle_kind, Some(CycleKind::DrillDwell | CycleKind::BoreStop | CycleKind::BoreDwell));
+    let cycle_takes_p = matches!(
+        cycle_kind,
+        Some(CycleKind::DrillDwell | CycleKind::BoreStop | CycleKind::BoreDwell)
+    );
     let cycle_takes_q = matches!(cycle_kind, Some(CycleKind::Peck | CycleKind::ChipBreak));
     let is_cycle = cycle_kind.is_some();
     if r_word.is_some() && !is_arc && !is_cycle {
-        return Err(fl!(ErrorCode::InvalidInput, "R-слово без дуги G2/G3 или цикла"));
+        return Err(fl!(
+            ErrorCode::InvalidInput,
+            "R-слово без дуги G2/G3 или цикла"
+        ));
     }
     if ijk.iter().any(|o| o.is_some()) && !is_arc {
         return Err(fl!(ErrorCode::InvalidInput, "I/J/K без дуги G2/G3"));
     }
     if p_word.is_some() && !(has_g(4, 0) || has_g(10, 0) || has_g(64, 0) || cycle_takes_p) {
-        return Err(fl!(ErrorCode::InvalidInput, "P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)"));
+        return Err(fl!(
+            ErrorCode::InvalidInput,
+            "P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)"
+        ));
     }
     if q_word.is_some() && !cycle_takes_q {
-        return Err(fl!(ErrorCode::InvalidInput, "Q-слово без пекерующего цикла (G73/G83)"));
+        return Err(fl!(
+            ErrorCode::InvalidInput,
+            "Q-слово без пекерующего цикла (G73/G83)"
+        ));
     }
     if l_word.is_some() && !(has_g(10, 0) || is_cycle) {
         return Err(fl!(ErrorCode::InvalidInput, "L-слово без G10 или цикла"));
@@ -1093,31 +1276,82 @@ fn g_to_wcs(maj: i64, min: u32) -> Option<Wcs> {
 fn is_known_g(maj: i64, min: u32) -> bool {
     matches!(
         (maj, min),
-        (0, 0) | (1, 0) | (2, 0) | (3, 0)
+        (0, 0)
+            | (1, 0)
+            | (2, 0)
+            | (3, 0)
             | (4, 0)
-            | (5, 0) | (5, 1) | (5, 2) | (5, 3)
-            | (7, 0) | (8, 0)
+            | (5, 0)
+            | (5, 1)
+            | (5, 2)
+            | (5, 3)
+            | (7, 0)
+            | (8, 0)
             | (10, 0)
-            | (17, 0) | (18, 0) | (19, 0)
-            | (20, 0) | (21, 0)
-            | (28, 0) | (28, 1) | (30, 0) | (30, 1)
-            | (33, 0) | (33, 1)
-            | (38, 2) | (38, 3) | (38, 4) | (38, 5)
-            | (40, 0) | (41, 0) | (41, 1) | (42, 0) | (42, 1)
-            | (43, 0) | (43, 1) | (43, 2) | (49, 0)
+            | (17, 0)
+            | (18, 0)
+            | (19, 0)
+            | (20, 0)
+            | (21, 0)
+            | (28, 0)
+            | (28, 1)
+            | (30, 0)
+            | (30, 1)
+            | (33, 0)
+            | (33, 1)
+            | (38, 2)
+            | (38, 3)
+            | (38, 4)
+            | (38, 5)
+            | (40, 0)
+            | (41, 0)
+            | (41, 1)
+            | (42, 0)
+            | (42, 1)
+            | (43, 0)
+            | (43, 1)
+            | (43, 2)
+            | (49, 0)
             | (53, 0)
-            | (54, 0) | (55, 0) | (56, 0) | (57, 0) | (58, 0) | (59, 0) | (59, 1) | (59, 2)
+            | (54, 0)
+            | (55, 0)
+            | (56, 0)
+            | (57, 0)
+            | (58, 0)
+            | (59, 0)
+            | (59, 1)
+            | (59, 2)
             | (59, 3)
-            | (61, 0) | (61, 1) | (64, 0)
-            | (73, 0) | (74, 0) | (76, 0)
+            | (61, 0)
+            | (61, 1)
+            | (64, 0)
+            | (73, 0)
+            | (74, 0)
+            | (76, 0)
             | (80, 0)
-            | (81, 0) | (82, 0) | (83, 0) | (84, 0) | (85, 0) | (86, 0) | (87, 0) | (88, 0)
+            | (81, 0)
+            | (82, 0)
+            | (83, 0)
+            | (84, 0)
+            | (85, 0)
+            | (86, 0)
+            | (87, 0)
+            | (88, 0)
             | (89, 0)
-            | (90, 0) | (90, 1) | (91, 0) | (91, 1)
-            | (92, 0) | (92, 1) | (92, 2) | (92, 3)
-            | (93, 0) | (94, 0)
-            | (96, 0) | (97, 0)
-            | (98, 0) | (99, 0)
+            | (90, 0)
+            | (90, 1)
+            | (91, 0)
+            | (91, 1)
+            | (92, 0)
+            | (92, 1)
+            | (92, 2)
+            | (92, 3)
+            | (93, 0)
+            | (94, 0)
+            | (96, 0)
+            | (97, 0)
+            | (98, 0)
+            | (99, 0)
     )
 }
 
@@ -1164,8 +1398,16 @@ fn link_start(
             ));
         }
         return Ok(match st.last_motion {
-            Some(LastMotion { end, frame: Frame::Machine, .. }) => Linked::Known(end),
-            Some(LastMotion { end, frame: Frame::Wcs, wcs }) => match st.origin_of(wcs) {
+            Some(LastMotion {
+                end,
+                frame: Frame::Machine,
+                ..
+            }) => Linked::Known(end),
+            Some(LastMotion {
+                end,
+                frame: Frame::Wcs,
+                wcs,
+            }) => match st.origin_of(wcs) {
                 Some(o) => Linked::Known([end[0] + o[0], end[1] + o[1], end[2] + o[2]]),
                 None => {
                     return Err(fl!(
@@ -1215,7 +1457,11 @@ fn link_start(
                 (None, None) => Linked::UnknownRequired, // (a): без якоря
             }
         }
-        Some(LastMotion { end, frame: Frame::Machine, .. }) => {
+        Some(LastMotion {
+            end,
+            frame: Frame::Machine,
+            ..
+        }) => {
             // Точка разрыва (d): reading = M − O_wcs (Δ = 0 — пресетка была бы
             // отклонена на machine-ходе, §5.3(a)).
             match st.origin_of(st.wcs) {
@@ -1223,7 +1469,11 @@ fn link_start(
                 None => Linked::UnknownRequired,
             }
         }
-        Some(LastMotion { end, frame: Frame::Wcs, wcs: prev_wcs }) => {
+        Some(LastMotion {
+            end,
+            frame: Frame::Wcs,
+            wcs: prev_wcs,
+        }) => {
             if prev_wcs == st.wcs {
                 Linked::Known(end)
             } else {
@@ -1325,7 +1575,13 @@ fn build_motion(
         MotionKind::G0 => {
             let state = st.snapshot(frame);
             let src = st.src(line_no, line);
-            Op::Rapid { start: start_point, end: p3_snap(end), state, src, sub: None }
+            Op::Rapid {
+                start: start_point,
+                end: p3_snap(end),
+                state,
+                src,
+                sub: None,
+            }
         }
         MotionKind::G1 => {
             let mut state = st.snapshot(frame);
@@ -1344,14 +1600,19 @@ fn build_motion(
                     .feed
                     .as_ref()
                     .ok_or_else(|| fl!(ErrorCode::InvalidInput, "G93-linear без F"))?;
-                let len = ((end[0] - s[0]).powi(2)
-                    + (end[1] - s[1]).powi(2)
-                    + (end[2] - s[2]).powi(2))
-                .sqrt();
+                let len =
+                    ((end[0] - s[0]).powi(2) + (end[1] - s[1]).powi(2) + (end[2] - s[2]).powi(2))
+                        .sqrt();
                 state.feed = Some(num_snap(len * f.value));
             }
             let src = st.src(line_no, line);
-            Op::Linear { start: start_point, end: p3_snap(end), state, src, sub: None }
+            Op::Linear {
+                start: start_point,
+                end: p3_snap(end),
+                state,
+                src,
+                sub: None,
+            }
         }
         MotionKind::G2 | MotionKind::G3 => {
             let start_v = match base {
@@ -1369,7 +1630,11 @@ fn build_motion(
                     "дуга без центра: ни I/J/K, ни R (LinuxCNC: no offsets in arc block)",
                 ));
             }
-            let dir = if kind == MotionKind::G2 { Dir::Cw } else { Dir::Ccw };
+            let dir = if kind == MotionKind::G2 {
+                Dir::Cw
+            } else {
+                Dir::Ccw
+            };
             let explicit_end = axes.iter().any(|a| a.is_some());
             let resolved = canonicalize::resolve_arc(
                 &start_v,
@@ -1420,7 +1685,11 @@ fn build_motion(
                         sub: None,
                     };
                     let msg = "zero-length arc dropped (end == start, center == start — degenerate radius 0, pitch == 0; SPEC §3/§6 v0.17; CORPUS #13)".to_string();
-                    st.last_motion = Some(LastMotion { end, frame, wcs: st.wcs });
+                    st.last_motion = Some(LastMotion {
+                        end,
+                        frame,
+                        wcs: st.wcs,
+                    });
                     st.saw_motion = true;
                     return Ok(MotionBuilt::Dropped(op, NoticeKind::ZeroLengthArc, msg));
                 }
@@ -1460,7 +1729,11 @@ fn build_motion(
     };
 
     // last_motion: end нового опа (связывание следующего, SPEC §2 v0.9).
-    st.last_motion = Some(LastMotion { end, frame, wcs: st.wcs });
+    st.last_motion = Some(LastMotion {
+        end,
+        frame,
+        wcs: st.wcs,
+    });
     st.saw_motion = true;
     Ok(MotionBuilt::Op(op))
 }
@@ -1492,10 +1765,9 @@ fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op
     if st.feed_inverse {
         // G93: feed = len(траектории) × F (SPEC §4).
         if let Some(f) = &st.feed {
-            let len = ((to[0] - from[0]).powi(2)
-                + (to[1] - from[1]).powi(2)
-                + (to[2] - from[2]).powi(2))
-            .sqrt();
+            let len =
+                ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2) + (to[2] - from[2]).powi(2))
+                    .sqrt();
             state.feed = Some(num_snap(len * f.value));
         }
     }
@@ -1523,7 +1795,11 @@ fn m_dwell(st: &St, seconds: &Num, src: SrcSpan, sub: u32) -> Op {
 /// правило ОБЯЗАНО быть единым с eid-grbl (R3); константу сверить с
 /// source LinuxCNC в COVERAGE-проходе.
 fn approach_clearance(units: Units) -> f64 {
-    if units == Units::In { 0.05 } else { 0.5 }
+    if units == Units::In {
+        0.05
+    } else {
+        0.5
+    }
 }
 
 /// Разворачивание цикла (SPEC §7.1–7.6).
@@ -1587,35 +1863,50 @@ fn expand_cycle(
     }
 
     // R и Z обязательны (LinuxCNC: «It is an error if: R/Z is not specified»).
-    let r_word = r_word.ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без R-слова (плоскость отвода)"))?;
+    let r_word = r_word.ok_or_else(|| {
+        fl!(
+            ErrorCode::InvalidInput,
+            "цикл без R-слова (плоскость отвода)"
+        )
+    })?;
     let z_word = axes[2]
         .as_ref()
         .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без Z-слова (дно отверстия)"))?
         .0;
     // Модальный feed обязателен (feed-ходы цикла — SPEC §4).
-    let feed = st
-        .feed
-        .clone()
-        .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл без F — feed-ходы требуют модального feed (SPEC §4)"))?;
+    let feed = st.feed.clone().ok_or_else(|| {
+        fl!(
+            ErrorCode::InvalidInput,
+            "цикл без F — feed-ходы требуют модального feed (SPEC §4)"
+        )
+    })?;
     let _ = &feed;
 
     // Dwell: G82/G89 — P обязателен (LinuxCNC), G86 — опционален.
     let dwell = match kind {
-        CycleKind::DrillDwell | CycleKind::BoreDwell => Some(
-            p_word
-                .clone()
-                .ok_or_else(|| fl!(ErrorCode::InvalidInput, "цикл G82/G89 без P-слова (dwell, секунды)"))?,
-        ),
+        CycleKind::DrillDwell | CycleKind::BoreDwell => Some(p_word.clone().ok_or_else(|| {
+            fl!(
+                ErrorCode::InvalidInput,
+                "цикл G82/G89 без P-слова (dwell, секунды)"
+            )
+        })?),
         CycleKind::BoreStop => p_word.clone(),
         _ => None,
     };
     // Q: G83/G73 — обязателен, строго > 0 (иначе бесконечные пеки).
     let q = match kind {
         CycleKind::Peck | CycleKind::ChipBreak => {
-            let q = q_word
-                .ok_or_else(|| fl!(ErrorCode::InvalidInput, "пекерующий цикл G73/G83 без Q-слова (глубина пека)"))?;
+            let q = q_word.ok_or_else(|| {
+                fl!(
+                    ErrorCode::InvalidInput,
+                    "пекерующий цикл G73/G83 без Q-слова (глубина пека)"
+                )
+            })?;
             if q <= 0.0 {
-                return Err(fl!(ErrorCode::InvalidInput, "Q должен быть > 0 (глубина пека)"));
+                return Err(fl!(
+                    ErrorCode::InvalidInput,
+                    "Q должен быть > 0 (глубина пека)"
+                ));
             }
             Some(q)
         }
@@ -1637,8 +1928,8 @@ fn expand_cycle(
 
     for _ in 0..l {
         let (fx, fy) = (cx, cy); // позиция ДО шага — оттуда traverse
-        // Позиции итерации (§7.3): G90 — константны; G91 — шаг X/Y/R на
-        // повтор (LinuxCNC), Z = инкремент от R-плоскости.
+                                 // Позиции итерации (§7.3): G90 — константны; G91 — шаг X/Y/R на
+                                 // повтор (LinuxCNC), Z = инкремент от R-плоскости.
         if st.distance_abs {
             cx = axes[0].as_ref().map(|v| v.0).unwrap_or(cx);
             cy = axes[1].as_ref().map(|v| v.0).unwrap_or(cy);
@@ -1648,7 +1939,11 @@ fn expand_cycle(
             cx += axes[0].as_ref().map(|v| v.0).unwrap_or(0.0);
             cy += axes[1].as_ref().map(|v| v.0).unwrap_or(0.0);
         }
-        let z_bottom = if st.distance_abs { z_word } else { r_cur + z_word };
+        let z_bottom = if st.distance_abs {
+            z_word
+        } else {
+            r_cur + z_word
+        };
 
         // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
         //    с подходом запрещён).
@@ -1661,9 +1956,18 @@ fn expand_cycle(
 
         // 3. Тело цикла.
         match kind {
-            CycleKind::Drill | CycleKind::DrillDwell | CycleKind::BoreFeedOut
-            | CycleKind::BoreDwell | CycleKind::BoreStop => {
-                pending.push(m_linear(st, [cx, cy, cz], [cx, cy, z_bottom], src.clone(), sub));
+            CycleKind::Drill
+            | CycleKind::DrillDwell
+            | CycleKind::BoreFeedOut
+            | CycleKind::BoreDwell
+            | CycleKind::BoreStop => {
+                pending.push(m_linear(
+                    st,
+                    [cx, cy, cz],
+                    [cx, cy, z_bottom],
+                    src.clone(),
+                    sub,
+                ));
                 sub += 1;
                 cz = z_bottom;
                 if let Some(p) = &dwell {
@@ -1707,7 +2011,13 @@ fn expand_cycle(
                     match kind {
                         CycleKind::Peck => {
                             // полный отвод на R (SPEC §7 таблица)
-                            pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+                            pending.push(m_rapid(
+                                st,
+                                [cx, cy, cz],
+                                [cx, cy, r_cur],
+                                src.clone(),
+                                sub,
+                            ));
                             sub += 1;
                             cz = r_cur;
                         }
@@ -1734,17 +2044,35 @@ fn expand_cycle(
         let retract = if st.retract_g98 { initial_z } else { r_cur };
         match kind {
             CycleKind::BoreFeedOut | CycleKind::BoreDwell => {
-                pending.push(m_linear(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                pending.push(m_linear(
+                    st,
+                    [cx, cy, cz],
+                    [cx, cy, retract],
+                    src.clone(),
+                    sub,
+                ));
                 sub += 1;
             }
             CycleKind::BoreStop => {
                 st.spindle = Spindle::Off;
-                pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                pending.push(m_rapid(
+                    st,
+                    [cx, cy, cz],
+                    [cx, cy, retract],
+                    src.clone(),
+                    sub,
+                ));
                 sub += 1;
                 st.spindle = spindle_before.clone(); // рестарт — в state последующих опов
             }
             _ => {
-                pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, retract], src.clone(), sub));
+                pending.push(m_rapid(
+                    st,
+                    [cx, cy, cz],
+                    [cx, cy, retract],
+                    src.clone(),
+                    sub,
+                ));
                 sub += 1;
             }
         }
@@ -1752,7 +2080,11 @@ fn expand_cycle(
     }
 
     // last_motion: конечная позиция развёртки (связывание следующего опа).
-    st.last_motion = Some(LastMotion { end: [cx, cy, cz], frame: Frame::Wcs, wcs: st.wcs });
+    st.last_motion = Some(LastMotion {
+        end: [cx, cy, cz],
+        frame: Frame::Wcs,
+        wcs: st.wcs,
+    });
     st.saw_motion = true;
     Ok(())
 }
@@ -1768,7 +2100,11 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     // авто-PEND; инварианты PEND (дубликат/не-последний), zero-length
     // drop+notice и feed-требование ДЕЛЕГИРОВАНЫ единственному экземпляру
     // правил — eid_core::verify::validate_with_notices (аудит #5).
-    let end_count = st.ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })).count();
+    let end_count = st
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::ProgramEnd { .. }))
+        .count();
     let mut notices: Vec<Notice> = st.notices; // drop-notice'ы хода разбора (degenerate-дуги)
     if end_count == 0 {
         let auto = Op::ProgramEnd {
@@ -1829,5 +2165,9 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         frame_preset: st.preset,
         ops: report.kept_ops,
     };
-    Ok(ParseOut { program, diagnostics: st.diags, notices })
+    Ok(ParseOut {
+        program,
+        diagnostics: st.diags,
+        notices,
+    })
 }

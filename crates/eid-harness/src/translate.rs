@@ -66,9 +66,7 @@ fn checked_emit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eid_core::ast::{
-        Coolant, Frame, Num, PathMode, Spindle, SrcSpan, State, Units, Wcs,
-    };
+    use eid_core::ast::{Coolant, Frame, Num, PathMode, Spindle, SrcSpan, State, Units, Wcs};
     use eid_core::diag::{ErrorCode, Stage};
 
     fn num(v: f64) -> Num {
@@ -76,7 +74,13 @@ mod tests {
     }
 
     fn src() -> SrcSpan {
-        SrcSpan { file: "t".into(), line_start: 7, col_start: 1, line_end: 7, col_end: 9 }
+        SrcSpan {
+            file: "t".into(),
+            line_start: 7,
+            col_start: 1,
+            line_end: 7,
+            col_end: 9,
+        }
     }
 
     fn raw_program(n_raw: usize) -> Program {
@@ -131,12 +135,22 @@ mod tests {
 
     #[test]
     fn cross_with_raw_refuses_single_diag_with_all_spans() {
-        let from = Stub { name: "a", refuse_raw_cross: false };
-        let to = Stub { name: "b", refuse_raw_cross: true };
+        let from = Stub {
+            name: "a",
+            refuse_raw_cross: false,
+        };
+        let to = Stub {
+            name: "b",
+            refuse_raw_cross: true,
+        };
         let err = translate_checked(&from, &to, "x", "f.nc").unwrap_err();
         assert_eq!(err.len(), 1, "{err:?}");
         assert_eq!(err[0].code, ErrorCode::RawUntranslatable);
-        assert_eq!(err[0].options.len(), 1, "все Raw-спаны перечислены: {err:?}");
+        assert_eq!(
+            err[0].options.len(),
+            1,
+            "все Raw-спаны перечислены: {err:?}"
+        );
         assert!(err[0].src.is_some());
         assert!(err[0].message.contains("1 RAW op(s)"), "{err:?}");
     }
@@ -146,16 +160,28 @@ mod tests {
         // Два экземпляра одного диалекта: cross=false → plain emit без
         // RAW-проверки (verbatim легален, SPEC §8.1) — отказник-флаг стаба
         // не должен срабатывать на same-dialect маршруте.
-        let a = Stub { name: "a", refuse_raw_cross: false };
+        let a = Stub {
+            name: "a",
+            refuse_raw_cross: false,
+        };
         let (p, text) = translate_checked(&a, &a, "x", "f.nc").expect("same-dialect OK");
         assert_eq!(text, "emitted");
-        assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })), "RAW сохранён");
+        assert!(
+            p.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+            "RAW сохранён"
+        );
     }
 
     #[test]
     fn cross_without_raw_emits() {
-        let from = Stub { name: "a", refuse_raw_cross: false };
-        let to = Stub { name: "b", refuse_raw_cross: true };
+        let from = Stub {
+            name: "a",
+            refuse_raw_cross: false,
+        };
+        let to = Stub {
+            name: "b",
+            refuse_raw_cross: true,
+        };
         // parse стаба возвращает RAW — перекрыть нельзя; проверяемgolden-ветку
         // без Raw: cross=false-маршрутизация покрывается same_dialect тестом,
         // здесь — golden без Raw у чужого эмиттера.
@@ -184,8 +210,14 @@ mod tests {
 
     #[test]
     fn golden_with_raw_refuses_any_target() {
-        let b = Stub { name: "b", refuse_raw_cross: true };
-        let c = Stub { name: "c", refuse_raw_cross: false };
+        let b = Stub {
+            name: "b",
+            refuse_raw_cross: true,
+        };
+        let c = Stub {
+            name: "c",
+            refuse_raw_cross: false,
+        };
         let g = raw_program(2);
         for to in [&b, &c] {
             let err = translate_checked_golden(&g, to).unwrap_err();

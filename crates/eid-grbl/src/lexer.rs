@@ -7,15 +7,21 @@ use eid_core::ast::Num;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentStyle {
-    Paren,    // ( ... )
+    Paren,     // ( ... )
     Semicolon, // ; до конца строки
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     /// Слово: буква (uppercased) + verbatim-число (SPEC §10.1).
-    Word { letter: char, value: Num },
-    Comment { style: CommentStyle, text: String },
+    Word {
+        letter: char,
+        value: Num,
+    },
+    Comment {
+        style: CommentStyle,
+        text: String,
+    },
     /// `/` в начале строки (Q3: поддержка в GRBL не сверена; маркер — решение на этапе 2).
     BlockDelete,
     /// Строка `$...=...` — конфигурация станка, RAW(E_UNSUPPORTED_SYNTAX) (COVERAGE §4).
@@ -48,7 +54,11 @@ const MAX_NUM_TEXT: usize = 31;
 
 /// Разбор одной строки. `\r` (CRLF) трактуется как whitespace.
 pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
-    let err = |col: u32, kind: LexErrorKind| LexError { line: line_no, col, kind };
+    let err = |col: u32, kind: LexErrorKind| LexError {
+        line: line_no,
+        col,
+        kind,
+    };
     let cs: Vec<char> = line.chars().collect();
     let mut toks = Vec::new();
     let mut i = 0usize;
@@ -81,11 +91,17 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
             if j >= cs.len() {
                 return Err(err(i as u32 + 1, LexErrorKind::UnterminatedComment));
             }
-            toks.push(Tok::Comment { style: CommentStyle::Paren, text: cs[start..j].iter().collect() });
+            toks.push(Tok::Comment {
+                style: CommentStyle::Paren,
+                text: cs[start..j].iter().collect(),
+            });
             i = j + 1;
         } else if c == ';' {
             let text: String = cs[i + 1..].iter().collect();
-            toks.push(Tok::Comment { style: CommentStyle::Semicolon, text });
+            toks.push(Tok::Comment {
+                style: CommentStyle::Semicolon,
+                text,
+            });
             i = cs.len();
         } else if c.is_ascii_alphabetic() {
             let letter = c.to_ascii_uppercase();
@@ -105,14 +121,18 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
             // → 4dp при построении Num (single-final-rounding и на входах).
             // #14 (v0.17): округление — целочисленно-десятичное ИЗ ТЕКСТА,
             // half away from zero (зеркало eid-linuxcnc/lexer.rs::word_num).
-            let value = word_num(&num_text).ok_or_else(|| err(word_col, LexErrorKind::BadNumber))?;
+            let value =
+                word_num(&num_text).ok_or_else(|| err(word_col, LexErrorKind::BadNumber))?;
             if !value.is_finite() {
                 return Err(err(word_col, LexErrorKind::BadNumber));
             }
             i = next;
             // N-слова — IGNORED_SAFE (COVERAGE §4): не выходим в токены.
             if letter != 'N' {
-                toks.push(Tok::Word { letter, value: Num::new(num_text, value) });
+                toks.push(Tok::Word {
+                    letter,
+                    value: Num::new(num_text, value),
+                });
             }
         } else {
             return Err(err(i as u32 + 1, LexErrorKind::UnexpectedChar(c)));
@@ -224,19 +244,33 @@ mod tests {
     use super::*;
 
     fn word(letter: char, text: &str) -> Tok {
-        Tok::Word { letter, value: Num::new(text.to_string(), text.parse().unwrap()) }
+        Tok::Word {
+            letter,
+            value: Num::new(text.to_string(), text.parse().unwrap()),
+        }
     }
 
     #[test]
     fn pilot_header_words() {
         let toks = lex_line("G21 G90 G94 G17", 1).unwrap();
-        assert_eq!(toks, vec![word('G', "21"), word('G', "90"), word('G', "94"), word('G', "17")]);
+        assert_eq!(
+            toks,
+            vec![
+                word('G', "21"),
+                word('G', "90"),
+                word('G', "94"),
+                word('G', "17")
+            ]
+        );
     }
 
     #[test]
     fn pilot_lowercase_and_signed() {
         let toks = lex_line("g2 x-5.0000 y5.0", 2).unwrap();
-        assert_eq!(toks, vec![word('G', "2"), word('X', "-5.0000"), word('Y', "5.0")]);
+        assert_eq!(
+            toks,
+            vec![word('G', "2"), word('X', "-5.0000"), word('Y', "5.0")]
+        );
     }
 
     #[test]
@@ -245,17 +279,26 @@ mod tests {
         assert_eq!(
             toks,
             vec![
-                Tok::Comment { style: CommentStyle::Paren, text: "face top".into() },
+                Tok::Comment {
+                    style: CommentStyle::Paren,
+                    text: "face top".into()
+                },
                 word('G', "1"),
                 word('X', "1"),
-                Tok::Comment { style: CommentStyle::Semicolon, text: " feed pass".into() },
+                Tok::Comment {
+                    style: CommentStyle::Semicolon,
+                    text: " feed pass".into()
+                },
             ]
         );
     }
 
     #[test]
     fn markers_config_percent_block_delete() {
-        assert_eq!(lex_line("$110=250.000", 1).unwrap(), vec![Tok::ConfigLine("$110=250.000".into())]);
+        assert_eq!(
+            lex_line("$110=250.000", 1).unwrap(),
+            vec![Tok::ConfigLine("$110=250.000".into())]
+        );
         assert_eq!(lex_line("%", 2).unwrap(), vec![Tok::Percent]);
         let bd = lex_line("/ G1 X5", 3).unwrap();
         assert_eq!(bd[0], Tok::BlockDelete);
@@ -270,11 +313,23 @@ mod tests {
 
     #[test]
     fn errors() {
-        assert_eq!(lex_line("G1 &", 1).unwrap_err().kind, LexErrorKind::UnexpectedChar('&'));
-        assert_eq!(lex_line("G1 X", 2).unwrap_err().kind, LexErrorKind::BadNumber);
-        assert_eq!(lex_line("(unclosed", 3).unwrap_err().kind, LexErrorKind::UnterminatedComment);
+        assert_eq!(
+            lex_line("G1 &", 1).unwrap_err().kind,
+            LexErrorKind::UnexpectedChar('&')
+        );
+        assert_eq!(
+            lex_line("G1 X", 2).unwrap_err().kind,
+            LexErrorKind::BadNumber
+        );
+        assert_eq!(
+            lex_line("(unclosed", 3).unwrap_err().kind,
+            LexErrorKind::UnterminatedComment
+        );
         let long = format!("X{}", "9".repeat(40));
-        assert_eq!(lex_line(&long, 4).unwrap_err().kind, LexErrorKind::WordTooLong);
+        assert_eq!(
+            lex_line(&long, 4).unwrap_err().kind,
+            LexErrorKind::WordTooLong
+        );
     }
 
     // ===========================================================================
@@ -284,13 +339,21 @@ mod tests {
     #[test]
     fn audit14_word_num_single_final_rounding_from_text() {
         // .5-границы: 5-й знак ≥ 5 → вверх по ТЕКСТУ, без f64-шума парса.
-        assert_eq!(word_num("1.23455"), Some(1.2346), "старая формула давала 1.2345 (двойное округление)");
+        assert_eq!(
+            word_num("1.23455"),
+            Some(1.2346),
+            "старая формула давала 1.2345 (двойное округление)"
+        );
         assert_eq!(word_num("0.00005"), Some(0.0001));
         assert_eq!(word_num("1.99995"), Some(2.0), "перенос в целую часть");
         assert_eq!(word_num("-1.23455"), Some(-1.2346), "half AWAY from zero");
         // 5-й знак < 5 → усечение (без округления вверх).
         assert_eq!(word_num("1.23454"), Some(1.2345));
-        assert_eq!(word_num("0.00004"), Some(0.0), "CORPUS #13 — квантование к старту");
+        assert_eq!(
+            word_num("0.00004"),
+            Some(0.0),
+            "CORPUS #13 — квантование к старту"
+        );
         // ≤ 4 дробных знаков — значение текста без изменений (формат grbl).
         assert_eq!(word_num("10."), Some(10.0));
         assert_eq!(word_num("+5"), Some(5.0));
@@ -307,10 +370,26 @@ mod tests {
     fn audit14_word_num_fmt_num_roundtrip_invariant() {
         // Инвариант (аудит #14): word_num(s) — неподвижная точка fmt_num:
         // word_num(s) == parse(fmt_num(word_num(s))) на .5-границах.
-        for s in ["1.23455", "0.00005", "2.00005", "-1.23455", "9.99995", "1.23454", "123.45675", "0.00015"] {
+        for s in [
+            "1.23455",
+            "0.00005",
+            "2.00005",
+            "-1.23455",
+            "9.99995",
+            "1.23454",
+            "123.45675",
+            "0.00015",
+        ] {
             let v = word_num(s).expect("parses");
-            let rt: f64 = eid_core::emitter::fmt_num(v).parse().expect("fmt_num parses");
-            assert_eq!(v, rt, "инвариант сломан на {s}: {v} vs fmt_num {}", eid_core::emitter::fmt_num(v));
+            let rt: f64 = eid_core::emitter::fmt_num(v)
+                .parse()
+                .expect("fmt_num parses");
+            assert_eq!(
+                v,
+                rt,
+                "инвариант сломан на {s}: {v} vs fmt_num {}",
+                eid_core::emitter::fmt_num(v)
+            );
         }
     }
 
@@ -319,6 +398,12 @@ mod tests {
         // Значение слова строится из ТЕКСТА: X1.23455 → 1.2346 (было 1.2345 —
         // двойное округление через f64-шум).
         let toks = lex_line("X1.23455", 1).unwrap();
-        assert_eq!(toks, vec![Tok::Word { letter: 'X', value: Num::new("1.23455".into(), 1.2346) }]);
+        assert_eq!(
+            toks,
+            vec![Tok::Word {
+                letter: 'X',
+                value: Num::new("1.23455".into(), 1.2346)
+            }]
+        );
     }
 }

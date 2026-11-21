@@ -11,6 +11,10 @@ RS274-SOLO-ERR | published | gcb_contourMillHolesGrid_001.gcode.ngc | rs274 exit
 RS274-SOLO-ERR | published | gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | gcb_spiral.gcode | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gce_full_industrial_lathe.g | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gce_g71_bareint_testg71.g | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gce_g74_peck_bareint.g | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | gce_g76_thread_fanuc.g | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | grbljs_Circle_Diamond_Square_Calibration.gcode | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | grbljs_arc-ijk.gcode | rs274 exit exit code: 1: executing
 RS274-PAIR-ERR | published | grbljs_arc-ijk.gcode | rs274 failed (exit code: 1): executing
@@ -85,6 +89,10 @@ G1 X8 Y2.5 F300
  
 CANON-DIV | published | mit_tball_tball-engrave.gcode | 4474 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 3449 vs 3445" })
 CANON-DIV | published | mit_tball_tball.gcode | 3575 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 2699 vs 2696" })
+RS274-SOLO-ERR | published | mpe_g65_macro_centerline_probe.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mpe_g65_macro_deep_drill.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mpe_g65_macro_material_verify.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | published | mpe_while_clear_variables.nc | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | olle_top_cont.tap | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | olle_top_trace_finish.tap | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | published | vince_BewareOfDog_v10.nc | rs274 exit exit code: 1: executing
@@ -101,6 +109,10 @@ File ended with no percent sign or program end
  
 CANON-DIV | published | vince_tictactoe1.nc | 1504 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 1804 vs 980" })
 RS274-SOLO-ERR | published | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | cncsim_g154_g43_haas_vf2.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | cncsim_g76_eob_ciclos.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | cncsim_g84_g43_placa.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | cncsim_m98_m99_duas_morsas.nc | rs274 exit exit code: 1: executing
 RS274-SOLO-ERR | local-dev | lcnc_configs_sim_gmoccapy_macros_change.ngc | rs274 exit exit code: 1: executing
 CANON-DIV | local-dev | lcnc_nc_files_3dtest.ngc | 1 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 5 vs 61" })
 CANON-DIV | local-dev | lcnc_nc_files_arcspiral.ngc | 3907 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 1015 vs 1014" })
@@ -130,3 +142,8 @@ CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_qui
 CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-concave.ngc | 3 div | первый: Some(CanonDivergence { index: 5, detail: "op mismatch: USE_LENGTH_UNITS vs SET_FEED_RATE" })
 CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-convex-convex.ngc | 7 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 17 vs 16" })
 CANON-DIV | local-dev | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-neartangent.ngc | 7 div | первый: Some(CanonDivergence { index: 0, detail: "длина канонического потока: 17 vs 16" })
+RS274-SOLO-ERR | local-dev | ncm_g41_d_2d5_milling.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | ncm_g434_rtcp_5x_milling.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | ncm_g43_g69_3d5x_milling.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | ncm_g87_g88_g121_turn1.nc | rs274 exit exit code: 1: executing
+RS274-SOLO-ERR | local-dev | ncm_haas_g76_g15_eob_turn.nc | rs274 exit exit code: 1: executing

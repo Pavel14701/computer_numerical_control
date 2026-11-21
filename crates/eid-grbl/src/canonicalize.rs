@@ -4,11 +4,13 @@
 //! структурные нарушения → жёсткий Err; локальные конструкции → Raw-узел).
 //! drop-with-notice — паттерн eid-core parser.rs (Notice, SPEC §3).
 
-use std::collections::HashSet;
-use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs};
-use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 use crate::block::{Block, G10Kind, Marker, ParsedFile};
 use crate::gcode::{GCode, MCode};
+use eid_core::ast::{
+    Coolant, Dir, Frame, Num, Op, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs,
+};
+use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
+use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-core parser.rs; SPEC §3/§5.2/§6)
@@ -77,7 +79,13 @@ fn verbatim(n: &Num) -> Num {
 }
 
 fn span(file: &str, line: u32, len: usize) -> SrcSpan {
-    SrcSpan { file: file.to_string(), line_start: line, col_start: 1, line_end: line, col_end: len as u32 + 1 }
+    SrcSpan {
+        file: file.to_string(),
+        line_start: line,
+        col_start: 1,
+        line_end: line,
+        col_end: len as u32 + 1,
+    }
 }
 
 /// Диагностика с явным этапом: Parse — лексические пути GRBL, Verify —
@@ -90,20 +98,38 @@ fn err_staged(
     line: u32,
     len: usize,
 ) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src: Some(span(file, line, len)), options: Vec::new(), limit: None, stage }
+    Diagnostic {
+        code,
+        message: msg.into(),
+        src: Some(span(file, line, len)),
+        options: Vec::new(),
+        limit: None,
+        stage,
+    }
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
 }
 
-fn limit_err(threshold: &'static str, value: f64, actual: f64, msg: String, file: &str, line: u32) -> Diagnostic {
+fn limit_err(
+    threshold: &'static str,
+    value: f64,
+    actual: f64,
+    msg: String,
+    file: &str,
+    line: u32,
+) -> Diagnostic {
     Diagnostic {
         code: ErrorCode::LimitExceeded,
         message: msg,
         src: Some(span(file, line, 0)),
         options: Vec::new(),
-        limit: Some(LimitInfo { threshold, threshold_value: value, actual }),
+        limit: Some(LimitInfo {
+            threshold,
+            threshold_value: value,
+            actual,
+        }),
         stage: eid_core::diag::Stage::Verify,
     }
 }
@@ -113,7 +139,11 @@ fn e3(p: &Point3) -> [f64; 3] {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 { x: num_f64(x), y: num_f64(y), z: num_f64(z) }
+    Point3 {
+        x: num_f64(x),
+        y: num_f64(y),
+        z: num_f64(z),
+    }
 }
 
 /// Плоскость → (axis_0, axis_1, axis_linear) — определение grbl gcode.c
@@ -165,30 +195,30 @@ fn payload_hex(line: &str) -> String {
 
 struct Ctx {
     file: String,
-    units: Units,           // G20/G21 (дефолт Mm = дефолт GRBL)
-    dist_abs: bool,         // G90=true / G91=false
-    feed_inverse: bool,     // G93
-    plane: GCode,           // G17/G18/G19 — модальное состояние парсера (SPEC §4)
-    motion: Option<GCode>,  // модальный motion (G80 → None)
+    units: Units,          // G20/G21 (дефолт Mm = дефолт GRBL)
+    dist_abs: bool,        // G90=true / G91=false
+    feed_inverse: bool,    // G93
+    plane: GCode,          // G17/G18/G19 — модальное состояние парсера (SPEC §4)
+    motion: Option<GCode>, // модальный motion (G80 → None)
     wcs: Wcs,
     selected_wcs: HashSet<u8>,      // §5.3(b): все выбранные до хода
     wcs_origins: Vec<(u8, Point3)>, // wcs_define (G10 L2) до текущей точки
-    feed: Option<Num>,      // модальный F (переживает G0, SPEC §4)
+    feed: Option<Num>,              // модальный F (переживает G0, SPEC §4)
     last_s: Option<Num>,
     spindle: Spindle,
     coolant: Coolant,
-    anchor: Option<(Point3, Wcs)>,  // пресетка (G92/L20 full-triple): reading старта
-    frame_def_count: usize,         // G92/L20 — не более одной пресетки (N17)
-    prev_end: Option<Point3>,       // end последнего motion-опа (в его reading)
-    prev_is_machine: bool,          // последний motion был G53
-    prev_wcs: Wcs,                  // reading prev_end (wcs или Machine)
-    pos_mach: Option<Point3>,       // машинные координаты текущей позиции
+    anchor: Option<(Point3, Wcs)>, // пресетка (G92/L20 full-triple): reading старта
+    frame_def_count: usize,        // G92/L20 — не более одной пресетки (N17)
+    prev_end: Option<Point3>,      // end последнего motion-опа (в его reading)
+    prev_is_machine: bool,         // последний motion был G53
+    prev_wcs: Wcs,                 // reading prev_end (wcs или Machine)
+    pos_mach: Option<Point3>,      // машинные координаты текущей позиции
     ops: Vec<Op>,
     notices: Vec<Notice>,
     units_established: bool, // первое слово G20/G21 устанавливает (SPEC §2.5 v0.12)
-    g43_family_seen: bool,          // правило семейств §1.3 (G49): G43.1 в файле
+    g43_family_seen: bool,   // правило семейств §1.3 (G49): G43.1 в файле
     g92_values: Option<(Point3, Wcs)>, // для Program.frame_preset (только G92)
-    end_count: usize,               // M2/M30
+    end_count: usize,        // M2/M30
     end_is_last: bool,
     end_line: u32,
 }
@@ -206,7 +236,10 @@ impl Ctx {
     }
 
     fn origin_of(&self, p: u8) -> Option<&Point3> {
-        self.wcs_origins.iter().find(|(q, _)| *q == p).map(|(_, o)| o)
+        self.wcs_origins
+            .iter()
+            .find(|(q, _)| *q == p)
+            .map(|(_, o)| o)
     }
 
     fn push(&mut self, op: Op) {
@@ -216,14 +249,24 @@ impl Ctx {
     /// drop-with-notice (оп НЕ попадает в ops, SPEC §3).
     fn push_drop(&mut self, op: Op, kind: NoticeKind, message: String) {
         let idx = self.ops.len();
-        self.notices.push(Notice { kind, message, op_index: idx, op });
+        self.notices.push(Notice {
+            kind,
+            message,
+            op_index: idx,
+            op,
+        });
     }
 
     /// notice при ЖИВОМ опе (near-degenerate R-arc, EQUIVALENCE §4).
     fn push_keep(&mut self, op: Op, kind: NoticeKind, message: String) {
         let idx = self.ops.len();
         self.ops.push(op.clone());
-        self.notices.push(Notice { kind, message, op_index: idx, op });
+        self.notices.push(Notice {
+            kind,
+            message,
+            op_index: idx,
+            op,
+        });
     }
 
     fn raw_op(&self, b: &Block, raw_line: &str, code: ErrorCode, reason: &str) -> Op {
@@ -249,9 +292,12 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     let line_count = src.lines().count() as f64;
     if line_count > 1_000_000.0 {
         return Err(vec![limit_err(
-            "max_source_lines", 1_000_000.0, line_count,
+            "max_source_lines",
+            1_000_000.0,
+            line_count,
             format!("file has {} lines, limit 1000000", src.lines().count()),
-            file, 1,
+            file,
+            1,
         )]);
     }
 
@@ -263,14 +309,20 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             .iter()
             .map(|e| match e.kind {
                 crate::lexer::LexErrorKind::WordTooLong => limit_err(
-                    "max_word_chars", 32.0, 32.0,
-                    "word value exceeds max_word_chars (32)".into(), file, e.line,
+                    "max_word_chars",
+                    32.0,
+                    32.0,
+                    "word value exceeds max_word_chars (32)".into(),
+                    file,
+                    e.line,
                 ),
                 kind => err_staged(
                     eid_core::diag::Stage::Parse,
                     ErrorCode::InvalidInput,
                     format!("lexical error: {:?} at col {}", kind, e.col),
-                    file, e.line, e.col as usize,
+                    file,
+                    e.line,
+                    e.col as usize,
                 ),
             })
             .collect());
@@ -324,14 +376,18 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "duplicate program end: more than one M2/M30 (CORPUS n13)",
-            &ctx.file, ctx.end_line, 0,
+            &ctx.file,
+            ctx.end_line,
+            0,
         )]);
     }
     if ctx.end_count > 0 && !ctx.end_is_last {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "program end is not the last block (CORPUS n12)",
-            &ctx.file, ctx.end_line, 0,
+            &ctx.file,
+            ctx.end_line,
+            0,
         )]);
     }
     if ctx.end_count == 0 {
@@ -358,9 +414,12 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
     let ops_n = (ctx.ops.len() + ctx.notices.len()) as f64;
     if ops_n > 200_000.0 {
         return Err(vec![limit_err(
-            "max_ops_per_program", 200_000.0, ops_n,
+            "max_ops_per_program",
+            200_000.0,
+            ops_n,
             format!("program yields {} ops, limit 200000", ops_n as u64),
-            &ctx.file, 1,
+            &ctx.file,
+            1,
         )]);
     }
     let program = Program {
@@ -370,7 +429,10 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
         // SPEC §3 v0.12: отсутствие G61/G61.1/G64 → exact_path (дефолт);
         // G61 — единственный path-код словаря GRBL — тоже exact_path.
         path_mode: eid_core::ast::PathMode::ExactPath,
-        frame_preset: ctx.g92_values.take().map(|(values, wcs)| eid_core::ast::FramePreset { values, wcs }),
+        frame_preset: ctx
+            .g92_values
+            .take()
+            .map(|(values, wcs)| eid_core::ast::FramePreset { values, wcs }),
         ops: std::mem::take(&mut ctx.ops),
     };
     let notices = std::mem::take(&mut ctx.notices);
@@ -418,7 +480,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         return Err(vec![err(
             ErrorCode::InvalidInput,
             format!("modal group violation in block: {:?} after {:?}", group, g),
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
 
@@ -444,7 +508,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
                 && matches!(w.value.value() as i64, 74 | 76 | 84 | 87 | 88)
         });
         let axes_sem = !cycle_sem
-            && b.unsupported_words.iter().all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
+            && b.unsupported_words
+                .iter()
+                .all(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'));
         let (code, reason) = if cycle_sem {
             (
                 ErrorCode::UnsupportedSemantics,
@@ -475,7 +541,9 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "bare T word: no tool change semantics in GRBL (COVERAGE §3)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
 
@@ -535,8 +603,13 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
         };
         let op = ctx.raw_op(b, &b.raw, code, reason);
         absorb_frame_structs(ctx, b)?;
-        let raw_motion_g = matches!(g, GCode::Home | GCode::SetHome | GCode::Home2 | GCode::SetHome2 | GCode::Probe(_));
-        let has_motion_words = ['X', 'Y', 'Z', 'I', 'J', 'K', 'R'].iter().any(|l| b.word(*l).is_some());
+        let raw_motion_g = matches!(
+            g,
+            GCode::Home | GCode::SetHome | GCode::Home2 | GCode::SetHome2 | GCode::Probe(_)
+        );
+        let has_motion_words = ['X', 'Y', 'Z', 'I', 'J', 'K', 'R']
+            .iter()
+            .any(|l| b.word(*l).is_some());
         if raw_motion_g && has_motion_words {
             ctx.motion = None;
             ctx.push_keep(
@@ -558,19 +631,27 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
     if let Some(m) = b.g_codes.iter().copied().find(|g| {
-        matches!(g, GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw)
+        matches!(
+            g,
+            GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw
+        )
     }) {
         ctx.motion = Some(m);
     }
     let g53 = b.g_codes.contains(&GCode::MachineFrame);
     let has_axis = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
-    let has_arc_words = b.word('I').is_some() || b.word('J').is_some() || b.word('K').is_some() || b.word('R').is_some();
+    let has_arc_words = b.word('I').is_some()
+        || b.word('J').is_some()
+        || b.word('K').is_some()
+        || b.word('R').is_some();
 
     if g53 && !matches!(ctx.motion, Some(GCode::Rapid) | Some(GCode::Linear)) {
         return Err(vec![err(
             ErrorCode::InvalidInput,
             "G53 requires G0/G1 in the same block (grbl gcode.c)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     let mode = match ctx.motion {
@@ -600,21 +681,40 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 
     // Цель: слова G90/G91 + наследование осей (SPEC §2: частичный end при
     // неизвестном reading — E_RUNTIME_STATE; дефолт-0 — только для WCS-старта (a)).
-    let end = resolve_end(ctx, b, &reading, !g53)?
-        .expect("end known: reading known or full G90 triple");
+    let end =
+        resolve_end(ctx, b, &reading, !g53)?.expect("end known: reading known or full G90 triple");
 
     let frame = if g53 { Frame::Machine } else { Frame::Wcs };
-    let start = reading.clone().map(StartPoint::Known).unwrap_or(StartPoint::Unknown);
+    let start = reading
+        .clone()
+        .map(StartPoint::Known)
+        .unwrap_or(StartPoint::Unknown);
 
     // zero-length (start == end) → drop + notice (SPEC §3).
     if let StartPoint::Known(s) = &start {
         if len3(&sub3(&end, s)) < 1e-9 {
             let op = if mode == GCode::Rapid {
-                Op::Rapid { start: start.clone(), end: end.clone(), state: ctx.state(frame), src: span(&ctx.file, line, blen), sub: None }
+                Op::Rapid {
+                    start: start.clone(),
+                    end: end.clone(),
+                    state: ctx.state(frame),
+                    src: span(&ctx.file, line, blen),
+                    sub: None,
+                }
             } else {
-                Op::Linear { start: start.clone(), end: end.clone(), state: ctx.state(frame), src: span(&ctx.file, line, blen), sub: None }
+                Op::Linear {
+                    start: start.clone(),
+                    end: end.clone(),
+                    state: ctx.state(frame),
+                    src: span(&ctx.file, line, blen),
+                    sub: None,
+                }
             };
-            ctx.push_drop(op, NoticeKind::ZeroLengthMotion, "zero-length motion dropped (start == end, SPEC §3)".into());
+            ctx.push_drop(
+                op,
+                NoticeKind::ZeroLengthMotion,
+                "zero-length motion dropped (start == end, SPEC §3)".into(),
+            );
             update_pos(ctx, g53, end);
             return Ok(());
         }
@@ -623,15 +723,33 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     // feed: G0 не требует; linear без F → INVALID (SPEC §4). G93 → len × F.
     let op = if mode == GCode::Rapid {
         // G93 не применяется к rapid (rapid не ходит по feed) — F как есть.
-        Op::Rapid { start, end: end.clone(), state: ctx.state(frame), src: span(&ctx.file, line, blen), sub: None }
+        Op::Rapid {
+            start,
+            end: end.clone(),
+            state: ctx.state(frame),
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        }
     } else {
         let f = ctx.feed.clone().ok_or_else(|| {
-            vec![err(ErrorCode::InvalidInput, "linear move before any F word (SPEC §4)", &ctx.file, line, blen)]
+            vec![err(
+                ErrorCode::InvalidInput,
+                "linear move before any F word (SPEC §4)",
+                &ctx.file,
+                line,
+                blen,
+            )]
         })?;
         let feed = resolved_feed(ctx, &start, &end, f, line, blen)?;
         let mut st = ctx.state(frame);
         st.feed = Some(feed);
-        Op::Linear { start, end: end.clone(), state: st, src: span(&ctx.file, line, blen), sub: None }
+        Op::Linear {
+            start,
+            end: end.clone(),
+            state: st,
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        }
     };
     ctx.push(op);
     update_pos(ctx, g53, end);
@@ -647,7 +765,9 @@ fn reading_now(ctx: &Ctx, g53: bool) -> Result<Option<Point3>, Vec<Diagnostic>> 
             return Err(vec![err(
                 ErrorCode::RuntimeState,
                 "machine-frame move after frame_preset/wcs_set_here (SPEC §5.3a; CORPUS n16)",
-                &ctx.file, 0, 0,
+                &ctx.file,
+                0,
+                0,
             )]);
         }
         for p in &ctx.selected_wcs {
@@ -663,7 +783,11 @@ fn reading_now(ctx: &Ctx, g53: bool) -> Result<Option<Point3>, Vec<Diagnostic>> 
     }
     if ctx.prev_end.is_none() {
         // (a) первый motion-оп: якорь = frame_preset / wcs_set_here (той же WCS).
-        return Ok(ctx.anchor.as_ref().filter(|(_, w)| *w == ctx.wcs).map(|(p, _)| p.clone()));
+        return Ok(ctx
+            .anchor
+            .as_ref()
+            .filter(|(_, w)| *w == ctx.wcs)
+            .map(|(p, _)| p.clone()));
     }
     if ctx.prev_is_machine {
         // (d) первый WCS-ход после machine-ходов: reading = M − O_wcs − Δ.
@@ -722,7 +846,9 @@ fn resolve_end(
                             return Err(vec![err(
                                 ErrorCode::RuntimeState,
                                 "incremental move requires known current position (SPEC §2)",
-                                &ctx.file, b.line_no, b.raw.len(),
+                                &ctx.file,
+                                b.line_no,
+                                b.raw.len(),
                             )]);
                         }
                     };
@@ -743,7 +869,9 @@ fn resolve_end(
                 Err(vec![err(
                     ErrorCode::RuntimeState,
                     "partial end with unknown reading inherits unknown (SPEC §2)",
-                    &ctx.file, b.line_no, b.raw.len(),
+                    &ctx.file,
+                    b.line_no,
+                    b.raw.len(),
                 )])
             } else {
                 unreachable!("reading known ⇒ все оси разрешены")
@@ -753,7 +881,14 @@ fn resolve_end(
 }
 
 /// G94: F как есть; G93: feed = len × F (только для linear/arc, SPEC §4).
-fn resolved_feed(ctx: &Ctx, start: &StartPoint, end: &Point3, f: Num, line: u32, blen: usize) -> Result<Num, Vec<Diagnostic>> {
+fn resolved_feed(
+    ctx: &Ctx,
+    start: &StartPoint,
+    end: &Point3,
+    f: Num,
+    line: u32,
+    blen: usize,
+) -> Result<Num, Vec<Diagnostic>> {
     if !ctx.feed_inverse {
         return Ok(f);
     }
@@ -762,7 +897,9 @@ fn resolved_feed(ctx: &Ctx, start: &StartPoint, end: &Point3, f: Num, line: u32,
         StartPoint::Unknown => Err(vec![err(
             ErrorCode::RuntimeState,
             "G93 requires known trajectory length (start unknown)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]),
     }
 }
@@ -770,14 +907,25 @@ fn resolved_feed(ctx: &Ctx, start: &StartPoint, end: &Point3, f: Num, line: u32,
 /// Дуга G2/G3: IJK (инкрементальные offsets от старта, in-plane пара по
 /// плоскости; COVERAGE §6.11) или R-форма (SPEC §6: знак + ≤180°, − >180°).
 /// Вне-плоскостное слово → pitch. Валидация §6 → E_INVALID_INPUT (N5a/N5b/N19).
-fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> Result<(), Vec<Diagnostic>> {
+fn arc_block(
+    ctx: &mut Ctx,
+    b: &Block,
+    mode: GCode,
+    reading: Option<Point3>,
+) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
     let inval = |msg: String| err(ErrorCode::InvalidInput, msg, &ctx.file, line, blen);
     // ARC с start=unknown — E_RUNTIME_STATE (геометрия дуги требует числового
     // старта, SPEC §2).
     let start = reading.ok_or_else(|| {
-        vec![err(ErrorCode::RuntimeState, "arc with unknown start (SPEC §2)", &ctx.file, line, blen)]
+        vec![err(
+            ErrorCode::RuntimeState,
+            "arc with unknown start (SPEC §2)",
+            &ctx.file,
+            line,
+            blen,
+        )]
     })?;
     let end = resolve_end(ctx, b, &Some(start.clone()), true)?
         .expect("end known: reading known or full G90 triple");
@@ -786,7 +934,11 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
     let s = e3(&start);
     let e = e3(&end);
     let pitch = e[al] - s[al]; // вне-плоскостная компонента хода (винт)
-    let dir = if mode == GCode::ArcCw { Dir::Cw } else { Dir::Ccw };
+    let dir = if mode == GCode::ArcCw {
+        Dir::Cw
+    } else {
+        Dir::Ccw
+    };
     let normal = match ctx.plane {
         GCode::PlaneXY => [0.0, 0.0, 1.0],
         GCode::PlaneZX => [0.0, 1.0, 0.0],
@@ -811,9 +963,10 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
             let tol_r = 0.001f64.max(1e-6 * r.abs());
             let h2 = 4.0 * r * r - d0 * d0 - d1 * d1; // = (2R)² − c²
             if h2 < -tol_r * 4.0 * r.abs().max(1.0) {
-                return Err(vec![inval(
-                    format!("arc chord {chord_plane:.4} > 2R {}: impossible arc (SPEC §6; CORPUS n5b)", r.abs()),
-                )]);
+                return Err(vec![inval(format!(
+                    "arc chord {chord_plane:.4} > 2R {}: impossible arc (SPEC §6; CORPUS n5b)",
+                    r.abs()
+                ))]);
             }
             // Формула LinuxCNC/grbl: центр = середина хорды ± h·p̂; знак из
             // направления и знака R (проверено на пилоте 46: центр (0,5,0)).
@@ -847,7 +1000,11 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
         // дополнение до 360° при R<0; cw/ccw выбирает сторону центра, не величину.
         Some(r) => {
             let sw = 2.0 * (chord_plane / (2.0 * r.abs())).clamp(0.0, 1.0).asin();
-            if r < 0.0 { two_pi - sw } else { sw }
+            if r < 0.0 {
+                two_pi - sw
+            } else {
+                sw
+            }
         }
         // IJK: полярные углы от точного центра; совпадение в плоскости = 360°.
         None => {
@@ -857,8 +1014,16 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
             if sweep_ccw < 1e-9 {
                 sweep_ccw = two_pi; // полная окружность (SPEC §6, ловушка (а))
             }
-            let sw = if mode == GCode::ArcCw { two_pi - sweep_ccw } else { sweep_ccw };
-            if sw < 1e-9 { two_pi } else { sw }
+            let sw = if mode == GCode::ArcCw {
+                two_pi - sweep_ccw
+            } else {
+                sweep_ccw
+            };
+            if sw < 1e-9 {
+                two_pi
+            } else {
+                sw
+            }
         }
     };
 
@@ -944,9 +1109,19 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
 
     let arc_len = ((rho_s * sweep).powi(2) + pitch * pitch).sqrt();
     let f = ctx.feed.clone().ok_or_else(|| {
-        vec![err(ErrorCode::InvalidInput, "arc move before any F word (SPEC §4)", &ctx.file, line, blen)]
+        vec![err(
+            ErrorCode::InvalidInput,
+            "arc move before any F word (SPEC §4)",
+            &ctx.file,
+            line,
+            blen,
+        )]
     })?;
-    let feed = if ctx.feed_inverse { num_f64(arc_len * f.value()) } else { f };
+    let feed = if ctx.feed_inverse {
+        num_f64(arc_len * f.value())
+    } else {
+        f
+    };
     let mut st = ctx.state(Frame::Wcs);
     st.feed = Some(feed);
     let op = Op::Arc {
@@ -965,7 +1140,8 @@ fn arc_block(ctx: &mut Ctx, b: &Block, mode: GCode, reading: Option<Point3>) -> 
         ctx.push_keep(
             op,
             NoticeKind::NearDegenerateRArc,
-            "near-degenerate R-arc (±0.12° around 180°): center amplification (EQUIVALENCE §4)".into(),
+            "near-degenerate R-arc (±0.12° around 180°): center amplification (EQUIVALENCE §4)"
+                .into(),
         );
     } else {
         ctx.push(op);
@@ -1025,13 +1201,19 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12); и на RAW-кадре.
     for g in &b.g_codes {
         if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
-            let u = if *g == GCode::UnitsIn { Units::In } else { Units::Mm };
+            let u = if *g == GCode::UnitsIn {
+                Units::In
+            } else {
+                Units::Mm
+            };
             if u != ctx.units {
                 if ctx.units_established {
                     return Err(vec![err(
                         ErrorCode::UnsupportedSemantics,
                         "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                        &ctx.file, line, blen,
+                        &ctx.file,
+                        line,
+                        blen,
                     )]);
                 }
                 ctx.units = u;
@@ -1073,11 +1255,17 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     for m in &b.m_codes {
         match m {
             MCode::SpindleCw => {
-                let s = s_word.clone().or_else(|| ctx.last_s.clone()).unwrap_or_else(|| num_f64(0.0));
+                let s = s_word
+                    .clone()
+                    .or_else(|| ctx.last_s.clone())
+                    .unwrap_or_else(|| num_f64(0.0));
                 ctx.spindle = Spindle::Cw(s);
             }
             MCode::SpindleCcw => {
-                let s = s_word.clone().or_else(|| ctx.last_s.clone()).unwrap_or_else(|| num_f64(0.0));
+                let s = s_word
+                    .clone()
+                    .or_else(|| ctx.last_s.clone())
+                    .unwrap_or_else(|| num_f64(0.0));
                 ctx.spindle = Spindle::Ccw(s);
             }
             MCode::SpindleOff => ctx.spindle = Spindle::Off,
@@ -1111,14 +1299,18 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if ctx.frame_def_count >= 1 {
             return Err(vec![err(
                 ErrorCode::UnsupportedSemantics,
                 "second frame preset (G92/G10 L20) in one program (CORPUS n17)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         let (x, y, z) = match (b.word('X'), b.word('Y'), b.word('Z')) {
@@ -1148,7 +1340,11 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
             _ => None,
         } {
             if let (Some(x), Some(y), Some(z)) = (b.word('X'), b.word('Y'), b.word('Z')) {
-                let origin = Point3 { x: verbatim(x), y: verbatim(y), z: verbatim(z) };
+                let origin = Point3 {
+                    x: verbatim(x),
+                    y: verbatim(y),
+                    z: verbatim(z),
+                };
                 ctx.wcs_origins.push((p, origin));
             }
         }
@@ -1175,19 +1371,36 @@ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagn
     // (11) Dwell G4 P (сек, COVERAGE §7.3): ==0 → drop+notice; <0 → INVALID.
     if b.g_codes.contains(&GCode::Dwell) {
         let p = b.word('P').ok_or_else(|| {
-            vec![err(ErrorCode::InvalidInput, "G4 requires P word (seconds)", &ctx.file, line, blen)]
+            vec![err(
+                ErrorCode::InvalidInput,
+                "G4 requires P word (seconds)",
+                &ctx.file,
+                line,
+                blen,
+            )]
         })?;
         let sec = p.value();
-        let op = Op::Dwell { seconds: verbatim(p), state: ctx.state(Frame::Wcs), src: span(&ctx.file, line, blen), sub: None };
+        let op = Op::Dwell {
+            seconds: verbatim(p),
+            state: ctx.state(Frame::Wcs),
+            src: span(&ctx.file, line, blen),
+            sub: None,
+        };
         if sec < 0.0 {
             return Err(vec![err(
                 ErrorCode::InvalidInput,
                 "G4 P < 0: negative dwell (SPEC §5.2)",
-                &ctx.file, line, blen,
+                &ctx.file,
+                line,
+                blen,
             )]);
         }
         if sec == 0.0 {
-            ctx.push_drop(op, NoticeKind::ZeroDwell, "zero dwell dropped (seconds == 0, SPEC §5.2)".into());
+            ctx.push_drop(
+                op,
+                NoticeKind::ZeroDwell,
+                "zero dwell dropped (seconds == 0, SPEC §5.2)".into(),
+            );
         } else {
             ctx.push(op);
         }
@@ -1217,7 +1430,9 @@ fn process_tail(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagn
         ctx.end_count += 1;
         ctx.end_line = line;
         ctx.end_is_last = is_last;
-        ctx.ops.push(Op::ProgramEnd { src: span(&ctx.file, line, blen) });
+        ctx.ops.push(Op::ProgramEnd {
+            src: span(&ctx.file, line, blen),
+        });
     }
     Ok(())
 }
@@ -1227,10 +1442,18 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
     let bad_p = || {
-        err(ErrorCode::InvalidInput, "G10 requires P word, 1..=6 (GRBL WCS count)", &ctx.file, line, blen)
+        err(
+            ErrorCode::InvalidInput,
+            "G10 requires P word, 1..=6 (GRBL WCS count)",
+            &ctx.file,
+            line,
+            blen,
+        )
     };
     let p: u8 = match b.word('P') {
-        Some(n) if n.value() >= 1.0 && n.value() <= 6.0 && n.value().fract() == 0.0 => n.value() as u8,
+        Some(n) if n.value() >= 1.0 && n.value() <= 6.0 && n.value().fract() == 0.0 => {
+            n.value() as u8
+        }
         _ => return Err(vec![bad_p()]),
     };
     match b.g10_kind() {
@@ -1274,7 +1497,9 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                 return Err(vec![err(
                     ErrorCode::UnsupportedSemantics,
                     "second frame preset (G92/G10 L20) in one program (CORPUS n17)",
-                    &ctx.file, line, blen,
+                    &ctx.file,
+                    line,
+                    blen,
                 )]);
             }
             // Частичный delta оставляет ось в неизвестном reading → RUNTIME.
@@ -1322,26 +1547,31 @@ fn process_g92(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         return Err(vec![err(
             ErrorCode::UnsupportedSemantics,
             "G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
     if ctx.frame_def_count >= 1 {
         return Err(vec![err(
             ErrorCode::UnsupportedSemantics,
             "second frame preset (G92/G10 L20) in one program (CORPUS n17)",
-            &ctx.file, line, blen,
+            &ctx.file,
+            line,
+            blen,
         )]);
     }
-    let (x, y, z) = match (b.word('X'), b.word('Y'), b.word('Z')) {
-        (Some(x), Some(y), Some(z)) => (verbatim(x), verbatim(y), verbatim(z)),
-        _ => {
-            return Err(vec![err(
+    let (x, y, z) =
+        match (b.word('X'), b.word('Y'), b.word('Z')) {
+            (Some(x), Some(y), Some(z)) => (verbatim(x), verbatim(y), verbatim(z)),
+            _ => {
+                return Err(vec![err(
                 ErrorCode::RuntimeState,
                 "partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)",
                 &ctx.file, line, blen,
             )]);
-        }
-    };
+            }
+        };
     let values = Point3 { x, y, z };
     ctx.g92_values = Some((values.clone(), ctx.wcs));
     ctx.frame_def_count += 1;

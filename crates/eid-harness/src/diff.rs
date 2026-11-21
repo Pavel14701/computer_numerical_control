@@ -47,14 +47,31 @@ impl Default for DiffConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Divergence {
-    OpCount { a: usize, b: usize },
-    OpKind { index: usize },
-    Geometry { index: usize, field: &'static str },
-    StateField { index: usize, field: &'static str },
-    MetaField { field: &'static str },
+    OpCount {
+        a: usize,
+        b: usize,
+    },
+    OpKind {
+        index: usize,
+    },
+    Geometry {
+        index: usize,
+        field: &'static str,
+    },
+    StateField {
+        index: usize,
+        field: &'static str,
+    },
+    MetaField {
+        field: &'static str,
+    },
     /// unknown vs known — расхождение (EQUIVALENCE §3 v0.2); R3 красный.
-    UnknownVsKnown { index: usize },
-    RawMismatch { index: usize },
+    UnknownVsKnown {
+        index: usize,
+    },
+    RawMismatch {
+        index: usize,
+    },
 }
 
 /// L2-дифф на composed-фрейме (EQUIVALENCE §1.3, §3). Пустой вектор = эквивалентны.
@@ -83,13 +100,21 @@ pub fn semantic_diff(a: &Program, b: &Program, cfg: &DiffConfig) -> Vec<Divergen
     }
     diff_path_mode(&a.path_mode, &b.path_mode, cfg, &mut d);
     let eps = eps_pos(a, b, cfg);
-    diff_frame_preset(a.frame_preset.as_ref(), b.frame_preset.as_ref(), eps, &mut d);
+    diff_frame_preset(
+        a.frame_preset.as_ref(),
+        b.frame_preset.as_ref(),
+        eps,
+        &mut d,
+    );
 
     // --- опы: M1-фильтрация, посортное сравнение ------------------------------
     let fa = filter_m1(&a.ops);
     let fb = filter_m1(&b.ops);
     if fa.len() != fb.len() {
-        d.push(Divergence::OpCount { a: fa.len(), b: fb.len() });
+        d.push(Divergence::OpCount {
+            a: fa.len(),
+            b: fb.len(),
+        });
     }
     for (i, (oa, ob)) in fa.iter().zip(fb.iter()).enumerate() {
         diff_op(oa, ob, i, cfg, eps, &mut d);
@@ -113,7 +138,9 @@ fn diff_path_mode(a: &PathMode, b: &PathMode, cfg: &DiffConfig, d: &mut Vec<Dive
             (None, None) => {}
             (Some(x), Some(y)) => {
                 if !num_close(x.value(), y.value(), cfg.eps_abs) {
-                    d.push(Divergence::MetaField { field: "path_mode.t" });
+                    d.push(Divergence::MetaField {
+                        field: "path_mode.t",
+                    });
                 }
             }
             _ => d.push(Divergence::MetaField { field: "path_mode" }),
@@ -135,15 +162,19 @@ fn diff_frame_preset(
 ) {
     match (a, b) {
         (None, None) => {}
-        (Some(_), None) | (None, Some(_)) => {
-            d.push(Divergence::MetaField { field: "frame_preset" })
-        }
+        (Some(_), None) | (None, Some(_)) => d.push(Divergence::MetaField {
+            field: "frame_preset",
+        }),
         (Some(x), Some(y)) => {
             if x.wcs != y.wcs {
-                d.push(Divergence::MetaField { field: "frame_preset.wcs" });
+                d.push(Divergence::MetaField {
+                    field: "frame_preset.wcs",
+                });
             }
             if !p3_close(&x.values, &y.values, eps) {
-                d.push(Divergence::MetaField { field: "frame_preset.values" });
+                d.push(Divergence::MetaField {
+                    field: "frame_preset.values",
+                });
             }
         }
     }
@@ -172,63 +203,132 @@ fn diff_op(oa: &Op, ob: &Op, i: usize, cfg: &DiffConfig, eps: f64, d: &mut Vec<D
         }
         (Op::Arc { .. }, Op::Arc { .. }) => diff_arc(i, oa, ob, cfg, eps, d),
         (
-            Op::Dwell { seconds: sa, state: st_a, .. },
-            Op::Dwell { seconds: sb, state: st_b, .. },
+            Op::Dwell {
+                seconds: sa,
+                state: st_a,
+                ..
+            },
+            Op::Dwell {
+                seconds: sb,
+                state: st_b,
+                ..
+            },
         ) => {
             // dwell: max(0.0001, dwell_rel·t) (EQUIVALENCE §4)
             let tol = 1e-4_f64.max(cfg.dwell_rel * sa.value().abs().max(sb.value().abs()));
             if !num_close(sa.value(), sb.value(), tol) {
-                d.push(Divergence::Geometry { index: i, field: "seconds" });
+                d.push(Divergence::Geometry {
+                    index: i,
+                    field: "seconds",
+                });
             }
             diff_state(i, st_a, st_b, cfg, d);
         }
         (
-            Op::ToolChange { tool: ta, state: st_a, .. },
-            Op::ToolChange { tool: tb, state: st_b, .. },
+            Op::ToolChange {
+                tool: ta,
+                state: st_a,
+                ..
+            },
+            Op::ToolChange {
+                tool: tb,
+                state: st_b,
+                ..
+            },
         ) => {
             if ta != tb {
-                d.push(Divergence::StateField { index: i, field: "tool" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "tool",
+                });
             }
             diff_state(i, st_a, st_b, cfg, d);
         }
         (
-            Op::ProgramStop { optional: oa_, state: st_a, .. },
-            Op::ProgramStop { optional: ob_, state: st_b, .. },
+            Op::ProgramStop {
+                optional: oa_,
+                state: st_a,
+                ..
+            },
+            Op::ProgramStop {
+                optional: ob_,
+                state: st_b,
+                ..
+            },
         ) => {
             // M1 отфильтрован; здесь оба optional=false (M0) — иначе OpKind.
             if oa_ != ob_ {
-                d.push(Divergence::StateField { index: i, field: "optional" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "optional",
+                });
             }
             diff_state(i, st_a, st_b, cfg, d);
         }
         (Op::ProgramEnd { .. }, Op::ProgramEnd { .. }) => {}
         (
-            Op::WcsDefine { p: pa, origin: ga, state: st_a, .. },
-            Op::WcsDefine { p: pb, origin: gb, state: st_b, .. },
+            Op::WcsDefine {
+                p: pa,
+                origin: ga,
+                state: st_a,
+                ..
+            },
+            Op::WcsDefine {
+                p: pb,
+                origin: gb,
+                state: st_b,
+                ..
+            },
         ) => {
             if pa != pb {
-                d.push(Divergence::StateField { index: i, field: "p" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "p",
+                });
             }
             if !p3_close(ga, gb, eps) {
-                d.push(Divergence::Geometry { index: i, field: "origin" });
+                d.push(Divergence::Geometry {
+                    index: i,
+                    field: "origin",
+                });
             }
             diff_state(i, st_a, st_b, cfg, d);
         }
         (
-            Op::WcsSetHere { p: pa, delta: ga, state: st_a, .. },
-            Op::WcsSetHere { p: pb, delta: gb, state: st_b, .. },
+            Op::WcsSetHere {
+                p: pa,
+                delta: ga,
+                state: st_a,
+                ..
+            },
+            Op::WcsSetHere {
+                p: pb,
+                delta: gb,
+                state: st_b,
+                ..
+            },
         ) => {
             if pa != pb {
-                d.push(Divergence::StateField { index: i, field: "p" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "p",
+                });
             }
             if !p3_close(ga, gb, eps) {
-                d.push(Divergence::Geometry { index: i, field: "delta" });
+                d.push(Divergence::Geometry {
+                    index: i,
+                    field: "delta",
+                });
             }
             diff_state(i, st_a, st_b, cfg, d);
         }
         (
-            Op::Raw { payload_hex: ha, .. },
-            Op::Raw { payload_hex: hb, .. },
+            Op::Raw {
+                payload_hex: ha, ..
+            },
+            Op::Raw {
+                payload_hex: hb, ..
+            },
         ) => {
             // RAW — payload_hex точное равенство (EQUIVALENCE §3, D9 lossless).
             if ha != hb {
@@ -246,20 +346,49 @@ fn diff_motion(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut V
     let (sb, eb, st_b) = motion_parts(ob);
     diff_start(i, sa, sb, eps, d);
     if !p3_close(ea, eb, eps) {
-        d.push(Divergence::Geometry { index: i, field: "end" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "end",
+        });
     }
     diff_state(i, st_a, st_b, cfg, d);
 }
 
 fn diff_arc(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut Vec<Divergence>) {
     let (
-        Op::Arc { start: sa, end: ea, center: ca, normal: na, dir: da, sweep_deg: swa, pitch: pia, state: st_a, .. },
-        Op::Arc { start: sb, end: eb, center: cb, normal: nb, dir: db, sweep_deg: swb, pitch: pib, state: st_b, .. },
-    ) = (oa, ob) else { unreachable!("arc pair") };
+        Op::Arc {
+            start: sa,
+            end: ea,
+            center: ca,
+            normal: na,
+            dir: da,
+            sweep_deg: swa,
+            pitch: pia,
+            state: st_a,
+            ..
+        },
+        Op::Arc {
+            start: sb,
+            end: eb,
+            center: cb,
+            normal: nb,
+            dir: db,
+            sweep_deg: swb,
+            pitch: pib,
+            state: st_b,
+            ..
+        },
+    ) = (oa, ob)
+    else {
+        unreachable!("arc pair")
+    };
 
     diff_start(i, sa, sb, eps, d);
     if !p3_close(ea, eb, eps) {
-        d.push(Divergence::Geometry { index: i, field: "end" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "end",
+        });
     }
     // center: ε = max(ε_pos, q·A), A = 1/max(|cos(sweep/2)|, 1e-3), cap a_cap
     // (EQUIVALENCE §4; cos, не sin — ревью §4).
@@ -267,13 +396,22 @@ fn diff_arc(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut Vec<
     let a_fac = amp_factor(sweep_max).min(cfg.a_cap);
     let eps_center = eps.max(cfg.q_arc * a_fac);
     if !p3_close(ca, cb, eps_center) {
-        d.push(Divergence::Geometry { index: i, field: "center" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "center",
+        });
     }
     if !p3_close(na, nb, eps) {
-        d.push(Divergence::Geometry { index: i, field: "normal" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "normal",
+        });
     }
     if da != db {
-        d.push(Divergence::Geometry { index: i, field: "dir" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "dir",
+        });
     }
     // sweep (EQUIVALENCE §4 v0.3, СТОП-2 отчёта D): ε = max(1e-4°, 1e-6·sweep,
     // deg(q·A(sweep)/R)); deg(x) = x·180/π; R — планиметрический радиус из
@@ -293,14 +431,20 @@ fn diff_arc(i: usize, oa: &Op, ob: &Op, cfg: &DiffConfig, eps: f64, d: &mut Vec<
         }
         t
     };
-    let eps_sweep = sweep_tol_side(sa, ca, na, swa.value())
-        .min(sweep_tol_side(sb, cb, nb, swb.value()));
+    let eps_sweep =
+        sweep_tol_side(sa, ca, na, swa.value()).min(sweep_tol_side(sb, cb, nb, swb.value()));
     if !num_close(swa.value(), swb.value(), eps_sweep) {
-        d.push(Divergence::Geometry { index: i, field: "sweep" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "sweep",
+        });
     }
     // pitch = ε_pos (длина).
     if !num_close(pia.value(), pib.value(), eps) {
-        d.push(Divergence::Geometry { index: i, field: "pitch" });
+        d.push(Divergence::Geometry {
+            index: i,
+            field: "pitch",
+        });
     }
     diff_state(i, st_a, st_b, cfg, d);
 }
@@ -340,7 +484,10 @@ fn diff_start(i: usize, sa: &StartPoint, sb: &StartPoint, eps: f64, d: &mut Vec<
     match (sa, sb) {
         (StartPoint::Known(x), StartPoint::Known(y)) => {
             if !p3_close(x, y, eps) {
-                d.push(Divergence::Geometry { index: i, field: "start" });
+                d.push(Divergence::Geometry {
+                    index: i,
+                    field: "start",
+                });
             }
         }
         (StartPoint::Unknown, StartPoint::Unknown) => {}
@@ -353,12 +500,20 @@ fn diff_state(i: usize, a: &State, b: &State, cfg: &DiffConfig, d: &mut Vec<Dive
         (None, None) => {}
         (Some(x), Some(y)) => {
             // feed: max(0.001, feed_rel·feed); none ↔ число — всегда расхождение.
-            let tol = cfg.eps_abs.max(cfg.feed_rel * x.value().abs().max(y.value().abs()));
+            let tol = cfg
+                .eps_abs
+                .max(cfg.feed_rel * x.value().abs().max(y.value().abs()));
             if !num_close(x.value(), y.value(), tol) {
-                d.push(Divergence::StateField { index: i, field: "feed" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "feed",
+                });
             }
         }
-        _ => d.push(Divergence::StateField { index: i, field: "feed" }),
+        _ => d.push(Divergence::StateField {
+            index: i,
+            field: "feed",
+        }),
     }
     match (&a.spindle, &b.spindle) {
         (Spindle::Off, Spindle::Off) => {}
@@ -366,23 +521,41 @@ fn diff_state(i: usize, a: &State, b: &State, cfg: &DiffConfig, d: &mut Vec<Dive
             // rpm: max(0.01, rpm_rel·rpm)
             let tol = 0.01_f64.max(cfg.rpm_rel * x.value().abs().max(y.value().abs()));
             if !num_close(x.value(), y.value(), tol) {
-                d.push(Divergence::StateField { index: i, field: "spindle" });
+                d.push(Divergence::StateField {
+                    index: i,
+                    field: "spindle",
+                });
             }
         }
-        _ => d.push(Divergence::StateField { index: i, field: "spindle" }),
+        _ => d.push(Divergence::StateField {
+            index: i,
+            field: "spindle",
+        }),
     }
     // coolant / tool / wcs / frame — точные (EQUIVALENCE §2).
     if a.coolant != b.coolant {
-        d.push(Divergence::StateField { index: i, field: "coolant" });
+        d.push(Divergence::StateField {
+            index: i,
+            field: "coolant",
+        });
     }
     if a.tool != b.tool {
-        d.push(Divergence::StateField { index: i, field: "tool" });
+        d.push(Divergence::StateField {
+            index: i,
+            field: "tool",
+        });
     }
     if a.frame != b.frame {
-        d.push(Divergence::StateField { index: i, field: "frame" });
+        d.push(Divergence::StateField {
+            index: i,
+            field: "frame",
+        });
     }
     if a.wcs != b.wcs {
-        d.push(Divergence::StateField { index: i, field: "wcs" });
+        d.push(Divergence::StateField {
+            index: i,
+            field: "wcs",
+        });
     }
 }
 
@@ -428,9 +601,15 @@ fn eps_pos(a: &Program, b: &Program, cfg: &DiffConfig) -> f64 {
 
 fn motion_parts(op: &Op) -> (&StartPoint, &Point3, &State) {
     match op {
-        Op::Rapid { start, end, state, .. }
-        | Op::Linear { start, end, state, .. }
-        | Op::Arc { start, end, state, .. } => (start, end, state),
+        Op::Rapid {
+            start, end, state, ..
+        }
+        | Op::Linear {
+            start, end, state, ..
+        }
+        | Op::Arc {
+            start, end, state, ..
+        } => (start, end, state),
         _ => unreachable!("motion_parts on non-motion op"),
     }
 }

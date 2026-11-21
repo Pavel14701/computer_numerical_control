@@ -83,7 +83,10 @@ impl Block {
     }
 
     fn first_modal(&self, group: ModalGroup) -> Option<GCode> {
-        self.g_codes.iter().copied().find(|g| modal_group(*g) == Some(group))
+        self.g_codes
+            .iter()
+            .copied()
+            .find(|g| modal_group(*g) == Some(group))
     }
 
     /// Сырое число параметра по букве ('X', 'F', …).
@@ -155,7 +158,10 @@ fn from_toks(bt: BlockToks, line_no: u32) -> Block {
 /// Последний блок строки получает терминатор `\n` в payload (payload
 /// конкатенации фрагментов = исходная строка включая терминатор).
 pub fn parse_file(src: &str) -> ParsedFile {
-    let mut out = ParsedFile { blocks: Vec::new(), lex_errors: Vec::new() };
+    let mut out = ParsedFile {
+        blocks: Vec::new(),
+        lex_errors: Vec::new(),
+    };
     let lines: Vec<&str> = src.split('\n').collect();
     for (idx, line) in lines.iter().enumerate() {
         let line_no = (idx + 1) as u32;
@@ -180,7 +186,10 @@ pub fn parse_file(src: &str) -> ParsedFile {
                     raw.push_str(&bt.text);
                     let bi = out.blocks.len();
                     out.blocks.push(from_toks(
-                        BlockToks { toks: bt.toks, text: raw },
+                        BlockToks {
+                            toks: bt.toks,
+                            text: raw,
+                        },
                         line_no,
                     ));
                     last_block = Some(bi);
@@ -252,7 +261,10 @@ mod tests {
         assert_eq!(f.blocks[0].raw, "G0;");
         assert_eq!(f.blocks[1].raw, "; G1 X5.\n");
         // Конкатенация payload'ов = исходная строка (ruling 5).
-        assert_eq!(format!("{}{}", f.blocks[0].raw, f.blocks[1].raw), "G0;; G1 X5.\n");
+        assert_eq!(
+            format!("{}{}", f.blocks[0].raw, f.blocks[1].raw),
+            "G0;; G1 X5.\n"
+        );
     }
 
     #[test]
@@ -273,7 +285,10 @@ mod tests {
         // Этап 2: G43/H — вне enum (raw-таблица → unsupported); G54 — enum
         // (группа 12); T/P/Q/L — contextual-слова (не unsupported).
         let f = parse_file("G43 H2;\nG54;\nT5 P500 Q2 L3;\nM3;\n");
-        assert!(f.blocks[0].unsupported_words.len() == 1, "G43 → unsupported (raw-таблица)");
+        assert!(
+            f.blocks[0].unsupported_words.len() == 1,
+            "G43 → unsupported (raw-таблица)"
+        );
         assert!(f.blocks[0].word('H').is_some());
         assert_eq!(f.blocks[1].wcs(), Some(GCode::Wcs54));
         assert!(f.blocks[1].unsupported_words.is_empty());
@@ -295,7 +310,10 @@ mod tests {
     #[test]
     fn modal_violation_detected() {
         let b = &parse_file("G0 G1 X5.;\n").blocks[0];
-        assert_eq!(b.modal_violation, Some((ModalGroup::Motion01, GCode::Rapid)));
+        assert_eq!(
+            b.modal_violation,
+            Some((ModalGroup::Motion01, GCode::Rapid))
+        );
         // Несколько групп в одном блоке легальны (§1.1).
         let b = &parse_file("G90 G17 G21 G94 G54 G0 X0 Y0;\n").blocks[0];
         assert_eq!(b.modal_violation, None);
@@ -305,7 +323,10 @@ mod tests {
         assert_eq!(b.cycle(), Some(GCode::CycleDrill));
         // Два кода группы 09 — нарушение.
         let b = &parse_file("G81 G82 X10. Z-5. R2.;\n").blocks[0];
-        assert_eq!(b.modal_violation, Some((ModalGroup::Cycle09, GCode::CycleDrill)));
+        assert_eq!(
+            b.modal_violation,
+            Some((ModalGroup::Cycle09, GCode::CycleDrill))
+        );
     }
 
     #[test]

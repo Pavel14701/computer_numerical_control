@@ -108,7 +108,12 @@ pub fn load(path: &Path) -> Result<Manifest, String> {
         let kind = match v.kind.as_str() {
             "positive" => Kind::Positive,
             "negative" => Kind::Negative,
-            other => return Err(format!("vector {}: invalid kind `{other}` (positive|negative)", v.id)),
+            other => {
+                return Err(format!(
+                    "vector {}: invalid kind `{other}` (positive|negative)",
+                    v.id
+                ))
+            }
         };
         let golden = match v.golden.as_deref() {
             None | Some("null") => None,
@@ -167,7 +172,10 @@ pub fn load(path: &Path) -> Result<Manifest, String> {
         tier_b.push(TierBFile {
             path: p,
             dialect: f.dialect.clone(),
-            expect: f.expect.clone().unwrap_or_else(|| "parse-or-diagnose".into()),
+            expect: f
+                .expect
+                .clone()
+                .unwrap_or_else(|| "parse-or-diagnose".into()),
             license: f.license.clone(),
             source: f.source.clone(),
             sha256: f.sha256.clone(),

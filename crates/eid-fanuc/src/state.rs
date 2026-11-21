@@ -17,10 +17,10 @@ use eid_core::ast::{PathMode, Units, Wcs};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GCode {
     // Группа 01 — движение (явный код отменяет активный цикл группы 09)
-    Rapid,   // G00
-    Linear,  // G01
-    ArcCw,   // G02
-    ArcCcw,  // G03
+    Rapid,  // G00
+    Linear, // G01
+    ArcCw,  // G02
+    ArcCcw, // G03
     // Группа 02 — плоскости (ABSORB; валидация нормали — SPEC §6)
     PlaneXY, // G17
     PlaneZX, // G18 (ZX — те же пары, что LinuxCNC; §2.2)
@@ -34,14 +34,14 @@ pub enum GCode {
     // Группа 05 — подача: G94 ABSORB; G93 ABSORB (inverse-time, ruling 4 —
     // разрешение feed = len·F, SPEC §4; эмиссия всегда G94); G95 → RAW
     // (детект через g_raw_disposition, до apply)
-    FeedPerMin,   // G94
-    FeedInverse,  // G93
-    FeedPerRev,   // G95 (детект для RAW)
+    FeedPerMin,  // G94
+    FeedInverse, // G93
+    FeedPerRev,  // G95 (детект для RAW)
     // Группа 06 — единицы (META); псевдонимы G70/G71 (mill-профиль, ruling 6)
-    UnitsIn, // G20
-    UnitsMm, // G21
-    UnitsInAlias,  // G70 → inch
-    UnitsMmAlias,  // G71 → mm
+    UnitsIn,      // G20
+    UnitsMm,      // G21
+    UnitsInAlias, // G70 → inch
+    UnitsMmAlias, // G71 → mm
     // Группа 09 — циклы (развёртка §5 отчёта / §7.7 SPEC, Fanuc-семантика)
     CycleDrill,       // G81
     CycleDrillDwell,  // G82 (P — целые мс!)
@@ -63,9 +63,9 @@ pub enum GCode {
     Wcs59,
     // Группа 13 — path (Fanuc-СДВИГ значения: G61 = exact_stop, НЕ exact_path!
     // COVERAGE §2.2; G64 без P-квантификатора)
-    PathExactStop, // G61
+    PathExactStop,  // G61
     PathExactStop2, // G61.1 (синоним на части серий, `?` реестр)
-    PathBlend,     // G64 (bare blend)
+    PathBlend,      // G64 (bare blend)
     // Группа 07/08 — cancel-коды семейств (правило семейств §1.3 COVERAGE:
     // IGNORED_SAFE, если в файле нет активных кодов семейства, иначе RAW)
     CompCancel,    // G40 (семья G40 Fanuc: G41/.1/.2-.6, G42/.1/.2-.6, G38, G39)
@@ -82,16 +82,16 @@ pub enum GCode {
 /// M-код словаря Fanuc mill (этап 2, §3 отчёта / COVERAGE §3).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MCode {
-    ProgramEnd,   // M2 / M30 — различие вне L1 (SPEC §5.2)
-    ProgramStop,  // M0 (optional=false)
-    OptionalStop, // M1 (optional=true; Q8)
-    SpindleCw,    // M3
-    SpindleCcw,   // M4
-    SpindleOff,   // M5
-    ToolChange,   // M6 (+T в блоке; одиночное T → RAW SEMANTICS — предвыбор)
-    CoolantMist,  // M7 (опция)
-    CoolantFlood, // M8
-    CoolantOff,   // M9
+    ProgramEnd,    // M2 / M30 — различие вне L1 (SPEC §5.2)
+    ProgramStop,   // M0 (optional=false)
+    OptionalStop,  // M1 (optional=true; Q8)
+    SpindleCw,     // M3
+    SpindleCcw,    // M4
+    SpindleOff,    // M5
+    ToolChange,    // M6 (+T в блоке; одиночное T → RAW SEMANTICS — предвыбор)
+    CoolantMist,   // M7 (опция)
+    CoolantFlood,  // M8
+    CoolantOff,    // M9
     SpindleOrient, // M19 → RAW{E_UNSUPPORTED_SEMANTICS} (энкодер)
     RigidTapMode,  // M29 → RAW{E_UNSUPPORTED_SEMANTICS} (paired G84)
     SubCall,       // M98 → RAW{E_UNSUPPORTED_SYNTAX} (Macro B / subs)
@@ -106,7 +106,29 @@ pub enum MCode {
 /// dwell-секунды — разбор контекстно, §4.1 отчёта).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WordKind {
-    F, I, J, K, R, S, X, Y, Z, P, Q, T, H, D, L, O, U, V, W, A, B, C, E,
+    F,
+    I,
+    J,
+    K,
+    R,
+    S,
+    X,
+    Y,
+    Z,
+    P,
+    Q,
+    T,
+    H,
+    D,
+    L,
+    O,
+    U,
+    V,
+    W,
+    A,
+    B,
+    C,
+    E,
 }
 
 impl GCode {
@@ -262,18 +284,18 @@ impl WordKind {
 /// нарушение — диагностика (block.modal_violation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalGroup {
-    Motion01,     // G00/G01/G02/G03
-    Plane02,      // G17/G18/G19
-    Distance03,   // G90/G91
-    ArcCenter04,  // G90.1/G91.1 (опция; `?` §10(1))
-    FeedMode05,   // G93/G94/G95
-    Units06,      // G20/G21/G70/G71
-    Comp07,       // G40 cancel (G41/G42 — вне enum, raw-таблица)
-    LenComp08,    // G49 cancel (G43/G44 — вне enum, raw-таблица)
-    Cycle09,      // G73/G80/G81-G89 (развёртываемые + cancel)
-    Retract10,    // G98/G99
-    Wcs12,        // G54–G59
-    Path13,       // G61/G61.1/G64
+    Motion01,    // G00/G01/G02/G03
+    Plane02,     // G17/G18/G19
+    Distance03,  // G90/G91
+    ArcCenter04, // G90.1/G91.1 (опция; `?` §10(1))
+    FeedMode05,  // G93/G94/G95
+    Units06,     // G20/G21/G70/G71
+    Comp07,      // G40 cancel (G41/G42 — вне enum, raw-таблица)
+    LenComp08,   // G49 cancel (G43/G44 — вне enum, raw-таблица)
+    Cycle09,     // G73/G80/G81-G89 (развёртываемые + cancel)
+    Retract10,   // G98/G99
+    Wcs12,       // G54–G59
+    Path13,      // G61/G61.1/G64
 }
 
 pub fn modal_group(g: GCode) -> Option<ModalGroup> {
@@ -297,12 +319,17 @@ pub fn modal_group(g: GCode) -> Option<ModalGroup> {
         | GCode::CycleBoreStop
         | GCode::CycleBoreDwell => ModalGroup::Cycle09,
         GCode::RetractG98 | GCode::RetractG99 => ModalGroup::Retract10,
-        GCode::Wcs54 | GCode::Wcs55 | GCode::Wcs56 | GCode::Wcs57 | GCode::Wcs58
-        | GCode::Wcs59 => ModalGroup::Wcs12,
+        GCode::Wcs54 | GCode::Wcs55 | GCode::Wcs56 | GCode::Wcs57 | GCode::Wcs58 | GCode::Wcs59 => {
+            ModalGroup::Wcs12
+        }
         GCode::PathExactStop | GCode::PathExactStop2 | GCode::PathBlend => ModalGroup::Path13,
         // Группа 00 (one-shot) — без модальной группы.
-        GCode::Dwell | GCode::DataRecord | GCode::DataCancel | GCode::LocalCs
-        | GCode::MachineCs | GCode::Preset => return None,
+        GCode::Dwell
+        | GCode::DataRecord
+        | GCode::DataCancel
+        | GCode::LocalCs
+        | GCode::MachineCs
+        | GCode::Preset => return None,
     })
 }
 
@@ -352,7 +379,9 @@ impl CycleKind {
 /// Возврат None → generic-ведро Raw{E_UNSUPPORTED_SYNTAX} с текстом кода
 /// (COVERAGE §3: «не молча»).
 pub fn g_raw_disposition(value: f64) -> Option<(eid_core::diag::ErrorCode, &'static str)> {
-    use eid_core::diag::ErrorCode::{RequiresMachineTable as RT, UnsupportedSemantics as US, UnsupportedSyntax as UX};
+    use eid_core::diag::ErrorCode::{
+        RequiresMachineTable as RT, UnsupportedSemantics as US, UnsupportedSyntax as UX,
+    };
     let t = (value * 10.0).round() as i64;
     if (value * 10.0).round() != value * 10.0 {
         return None; // лишние десятичные знаки — generic-ведро
@@ -499,17 +528,17 @@ pub fn plane_normal(g: GCode) -> [f64; 3] {
 /// exact_path (отсутствие G61/G64 — SPEC §3 v0.12).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModalState {
-    pub motion: Option<GCode>,      // группа 01 (модальное продолжение, §2.7)
-    pub plane: GCode,               // группа 02
-    pub dist_abs: bool,             // группа 03 (true = G90)
-    pub arc_center_abs: bool,       // группа 04 (true = G90.1)
-    pub feed_per_min: bool,         // группа 05 (true = G94)
-    pub feed_inverse: bool,         // группа 05: G93 (ruling 4 — ABSORB)
-    pub units: Units,               // группа 06
-    pub units_established: bool,    // первое слово units устанавливает (SPEC §2.5)
-    pub wcs: Wcs,                   // группа 12 (G54 дефолт контроллера)
-    pub retract_g98: bool,          // группа 10 (дефолт G99 — SPEC §7.5a)
-    pub path: Option<PathMode>,     // группа 13 (первое вхождение устанавливает)
+    pub motion: Option<GCode>,   // группа 01 (модальное продолжение, §2.7)
+    pub plane: GCode,            // группа 02
+    pub dist_abs: bool,          // группа 03 (true = G90)
+    pub arc_center_abs: bool,    // группа 04 (true = G90.1)
+    pub feed_per_min: bool,      // группа 05 (true = G94)
+    pub feed_inverse: bool,      // группа 05: G93 (ruling 4 — ABSORB)
+    pub units: Units,            // группа 06
+    pub units_established: bool, // первое слово units устанавливает (SPEC §2.5)
+    pub wcs: Wcs,                // группа 12 (G54 дефолт контроллера)
+    pub retract_g98: bool,       // группа 10 (дефолт G99 — SPEC §7.5a)
+    pub path: Option<PathMode>,  // группа 13 (первое вхождение устанавливает)
 }
 
 impl Default for ModalState {
@@ -555,7 +584,11 @@ impl ModalState {
             GCode::UnitsMm | GCode::UnitsMmAlias => self.units = Units::Mm,
             GCode::RetractG98 => self.retract_g98 = true,
             GCode::RetractG99 => self.retract_g98 = false,
-            GCode::Wcs54 | GCode::Wcs55 | GCode::Wcs56 | GCode::Wcs57 | GCode::Wcs58
+            GCode::Wcs54
+            | GCode::Wcs55
+            | GCode::Wcs56
+            | GCode::Wcs57
+            | GCode::Wcs58
             | GCode::Wcs59 => {
                 if let Some(w) = g.wcs() {
                     self.wcs = w;
@@ -596,11 +629,17 @@ mod tests {
     fn arc_center_feed_units_groups() {
         assert_eq!(g(90.1), Some(GCode::ArcCenterAbs));
         assert_eq!(g(91.1), Some(GCode::ArcCenterInc));
-        assert_eq!(modal_group(GCode::ArcCenterAbs), Some(ModalGroup::ArcCenter04));
+        assert_eq!(
+            modal_group(GCode::ArcCenterAbs),
+            Some(ModalGroup::ArcCenter04)
+        );
         assert_eq!(g(93.0), Some(GCode::FeedInverse));
         assert_eq!(g(94.0), Some(GCode::FeedPerMin));
         assert_eq!(g(95.0), Some(GCode::FeedPerRev));
-        assert_eq!(modal_group(GCode::FeedInverse), Some(ModalGroup::FeedMode05));
+        assert_eq!(
+            modal_group(GCode::FeedInverse),
+            Some(ModalGroup::FeedMode05)
+        );
         // Псевдонимы units G70/G71 (§2.2, ruling 6).
         assert_eq!(g(20.0), Some(GCode::UnitsIn));
         assert_eq!(g(21.0), Some(GCode::UnitsMm));
@@ -636,8 +675,14 @@ mod tests {
         assert_eq!(g(59.0).and_then(|c| c.wcs()), Some(Wcs::G59));
         assert_eq!(modal_group(GCode::Wcs57), Some(ModalGroup::Wcs12));
         // Группа 13 (path) — Fanuc value shift: G61 = exact_stop.
-        assert_eq!(g(61.0).and_then(|c| c.path_mode()), Some(PathMode::ExactStop));
-        assert_eq!(g(61.1).and_then(|c| c.path_mode()), Some(PathMode::ExactStop));
+        assert_eq!(
+            g(61.0).and_then(|c| c.path_mode()),
+            Some(PathMode::ExactStop)
+        );
+        assert_eq!(
+            g(61.1).and_then(|c| c.path_mode()),
+            Some(PathMode::ExactStop)
+        );
         assert_eq!(
             g(64.0).and_then(|c| c.path_mode()),
             Some(PathMode::Blend { t: None })
@@ -652,7 +697,10 @@ mod tests {
         assert_eq!(g(40.0), Some(GCode::CompCancel));
         assert_eq!(g(49.0), Some(GCode::LenCompCancel));
         assert_eq!(modal_group(GCode::CompCancel), Some(ModalGroup::Comp07));
-        assert_eq!(modal_group(GCode::LenCompCancel), Some(ModalGroup::LenComp08));
+        assert_eq!(
+            modal_group(GCode::LenCompCancel),
+            Some(ModalGroup::LenComp08)
+        );
     }
 
     #[test]

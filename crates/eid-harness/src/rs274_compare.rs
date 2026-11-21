@@ -59,10 +59,14 @@ pub fn parse_canonical(text: &str) -> Vec<CanonLine> {
     for raw in text.lines() {
         let line = raw.trim();
         // формат: "<num> N..... OP(args)" (N-точек может быть 5)
-        let Some(npos) = line.find("N.....") else { continue };
+        let Some(npos) = line.find("N.....") else {
+            continue;
+        };
         let call = line[npos + "N.....".len()..].trim();
         let Some(open) = call.find('(') else { continue };
-        let Some(close_r) = call.rfind(')') else { continue };
+        let Some(close_r) = call.rfind(')') else {
+            continue;
+        };
         if close_r < open {
             continue;
         }
@@ -149,7 +153,17 @@ pub fn run_rs274(ngc_path: &Path) -> Result<String, String> {
     let out_vm = format!("/work/{out_name}");
 
     let output = Command::new("docker")
-        .args(["run", "--rm", "-v", &mount, "eid-linuxcnc-sim", "rs274", "-g", &in_vm, &out_vm])
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &mount,
+            "eid-linuxcnc-sim",
+            "rs274",
+            "-g",
+            &in_vm,
+            &out_vm,
+        ])
         .output()
         .map_err(|e| format!("docker run failed: {e}"))?;
     if !output.status.success() {
@@ -211,7 +225,10 @@ pub fn compare_canonical(a: &[CanonLine], b: &[CanonLine], tol: f64) -> Vec<Cano
                             index: i,
                             detail: format!(
                                 "{}: arg[{k}] {} vs {} (Δ = {:.6} > {tol})",
-                                x.op, xn, yn, (xn - yn).abs()
+                                x.op,
+                                xn,
+                                yn,
+                                (xn - yn).abs()
                             ),
                         });
                     }
@@ -227,10 +244,7 @@ pub fn compare_canonical(a: &[CanonLine], b: &[CanonLine], tol: f64) -> Vec<Cano
                 (ArgVal::Num(_), ArgVal::Sym(_)) | (ArgVal::Sym(_), ArgVal::Num(_)) => {
                     div.push(CanonDivergence {
                         index: i,
-                        detail: format!(
-                            "{}: arg[{k}] тип: число vs символ",
-                            x.op
-                        ),
+                        detail: format!("{}: arg[{k}] тип: число vs символ", x.op),
                     });
                 }
             }
@@ -309,6 +323,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         eprintln!("run_rs274: ok={r_ok:?} bad={r_bad:?}");
         assert!(leftovers.is_empty(), "утечка .out: {leftovers:?}");
-        assert!(r_bad.is_err(), "мусорный вход обязан давать Err (interp отказ)");
+        assert!(
+            r_bad.is_err(),
+            "мусорный вход обязан давать Err (interp отказ)"
+        );
     }
 }

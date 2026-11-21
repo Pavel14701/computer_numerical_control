@@ -60,7 +60,10 @@ impl Expect {
             Expect::Notice => "Ok + notice".into(),
             Expect::Err(c) => format!("Err({})", c.as_str()),
             Expect::AnyErr(cs) => {
-                format!("Err({})", cs.iter().map(|c| c.as_str()).collect::<Vec<_>>().join("|"))
+                format!(
+                    "Err({})",
+                    cs.iter().map(|c| c.as_str()).collect::<Vec<_>>().join("|")
+                )
             }
             Expect::OkOrVerifyErr => "Ok или Verify-отказ E_INVALID_INPUT".into(),
         }
@@ -68,8 +71,8 @@ impl Expect {
 }
 
 pub const OPERATORS: [&str; 17] = [
-    "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12", "M13", "M14",
-    "M15", "M16", "M17",
+    "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12", "M13", "M14", "M15",
+    "M16", "M17",
 ];
 
 /// Первый arc.
@@ -88,7 +91,14 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
         "M1" => {
             // sweep→0+ε при start==end → drop+notice (SPEC §3/§6, #13)
             let a = first_arc(&mut p)?;
-            if let Op::Arc { end, start, sweep_deg, pitch, .. } = a {
+            if let Op::Arc {
+                end,
+                start,
+                sweep_deg,
+                pitch,
+                ..
+            } = a
+            {
                 if let StartPoint::Known(s) = start {
                     *end = s.clone();
                 }
@@ -103,7 +113,13 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             // последующих опов → легитимный Verify-отказ (инвариант §4
             // связывания работает) — мутант-зонд инварианта, не баг (ruling).
             let a = first_arc(&mut p)?;
-            if let Op::Arc { end, start, sweep_deg, .. } = a {
+            if let Op::Arc {
+                end,
+                start,
+                sweep_deg,
+                ..
+            } = a
+            {
                 if let StartPoint::Known(s) = start {
                     *end = s.clone();
                 }
@@ -121,11 +137,27 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 _ => return None,
             };
             let a = first_arc(&mut p)?;
-            if let Op::Arc { end, center, dir, sweep_deg, .. } = a {
+            if let Op::Arc {
+                end,
+                center,
+                dir,
+                sweep_deg,
+                ..
+            } = a
+            {
                 let (cx, cy) = crate::generator::arc_center(
-                    sx.x.value(), sx.y.value(), end.x.value(), end.y.value(), 179.9, *dir,
+                    sx.x.value(),
+                    sx.y.value(),
+                    end.x.value(),
+                    end.y.value(),
+                    179.9,
+                    *dir,
                 );
-                *center = Point3 { x: num(cx), y: num(cy), z: sx.z.clone() };
+                *center = Point3 {
+                    x: num(cx),
+                    y: num(cy),
+                    z: sx.z.clone(),
+                };
                 *sweep_deg = num(179.9);
             }
             Expect::Ok
@@ -133,12 +165,29 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
         "M4" => {
             // R-form near-degenerate: sweep в cap-зоне ±0.12° вокруг 180°
             let a = first_arc(&mut p)?;
-            if let Op::Arc { start, end, center, dir, sweep_deg, .. } = a {
+            if let Op::Arc {
+                start,
+                end,
+                center,
+                dir,
+                sweep_deg,
+                ..
+            } = a
+            {
                 if let StartPoint::Known(s) = start {
                     let (cx, cy) = crate::generator::arc_center(
-                        s.x.value(), s.y.value(), end.x.value(), end.y.value(), 179.88, *dir,
+                        s.x.value(),
+                        s.y.value(),
+                        end.x.value(),
+                        end.y.value(),
+                        179.88,
+                        *dir,
                     );
-                    *center = Point3 { x: num(cx), y: num(cy), z: s.z.clone() };
+                    *center = Point3 {
+                        x: num(cx),
+                        y: num(cy),
+                        z: s.z.clone(),
+                    };
                 }
                 *sweep_deg = num(179.88);
             }
@@ -197,9 +246,10 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
         }
         "M11" => {
             // zero-length + пресетка: L20-якорь + linear start==end → notice
-            let i_motion = p.ops.iter().position(|o| {
-                matches!(o, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. })
-            })?;
+            let i_motion = p
+                .ops
+                .iter()
+                .position(|o| matches!(o, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. }))?;
             let wcs = match p.ops.first() {
                 Some(Op::Rapid { state, .. }) => state.wcs,
                 _ => Wcs::G54,
@@ -208,7 +258,11 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 i_motion,
                 Op::WcsSetHere {
                     p: 1,
-                    delta: Point3 { x: num(0.0), y: num(0.0), z: num(5.0) },
+                    delta: Point3 {
+                        x: num(0.0),
+                        y: num(0.0),
+                        z: num(5.0),
+                    },
                     state: State {
                         feed: None,
                         spindle: Spindle::Off,
@@ -217,7 +271,13 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         frame: Frame::Wcs,
                         wcs,
                     },
-                    src: SrcSpan { file: "m11".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+                    src: SrcSpan {
+                        file: "m11".into(),
+                        line_start: 0,
+                        col_start: 1,
+                        line_end: 0,
+                        col_end: 0,
+                    },
                 },
             );
             // сделать первый motion zero-length (linear)
@@ -238,7 +298,13 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         frame: Frame::Wcs,
                         wcs,
                     },
-                    src: SrcSpan { file: "m11".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+                    src: SrcSpan {
+                        file: "m11".into(),
+                        line_start: 0,
+                        col_start: 1,
+                        line_end: 0,
+                        col_end: 0,
+                    },
                     sub: None,
                 };
             }
@@ -248,7 +314,11 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             // plane orphan: нормаль чужой плоскости → радиус-валидация §6.1
             let a = first_arc(&mut p)?;
             if let Op::Arc { normal, .. } = a {
-                *normal = Point3 { x: num(0.0), y: num(1.0), z: num(0.0) };
+                *normal = Point3 {
+                    x: num(0.0),
+                    y: num(1.0),
+                    z: num(0.0),
+                };
             }
             Expect::OkOrVerifyErr
         }
@@ -284,7 +354,13 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         frame: Frame::Wcs,
                         wcs: Wcs::G54,
                     },
-                    src: SrcSpan { file: "m16".into(), line_start: 0, col_start: 1, line_end: 0, col_end: 0 },
+                    src: SrcSpan {
+                        file: "m16".into(),
+                        line_start: 0,
+                        col_start: 1,
+                        line_end: 0,
+                        col_end: 0,
+                    },
                 },
             );
             Expect::Ok
@@ -300,7 +376,9 @@ pub fn apply_dialect(id: &str, text: &str) -> Option<(String, Expect)> {
     let expect = match id {
         "M8" => {
             // units-смена mid: G20 после первого хода
-            let i = t.lines().position(|l| l.starts_with("G0 ") || l.starts_with("G1 "))?;
+            let i = t
+                .lines()
+                .position(|l| l.starts_with("G0 ") || l.starts_with("G1 "))?;
             let mut lines: Vec<&str> = t.lines().collect();
             lines.insert(i + 1, "G20");
             t = lines.join("\n");
@@ -308,7 +386,9 @@ pub fn apply_dialect(id: &str, text: &str) -> Option<(String, Expect)> {
         }
         "M9" => {
             // G92 mid: после первого хода
-            let i = t.lines().position(|l| l.starts_with("G0 ") || l.starts_with("G1 "))?;
+            let i = t
+                .lines()
+                .position(|l| l.starts_with("G0 ") || l.starts_with("G1 "))?;
             let mut lines: Vec<&str> = t.lines().collect();
             lines.insert(i + 1, "G92 X0.0000 Y0.0000 Z0.0000");
             t = lines.join("\n");
@@ -316,7 +396,9 @@ pub fn apply_dialect(id: &str, text: &str) -> Option<(String, Expect)> {
         }
         "M10" => {
             // double G92: два подряд в начале
-            let i = t.lines().position(|l| l.starts_with("M3") || l.starts_with("G0 "))?;
+            let i = t
+                .lines()
+                .position(|l| l.starts_with("M3") || l.starts_with("G0 "))?;
             let mut lines: Vec<&str> = t.lines().collect();
             lines.insert(i, "G92 X0.0000 Y0.0000 Z0.0000");
             lines.insert(i + 1, "G92 X1.0000 Y1.0000 Z1.0000");

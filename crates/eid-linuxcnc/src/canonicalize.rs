@@ -44,7 +44,11 @@ pub fn num_snap(v: f64) -> Num {
 }
 
 pub fn p3_snap(v: [f64; 3]) -> Point3 {
-    Point3 { x: num_snap(v[0]), y: num_snap(v[1]), z: num_snap(v[2]) }
+    Point3 {
+        x: num_snap(v[0]),
+        y: num_snap(v[1]),
+        z: num_snap(v[2]),
+    }
 }
 
 /// Num-точка → [f64; 3] (f64-зеркало verbatim-значений).
@@ -170,8 +174,16 @@ pub fn resolve_arc(
         offsets[2].unwrap_or(0.0),
     ];
     let mut center = [0.0f64; 3];
-    center[u] = if mode_abs { offs[u] } else { start[u] + offs[u] };
-    center[v] = if mode_abs { offs[v] } else { start[v] + offs[v] };
+    center[u] = if mode_abs {
+        offs[u]
+    } else {
+        start[u] + offs[u]
+    };
+    center[v] = if mode_abs {
+        offs[v]
+    } else {
+        start[v] + offs[v]
+    };
     center[n_axis] = start[n_axis]; // ось вращения — через start
     let rho_s = dist2(s2, [center[u], center[v]]);
     let rho_e = dist2(e2, [center[u], center[v]]);
@@ -202,7 +214,12 @@ pub fn resolve_arc(
     let a0 = (s2[1] - center[v]).atan2(s2[0] - center[u]);
     let a1 = (e2[1] - center[v]).atan2(e2[0] - center[u]);
     let sweep_deg = sweep_from_angles(a0, a1, dir);
-    Ok(ArcOutcome::Resolved(ResolvedArc { center, sweep_deg, pitch, radius: rho_s }))
+    Ok(ArcOutcome::Resolved(ResolvedArc {
+        center,
+        sweep_deg,
+        pitch,
+        radius: rho_s,
+    }))
 }
 
 /// R-форма: центр из start, end, R, direction, normal (SPEC §6).
@@ -240,7 +257,10 @@ fn resolve_r(
     let side = (if dir == Dir::Cw { 1.0 } else { -1.0 }) * r.signum();
     let dhat = [d[0] / l, d[1] / l];
     let perp_cw = [dhat[1], -dhat[0]];
-    let c2 = [mid[0] + side * h * perp_cw[0], mid[1] + side * h * perp_cw[1]];
+    let c2 = [
+        mid[0] + side * h * perp_cw[0],
+        mid[1] + side * h * perp_cw[1],
+    ];
     let mut center = [0.0f64; 3];
     center[u] = c2[0];
     center[v] = c2[1];

@@ -15,8 +15,12 @@ fn dialect_of(fname: &str) -> (&'static str, bool) {
     // (диалект-предположение, grbl-адаптер?) — синхронно с manifest.toml
     if fname.starts_with("grbljs_") {
         ("grbl", true)
-    } else if fname.starts_with("mit_svg2g") || fname.starts_with("mit_pycnc") || fname.starts_with("mit_cws")
-        || fname.starts_with("mit_shpk") || fname.starts_with("mit_tball") || fname.starts_with("mit_ddp")
+    } else if fname.starts_with("mit_svg2g")
+        || fname.starts_with("mit_pycnc")
+        || fname.starts_with("mit_cws")
+        || fname.starts_with("mit_shpk")
+        || fname.starts_with("mit_tball")
+        || fname.starts_with("mit_ddp")
     {
         ("grbl-подобный", true)
     } else if fname.starts_with("mit_hilbert") {
@@ -27,7 +31,9 @@ fn dialect_of(fname: &str) -> (&'static str, bool) {
     } else if fname.starts_with("gcb_") || fname.starts_with("olle_") {
         // gcb: CAM-пост с G64+M6; olle: G91.1 + `;`-комментарии
         ("linuxcnc", false)
-    } else if fname.starts_with("gce_") || fname.starts_with("mpe_") || fname.starts_with("cncsim_")
+    } else if fname.starts_with("gce_")
+        || fname.starts_with("mpe_")
+        || fname.starts_with("cncsim_")
         || fname.starts_with("ncm_")
     {
         // fanuc/haas-цель (конструкционный добор, PROVENANCE б.5): парсим
@@ -57,7 +63,12 @@ fn tierb_parse_or_diagnose_sweep() {
     let log_path = root().join("_sweep_results.txt");
     let log_path_str = log_path.display().to_string();
     let mut log = std::io::BufWriter::new(std::fs::File::create(&log_path).unwrap());
-    writeln!(log, "# Tier B parse-or-diagnose sweep ({} файлов)", files.len()).unwrap();
+    writeln!(
+        log,
+        "# Tier B parse-or-diagnose sweep ({} файлов)",
+        files.len()
+    )
+    .unwrap();
     writeln!(log, "# формат: RESULT | tier | dialect | файл | код/ops").unwrap();
 
     let mut ok = 0usize;
@@ -72,12 +83,22 @@ fn tierb_parse_or_diagnose_sweep() {
             continue;
         }
         let started = std::time::Instant::now();
-        let adapter: &dyn Adapter = if *grbl { &GrblAdapter::new() } else { &LinuxCncAdapter::new() };
+        let adapter: &dyn Adapter = if *grbl {
+            &GrblAdapter::new()
+        } else {
+            &LinuxCncAdapter::new()
+        };
         let res = adapter.parse(&src, &fname);
         let dt = started.elapsed().as_millis();
         match res {
             Ok(program) => {
-                writeln!(log, "OK | {tier} | {dialect} | {fname} | {} ops | {}ms", program.ops.len(), dt).unwrap();
+                writeln!(
+                    log,
+                    "OK | {tier} | {dialect} | {fname} | {} ops | {}ms",
+                    program.ops.len(),
+                    dt
+                )
+                .unwrap();
                 ok += 1;
             }
             Err(diags) => {
@@ -98,12 +119,20 @@ fn tierb_parse_or_diagnose_sweep() {
         }
         log.flush().unwrap();
     }
-    writeln!(log, "# SUM: ok={ok} err={}", err_by_class.iter().map(|(_, n)| n).sum::<usize>()).unwrap();
+    writeln!(
+        log,
+        "# SUM: ok={ok} err={}",
+        err_by_class.iter().map(|(_, n)| n).sum::<usize>()
+    )
+    .unwrap();
     for (c, n) in &err_by_class {
         writeln!(log, "# ERR-CLASS {c}: {n}").unwrap();
     }
     drop(log);
-    println!("SWEEP DONE: ok={ok} err_total={}; log: {log_path_str}", err_by_class.iter().map(|(_, n)| n).sum::<usize>());
+    println!(
+        "SWEEP DONE: ok={ok} err_total={}; log: {log_path_str}",
+        err_by_class.iter().map(|(_, n)| n).sum::<usize>()
+    );
     for (c, n) in &err_by_class {
         println!("ERR-CLASS {c}: {n}");
     }

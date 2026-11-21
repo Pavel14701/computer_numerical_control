@@ -12,10 +12,10 @@
 //! с RAW-опами при переводе в другой диалект отклоняется целиком ДО эмиссии
 //! (SPEC §8.2); эмиттер same-dialect только выводит payload как был.
 
+use crate::gcode::GCode;
 use eid_core::ast::{Coolant, Op, Program, Spindle, StartPoint, State, Units, Wcs};
 use eid_core::diag::{Diagnostic, ErrorCode};
 use eid_core::emitter::fmt_num;
-use crate::gcode::GCode;
 
 /// Плоскость дуги по канонической нормали (SPEC §6: знак +ось; произвольная
 /// нормаль — нарушение канонической формы → Err INVALID).
@@ -25,7 +25,9 @@ fn plane_of(normal: &[f64; 3]) -> Result<GCode, String> {
         (v, 0.0, 0.0) if (v - 1.0).abs() < 1e-9 => Ok(GCode::PlaneYZ),
         (0.0, v, 0.0) if (v - 1.0).abs() < 1e-9 => Ok(GCode::PlaneZX),
         (0.0, 0.0, v) if (v - 1.0).abs() < 1e-9 => Ok(GCode::PlaneXY),
-        _ => Err(format!("arc normal ({x},{y},{z}) is not a canonical +axis (SPEC §6)")),
+        _ => Err(format!(
+            "arc normal ({x},{y},{z}) is not a canonical +axis (SPEC §6)"
+        )),
     }
 }
 
@@ -66,7 +68,9 @@ struct Ectx {
 fn spindle_eq(a: &Spindle, b: &Spindle) -> bool {
     match (a, b) {
         (Spindle::Off, Spindle::Off) => true,
-        (Spindle::Cw(x), Spindle::Cw(y)) | (Spindle::Ccw(x), Spindle::Ccw(y)) => x.value() == y.value(),
+        (Spindle::Cw(x), Spindle::Cw(y)) | (Spindle::Ccw(x), Spindle::Ccw(y)) => {
+            x.value() == y.value()
+        }
         _ => false,
     }
 }
@@ -124,7 +128,14 @@ impl Ectx {
 }
 
 fn err(code: ErrorCode, msg: impl Into<String>, src: Option<eid_core::ast::SrcSpan>) -> Diagnostic {
-    Diagnostic { code, message: msg.into(), src, options: Vec::new(), limit: None, stage: eid_core::diag::Stage::Emit }
+    Diagnostic {
+        code,
+        message: msg.into(),
+        src,
+        options: Vec::new(),
+        limit: None,
+        stage: eid_core::diag::Stage::Emit,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,12 +162,18 @@ pub struct EmissionLegality {
 impl EmissionLegality {
     /// Код отказа по имени условия; None = условие не объявлено.
     pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
-        self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+        self.illegal
+            .iter()
+            .find(|(c, _)| *c == condition)
+            .map(|(_, code)| *code)
     }
 
     /// Текст Q3-warning по имени условия; None = не объявлено.
     pub fn warning_of(&self, condition: &str) -> Option<&'static str> {
-        self.warnings.iter().find(|(c, _)| *c == condition).map(|(_, text)| *text)
+        self.warnings
+            .iter()
+            .find(|(c, _)| *c == condition)
+            .map(|(_, text)| *text)
     }
 
     /// Все коды отказа таблицы (без дубликатов).
@@ -206,7 +223,10 @@ pub fn emit_with_warnings(
     if program.eid_version != "EID/L1 v0.3" {
         return Err(vec![err(
             ErrorCode::InvalidInput,
-            format!("eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)", program.eid_version),
+            format!(
+                "eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)",
+                program.eid_version
+            ),
             None,
         )]);
     }
@@ -267,9 +287,9 @@ pub fn emit_with_warnings(
 fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic> {
     // Условие обязано быть объявлено в таблице — иначе баг объявления, не паника пути.
     let code = |cond: &'static str| {
-        table.code_of(cond).unwrap_or_else(|| {
-            panic!("emission-legality: условие `{cond}` не объявлено в таблице")
-        })
+        table
+            .code_of(cond)
+            .unwrap_or_else(|| panic!("emission-legality: условие `{cond}` не объявлено в таблице"))
     };
     let mut v = Vec::new();
     let mut ends = 0usize;
@@ -288,7 +308,13 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
             Op::Linear { state, src, .. } => {
                 check_motion_state(table, &mut v, state, src, true);
             }
-            Op::Arc { start, normal, state, src, .. } => {
+            Op::Arc {
+                start,
+                normal,
+                state,
+                src,
+                ..
+            } => {
                 check_motion_state(table, &mut v, state, src, true);
                 if matches!(start, StartPoint::Unknown) {
                     v.push(err(
@@ -303,9 +329,10 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
                 }
             }
             Op::Rapid { state, src, .. } => check_motion_state(table, &mut v, state, src, false),
-            Op::Raw { payload_hex, src, .. } => {
-                if payload_hex.len() % 2 != 0
-                    || payload_hex.chars().any(|c| !c.is_ascii_hexdigit())
+            Op::Raw {
+                payload_hex, src, ..
+            } => {
+                if payload_hex.len() % 2 != 0 || payload_hex.chars().any(|c| !c.is_ascii_hexdigit())
                 {
                     v.push(err(
                         code("raw_payload_not_hex"),
@@ -336,7 +363,11 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
             None,
         ));
     } else if ends > 1 {
-        v.push(err(code("program_end_duplicate"), "duplicate program_end (CORPUS n13)", None));
+        v.push(err(
+            code("program_end_duplicate"),
+            "duplicate program_end (CORPUS n13)",
+            None,
+        ));
     } else if !last_is_end {
         v.push(err(
             code("program_end_not_last"),
@@ -397,9 +428,12 @@ fn decode_hex(s: &str) -> Vec<u8> {
 fn emit_op(ctx: &mut Ectx, op: &Op) {
     match op {
         Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
-
             ctx.state_prefix(state);
-            let frame = if state.frame == eid_core::ast::Frame::Machine { "G53 " } else { "" };
+            let frame = if state.frame == eid_core::ast::Frame::Machine {
+                "G53 "
+            } else {
+                ""
+            };
             let mut line = format!(
                 "{}{} X{} Y{} Z{}",
                 frame,
@@ -421,7 +455,16 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             ctx.line(&line);
             ctx.first_motion = false;
         }
-        Op::Arc { start, end, center, normal, state, sweep_deg, pitch, .. } => {
+        Op::Arc {
+            start,
+            end,
+            center,
+            normal,
+            state,
+            sweep_deg,
+            pitch,
+            ..
+        } => {
             ctx.state_prefix(state);
             // Плоскость из канонической нормали; G17/18/19 при смене (бриф п.1).
             let n = [normal.x.value(), normal.y.value(), normal.z.value()];
@@ -439,11 +482,18 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             let s = start_pt(start);
             let c = [center.x.value(), center.y.value(), center.z.value()];
             let (w0, ax0, w1, ax1) = arc_pair(&plane);
-            let offsets = format!(" {}{} {}{}", w0, fmt_num(c[ax0] - s[ax0]), w1, fmt_num(c[ax1] - s[ax1]));
+            let offsets = format!(
+                " {}{} {}{}",
+                w0,
+                fmt_num(c[ax0] - s[ax0]),
+                w1,
+                fmt_num(c[ax1] - s[ax1])
+            );
             // Полное кольцо (sweep 360°, pitch 0) — БЕЗ end-слов (легальный
             // формат grbl): end-слова == start перепарсер трактовал бы как
             // вырожденную дугу (CORPUS #13-различитель); pitch ≠ 0 несёт Z.
-            let full_circle = (sweep_deg.value() - 360.0).abs() < 1e-6 && pitch.value().abs() < 1e-9;
+            let full_circle =
+                (sweep_deg.value() - 360.0).abs() < 1e-6 && pitch.value().abs() < 1e-9;
             let target = if full_circle {
                 String::new()
             } else {
@@ -469,7 +519,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             ctx.state_prefix(state);
             ctx.line(&format!("G4 P{}", fmt_num(seconds.value())));
         }
-        Op::WcsDefine { p, origin, state, .. } => {
+        Op::WcsDefine {
+            p, origin, state, ..
+        } => {
             ctx.state_prefix(state);
             ctx.line(&format!(
                 "G10 L2 P{} X{} Y{} Z{}",
@@ -479,7 +531,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
                 fmt_num(origin.z.value())
             ));
         }
-        Op::WcsSetHere { p, delta, state, .. } => {
+        Op::WcsSetHere {
+            p, delta, state, ..
+        } => {
             ctx.state_prefix(state);
             ctx.line(&format!(
                 "G10 L20 P{} X{} Y{} Z{}",
@@ -489,7 +543,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
                 fmt_num(delta.z.value())
             ));
         }
-        Op::ProgramStop { optional, state, .. } => {
+        Op::ProgramStop {
+            optional, state, ..
+        } => {
             ctx.state_prefix(state);
             ctx.line(if *optional { "M1" } else { "M0" });
         }

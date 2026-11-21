@@ -5,18 +5,18 @@
 //! группами не считаются. Нарушение группы записывается в modal_violation
 //! (решение — диагностика на этапе 2).
 
-use eid_core::ast::Num;
 use crate::gcode::{GCode, MCode, WordKind};
 use crate::lexer::{self, CommentStyle, LexError, Tok};
+use eid_core::ast::Num;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalGroup {
-    Motion,     // G0/G1/G2/G3
-    Plane,      // G17/G18/G19
-    Distance,   // G90/G91
-    FeedRate,   // G93/G94
-    Units,      // G20/G21
-    Wcs,        // G54..G59
+    Motion,      // G0/G1/G2/G3
+    Plane,       // G17/G18/G19
+    Distance,    // G90/G91
+    FeedRate,    // G93/G94
+    Units,       // G20/G21
+    Wcs,         // G54..G59
     PathControl, // G61
 }
 
@@ -88,7 +88,10 @@ impl Block {
     }
 
     fn first_modal(&self, group: ModalGroup) -> Option<GCode> {
-        self.g_codes.iter().copied().find(|g| modal_group(*g) == Some(group))
+        self.g_codes
+            .iter()
+            .copied()
+            .find(|g| modal_group(*g) == Some(group))
     }
 
     /// Значение параметра по букве ('X', 'F', …).
@@ -128,9 +131,7 @@ impl Block {
                     'G' => match GCode::from_value(value.value()) {
                         Some(g) => {
                             if let Some(group) = modal_group(g) {
-                                if let Some(&(_, prev)) =
-                                    seen.iter().find(|(gr, _)| *gr == group)
-                                {
+                                if let Some(&(_, prev)) = seen.iter().find(|(gr, _)| *gr == group) {
                                     if b.modal_violation.is_none() {
                                         b.modal_violation = Some((group, prev));
                                     }
@@ -181,7 +182,10 @@ pub fn modal_group(g: GCode) -> Option<ModalGroup> {
 /// Raw-байты строки — С терминатором (\r\n / \n, grammar D9 v0.3): сплиттер
 /// по '\n' восстанавливает '\n' у каждой строки, кроме последней без него.
 pub fn parse_file(src: &str) -> ParsedFile {
-    let mut out = ParsedFile { blocks: Vec::new(), lex_errors: Vec::new() };
+    let mut out = ParsedFile {
+        blocks: Vec::new(),
+        lex_errors: Vec::new(),
+    };
     let parts: Vec<&str> = src.split('\n').collect();
     let n = parts.len();
     for (idx, line) in parts.iter().enumerate() {
@@ -190,7 +194,11 @@ pub fn parse_file(src: &str) -> ParsedFile {
             Err(e) => out.lex_errors.push(e),
             Ok(toks) if !toks.is_empty() => {
                 // raw — байты строки ВКЛЮЧАЯ терминатор (\r внутри, \n достроен).
-                let raw = if idx + 1 < n { format!("{line}\n") } else { line.to_string() };
+                let raw = if idx + 1 < n {
+                    format!("{line}\n")
+                } else {
+                    line.to_string()
+                };
                 out.blocks.push(Block::from_toks(toks, line_no, raw));
             }
             Ok(_) => {}
@@ -259,8 +267,17 @@ mod tests {
     #[test]
     fn markers_and_out_of_dictionary() {
         let f = parse_file("$110=250.000\nG64 P0.01\nG43 H2\n%\n(hi) M2 ; tail\n");
-        assert_eq!(f.blocks[0].marker, Some(Marker::ConfigLine("$110=250.000".into())));
-        assert_eq!(f.blocks[1].unsupported_words, vec![WordValue { letter: 'G', value: Num::new("64".into(), 64.0) }]);
+        assert_eq!(
+            f.blocks[0].marker,
+            Some(Marker::ConfigLine("$110=250.000".into()))
+        );
+        assert_eq!(
+            f.blocks[1].unsupported_words,
+            vec![WordValue {
+                letter: 'G',
+                value: Num::new("64".into(), 64.0)
+            }]
+        );
         assert_eq!(f.blocks[1].word('P').map(|n| n.value()), Some(0.01));
         assert_eq!(f.blocks[2].unsupported_words.len(), 2); // G43 + H
         assert_eq!(f.blocks[3].marker, Some(Marker::Percent));
@@ -291,14 +308,21 @@ mod tests {
             .collect();
         dirs.sort();
         for dir in dirs {
-            for f in std::fs::read_dir(&dir).expect("dir").filter_map(|e| e.ok().map(|e| e.path())) {
+            for f in std::fs::read_dir(&dir)
+                .expect("dir")
+                .filter_map(|e| e.ok().map(|e| e.path()))
+            {
                 let name = f.file_name().unwrap().to_string_lossy().to_string();
                 if !name.ends_with(".grbl.ngc") {
                     continue;
                 }
                 let src = std::fs::read_to_string(&f).expect("read");
                 let parsed = parse_file(&src);
-                assert!(parsed.lex_errors.is_empty(), "{name}: {:?}", parsed.lex_errors);
+                assert!(
+                    parsed.lex_errors.is_empty(),
+                    "{name}: {:?}",
+                    parsed.lex_errors
+                );
                 assert!(!parsed.blocks.is_empty(), "{name}: нет блоков");
                 checked += 1;
             }

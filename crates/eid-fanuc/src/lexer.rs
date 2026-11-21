@@ -89,7 +89,11 @@ pub struct BlockToks {
 /// `Tok::MacroB`, остаток блока потребляется как raw-текст до `;` — лексика
 /// макро-выражений (`=`, `+`, GT/…) не порождает ошибок разбора (§4.3).
 pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
-    let err = |col: u32, kind: LexErrorKind| LexError { line: line_no, col, kind };
+    let err = |col: u32, kind: LexErrorKind| LexError {
+        line: line_no,
+        col,
+        kind,
+    };
     let cs: Vec<char> = line.chars().collect();
     let mut i = 0usize;
 
@@ -100,7 +104,10 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
         w += 1;
     }
     if w < cs.len() && cs[w] == '%' {
-        return Ok(vec![BlockToks { toks: vec![Tok::Percent], text: "%".into() }]);
+        return Ok(vec![BlockToks {
+            toks: vec![Tok::Percent],
+            text: "%".into(),
+        }]);
     }
 
     let mut groups: Vec<BlockToks> = Vec::new();
@@ -191,7 +198,9 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
             if num.int_digits > MAX_INTEGER_DIGITS {
                 return Err(err(
                     word_col,
-                    LexErrorKind::IntOverflow { digits: num.int_digits },
+                    LexErrorKind::IntOverflow {
+                        digits: num.int_digits,
+                    },
                 ));
             }
             if !num.value.is_finite() {
@@ -211,7 +220,10 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
     // CRLF-терминатора доходит до payload последнего блока строки).
     let tail: String = cs[start..].iter().collect::<String>();
     if !cur.is_empty() || !tail.is_empty() {
-        groups.push(BlockToks { toks: cur, text: tail });
+        groups.push(BlockToks {
+            toks: cur,
+            text: tail,
+        });
     }
     Ok(groups)
 }
@@ -247,7 +259,15 @@ fn read_number(cs: &[char], mut i: usize) -> Option<(RawNum, usize)> {
         return None;
     }
     let value: f64 = text.parse().ok()?;
-    Some((RawNum { text, value, has_point, int_digits }, i))
+    Some((
+        RawNum {
+            text,
+            value,
+            has_point,
+            int_digits,
+        },
+        i,
+    ))
 }
 
 #[cfg(test)]
@@ -272,8 +292,14 @@ mod tests {
         // §1.3 ловушка №2: `;` — разделитель блоков, НЕ комментарий.
         let groups = lex_line("G0 X0; G1 X5;", 1).unwrap();
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].toks, vec![word('G', "0", false), word('X', "0", false)]);
-        assert_eq!(groups[1].toks, vec![word('G', "1", false), word('X', "5", false)]);
+        assert_eq!(
+            groups[0].toks,
+            vec![word('G', "0", false), word('X', "0", false)]
+        );
+        assert_eq!(
+            groups[1].toks,
+            vec![word('G', "1", false), word('X', "5", false)]
+        );
         // ruling 5: точная вырезка фрагмента, `;` включён, без трима.
         assert_eq!(groups[0].text, "G0 X0;");
         assert_eq!(groups[1].text, " G1 X5;");
@@ -338,10 +364,18 @@ mod tests {
     #[test]
     fn macro_b_bracket_and_letter_runs() {
         // `[ ]`-выражение.
-        assert!(lex_line("X[ #1 + 5 ];", 1).unwrap()[0].toks.contains(&Tok::MacroB));
+        assert!(lex_line("X[ #1 + 5 ];", 1).unwrap()[0]
+            .toks
+            .contains(&Tok::MacroB));
         // Letter-runs: IF/GOTO/WHILE/DO/END/THEN/GT/LT (двухбуквенные
         // последовательности — в статическом подмножестве легальных нет).
-        for line in ["IF #1 GT 5 GOTO 10;", "WHILE #100 LT 10 DO 1;", "END 1;", "GOTO 5;", "X[1] Y2;"] {
+        for line in [
+            "IF #1 GT 5 GOTO 10;",
+            "WHILE #100 LT 10 DO 1;",
+            "END 1;",
+            "GOTO 5;",
+            "X[1] Y2;",
+        ] {
             let groups = lex_line(line, 1).unwrap();
             assert!(
                 groups[0].toks.contains(&Tok::MacroB),
@@ -358,7 +392,10 @@ mod tests {
         assert!(groups[0].toks.contains(&Tok::MacroB));
         assert_eq!(groups[0].text, "#1 = 5;");
         assert_eq!(groups[1].text, " G1 X5. F100.;");
-        assert!(groups[1].toks.iter().any(|t| matches!(t, Tok::Word { letter: 'G', .. })));
+        assert!(groups[1]
+            .toks
+            .iter()
+            .any(|t| matches!(t, Tok::Word { letter: 'G', .. })));
     }
 
     #[test]
@@ -367,10 +404,7 @@ mod tests {
         let groups = lex_line("(cut #100 depth) G1 X5.;", 1).unwrap();
         assert_eq!(groups.len(), 1);
         assert!(!groups[0].toks.contains(&Tok::MacroB));
-        assert_eq!(
-            groups[0].toks[0],
-            Tok::Comment("cut #100 depth".into())
-        );
+        assert_eq!(groups[0].toks[0], Tok::Comment("cut #100 depth".into()));
     }
 
     #[test]
@@ -427,16 +461,32 @@ mod tests {
     #[test]
     fn whitespace_and_crlf() {
         assert_eq!(lex_one("  G1  X5.\tY6  ").len(), 3);
-        assert_eq!(lex_one("G 1 X 5").len(), 2, "пробел между буквой и числом легален");
+        assert_eq!(
+            lex_one("G 1 X 5").len(),
+            2,
+            "пробел между буквой и числом легален"
+        );
         assert_eq!(lex_one("G1 X5.5\r").len(), 2, "\\r — whitespace (CRLF)");
     }
 
     #[test]
     fn errors_garbage_and_bad_number() {
-        assert_eq!(lex_line("G1 &", 1).unwrap_err().kind, LexErrorKind::UnexpectedChar('&'));
-        assert_eq!(lex_line("G1 X", 2).unwrap_err().kind, LexErrorKind::BadNumber);
+        assert_eq!(
+            lex_line("G1 &", 1).unwrap_err().kind,
+            LexErrorKind::UnexpectedChar('&')
+        );
+        assert_eq!(
+            lex_line("G1 X", 2).unwrap_err().kind,
+            LexErrorKind::BadNumber
+        );
         let long = format!("X{}", "9".repeat(40));
-        assert_eq!(lex_line(&long, 3).unwrap_err().kind, LexErrorKind::WordTooLong);
-        assert_eq!(lex_line("G1 X5.5.5", 4).unwrap_err().kind, LexErrorKind::UnexpectedChar('.'));
+        assert_eq!(
+            lex_line(&long, 3).unwrap_err().kind,
+            LexErrorKind::WordTooLong
+        );
+        assert_eq!(
+            lex_line("G1 X5.5.5", 4).unwrap_err().kind,
+            LexErrorKind::UnexpectedChar('.')
+        );
     }
 }

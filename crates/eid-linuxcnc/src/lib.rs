@@ -19,10 +19,10 @@ pub mod emit;
 pub mod lexer;
 pub mod parser;
 
+use crate::parser::Notice;
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use crate::parser::Notice;
 use std::cell::RefCell;
 
 pub struct LinuxCncAdapter {
@@ -38,7 +38,10 @@ impl Default for LinuxCncAdapter {
 
 impl LinuxCncAdapter {
     pub fn new() -> Self {
-        Self { diagnostics: RefCell::new(Vec::new()), notices: RefCell::new(Vec::new()) }
+        Self {
+            diagnostics: RefCell::new(Vec::new()),
+            notices: RefCell::new(Vec::new()),
+        }
     }
 
     /// Таблица легальности эмиссии LinuxCNC (COVERAGE §5, LinuxCNC-колонка;
@@ -64,7 +67,7 @@ impl LinuxCncAdapter {
                 "raw",
             ],
             illegal: vec![
-                ("arc_unknown_start", RT),          // SPEC §2 Q11
+                ("arc_unknown_start", RT),           // SPEC §2 Q11
                 ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
                 ("machine_frame_arc", SEM),          // G53 требует G0/G1
                 ("motion_feed_none", INVAL),         // канон-форма §3/§4

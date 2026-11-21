@@ -109,14 +109,22 @@ fn soup_inputs(seed: u64, corpus: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)
     out.push(("empty".into(), Vec::new()));
     out.push(("lf-only".into(), b"\n".to_vec()));
     out.push(("crlf-only".into(), b"\r\n".to_vec()));
-    out.push(("headers-repeated".into(), "G21 G90\n".repeat(100).into_bytes()));
+    out.push((
+        "headers-repeated".into(),
+        "G21 G90\n".repeat(100).into_bytes(),
+    ));
     out.push((
         "unicode-soup".into(),
-        "\u{1F600}\u{00A0}\u{2028}G21\u{0000}G90\n\u{FFFD}".as_bytes().to_vec(),
+        "\u{1F600}\u{00A0}\u{2028}G21\u{0000}G90\n\u{FFFD}"
+            .as_bytes()
+            .to_vec(),
     ));
     for (tag, b) in corpus {
         if !b.is_empty() {
-            out.push((format!("{tag}-truncated-quarter"), b[..b.len() / 4].to_vec()));
+            out.push((
+                format!("{tag}-truncated-quarter"),
+                b[..b.len() / 4].to_vec(),
+            ));
         }
         let mut noisy = b.clone();
         for _ in 0..32 {
@@ -159,7 +167,11 @@ fn extended_fuzz_run() {
     // --- Extended M-петля: seeds 200–219, каждый seed — все 17 операторов ---
     for k in 0..20usize {
         let seed = 200 + k as u64;
-        let cfg = GenConfig { seed, max_ops: 5 + k, ..GenConfig::default() };
+        let cfg = GenConfig {
+            seed,
+            max_ops: 5 + k,
+            ..GenConfig::default()
+        };
         let program = generator::generate(&cfg);
 
         let _base_text = {
@@ -198,7 +210,9 @@ fn extended_fuzz_run() {
 
         for op_id in mutate::OPERATORS {
             // свежая копия программы для каждого оператора
-            let Some((mutated, expect)) = mutate::apply(op_id, &program) else { continue };
+            let Some((mutated, expect)) = mutate::apply(op_id, &program) else {
+                continue;
+            };
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let t = match eid.emit(&mutated) {
                     Ok(t) => t,
@@ -242,7 +256,10 @@ fn extended_fuzz_run() {
                         match &res {
                             Err(d) => format!(
                                 "Err({})",
-                                d.iter().map(|x| x.code.as_str()).collect::<Vec<_>>().join(",")
+                                d.iter()
+                                    .map(|x| x.code.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(",")
                             ),
                             Ok(o) => format!("Ok + {} notices", o.notices.len()),
                         },
@@ -255,8 +272,7 @@ fn extended_fuzz_run() {
 
     // --- Extended byte-loop: категории × 2 адаптера × 5 повторов ------------
     let corpus = corpus_bytes();
-    let adapters: [(&'static str, &dyn Adapter); 2] =
-        [("grbl-1.1", &grbl), ("linuxcnc", &lcnc)];
+    let adapters: [(&'static str, &dyn Adapter); 2] = [("grbl-1.1", &grbl), ("linuxcnc", &lcnc)];
     let mut repeat_sets: Vec<Vec<String>> = Vec::new();
     for repeat in 0..5usize {
         let seed = 500 + repeat as u64;

@@ -114,12 +114,18 @@ pub struct FanucEmissionLegality {
 impl FanucEmissionLegality {
     /// Код отказа по имени условия; None = условие не объявлено.
     pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
-        self.illegal.iter().find(|(c, _)| *c == condition).map(|(_, code)| *code)
+        self.illegal
+            .iter()
+            .find(|(c, _)| *c == condition)
+            .map(|(_, code)| *code)
     }
 
     /// Текст warning по имени условия; None = не объявлено.
     pub fn warning_of(&self, condition: &str) -> Option<&'static str> {
-        self.warnings.iter().find(|(c, _)| *c == condition).map(|(_, text)| *text)
+        self.warnings
+            .iter()
+            .find(|(c, _)| *c == condition)
+            .map(|(_, text)| *text)
     }
 
     /// Все коды отказа таблицы (без дубликатов).
@@ -210,15 +216,25 @@ fn to_f64(p: &eid_core::ast::Point3) -> [f64; 3] {
 }
 
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
-    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src: None, options: Vec::new(), limit: None }
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: None,
+        options: Vec::new(),
+        limit: None,
+    }
 }
 
-fn diag_src(
-    code: ErrorCode,
-    msg: impl Into<String>,
-    src: &eid_core::ast::SrcSpan,
-) -> Diagnostic {
-    Diagnostic { code, stage: Stage::Emit, message: msg.into(), src: Some(src.clone()), options: Vec::new(), limit: None }
+fn diag_src(code: ErrorCode, msg: impl Into<String>, src: &eid_core::ast::SrcSpan) -> Diagnostic {
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: Some(src.clone()),
+        options: Vec::new(),
+        limit: None,
+    }
 }
 
 // ===========================================================================
@@ -232,7 +248,10 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
 }
 
 /// Эмиссия + warnings (потери метаданных при целевой эмиссии, COVERAGE §5.1).
-pub fn emit_with_warnings(program: &Program, warnings: &mut Vec<String>) -> Result<EmitOut, Vec<Diagnostic>> {
+pub fn emit_with_warnings(
+    program: &Program,
+    warnings: &mut Vec<String>,
+) -> Result<EmitOut, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST) —
     // с Fanuc-спецификой хвоста (ruling 1 этапа 2, COVERAGE §5.1
     // «хвост-subs-случай»): блоки после PEND — line-level Raw (subs-тела
@@ -241,7 +260,11 @@ pub fn emit_with_warnings(program: &Program, warnings: &mut Vec<String>) -> Resu
     // Fanuc-политике хвоста) — её «program_end must be the last op»
     // отфильтровывается при условии «после PEND только Raw»; не-Raw опы
     // после PEND остаются отказом (SPEC §3).
-    let tail_raw_only = match program.ops.iter().rposition(|o| !matches!(o, Op::Raw { .. })) {
+    let tail_raw_only = match program
+        .ops
+        .iter()
+        .rposition(|o| !matches!(o, Op::Raw { .. }))
+    {
         Some(i) => matches!(program.ops[i], Op::ProgramEnd { .. }),
         None => false,
     };
@@ -262,7 +285,10 @@ pub fn emit_with_warnings(program: &Program, warnings: &mut Vec<String>) -> Resu
     if program.eid_version != "EID/L1 v0.3" {
         return Err(vec![diag(
             ErrorCode::InvalidInput,
-            format!("eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)", program.eid_version),
+            format!(
+                "eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)",
+                program.eid_version
+            ),
         )]);
     }
     // Легальность эмиссии — против таблицы (COVERAGE §5.1), fail-fast.
@@ -275,7 +301,10 @@ pub fn emit_with_warnings(program: &Program, warnings: &mut Vec<String>) -> Resu
     w.run(&table, warnings)?;
     // Копия warnings в EmitOut — буфер вызывателя НЕ опустошается (и адаптер,
     // и тест читают свой Vec).
-    Ok(EmitOut { text: w.text, warnings: warnings.clone() })
+    Ok(EmitOut {
+        text: w.text,
+        warnings: warnings.clone(),
+    })
 }
 
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5.1).
@@ -283,9 +312,9 @@ pub fn emit_with_warnings(program: &Program, warnings: &mut Vec<String>) -> Resu
 fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagnostic> {
     // Условие обязано быть объявлено в таблице — иначе баг объявления, не паника пути.
     let code = |cond: &'static str| {
-        table.code_of(cond).unwrap_or_else(|| {
-            panic!("emission-legality: условие `{cond}` не объявлено в таблице")
-        })
+        table
+            .code_of(cond)
+            .unwrap_or_else(|| panic!("emission-legality: условие `{cond}` не объявлено в таблице"))
     };
     let mut v = Vec::new();
     // «Последний не-Raw оп = PEND» — Fanuc-хвост (Raw-subs после M30, ruling
@@ -300,11 +329,11 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
         // (защита полноты: новый вид опа ⇒ дополнить таблицу). Код — fallback
         // SYN (`op_kind_not_legal` в таблицу не входит — ветка покрытия).
         let kind = op_kind(op);
-        if !table.is_legal_kind(kind)
-            && !table.illegal.iter().any(|(c, _)| *c == kind)
-        {
+        if !table.is_legal_kind(kind) && !table.illegal.iter().any(|(c, _)| *c == kind) {
             v.push(diag_src(
-                table.code_of("op_kind_not_legal").unwrap_or(ErrorCode::UnsupportedSyntax),
+                table
+                    .code_of("op_kind_not_legal")
+                    .unwrap_or(ErrorCode::UnsupportedSyntax),
                 format!("op_kind_not_legal: `{kind}` не легален для цели Fanuc"),
                 op_src(op),
             ));
@@ -418,7 +447,9 @@ fn check_motion_state(
 ) {
     if need_feed && state.feed.is_none() {
         v.push(diag_src(
-            table.code_of("motion_feed_none").expect("emission-legality: условие `motion_feed_none` не объявлено в таблице"),
+            table
+                .code_of("motion_feed_none")
+                .expect("emission-legality: условие `motion_feed_none` не объявлено в таблице"),
             "motion_feed_none: linear/arc без модального feed (SPEC §3/§4)",
             src,
         ));
@@ -481,10 +512,18 @@ impl<'a> Writer<'a> {
         self.text.push('\n');
     }
 
-    fn run(&mut self, table: &FanucEmissionLegality, warnings: &mut Vec<String>) -> Result<(), Vec<Diagnostic>> {
+    fn run(
+        &mut self,
+        table: &FanucEmissionLegality,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), Vec<Diagnostic>> {
         // 1. Заголовок — всегда явно (units §2.5; G90/G94 — дефолты; G17;
         //    G91.1 — инкрементальные центры pinned, см. модуль-док).
-        let units_word = if self.program.units == Units::In { "G20" } else { "G21" };
+        let units_word = if self.program.units == Units::In {
+            "G20"
+        } else {
+            "G21"
+        };
         self.line(format!("{units_word} G90 G94 G17 G91.1"));
         // 2. path_mode — всегда явно, одна строка (SPEC §3: одно на программу).
         //    Fanuc value shift (COVERAGE §2.2/§5.1): exact_stop → G61 (1:1 по
@@ -511,10 +550,14 @@ impl<'a> Writer<'a> {
         //    §1.4); без запекания в G10. G92-hygiene (G92.1 первым блоком) —
         //    флаг профиля, НЕ дефолт — этап 8 (COVERAGE §5.1).
         if let Some(pr) = &self.program.frame_preset {
-            let w = wcs_word(pr.wcs).ok_or_else(|| vec![diag(
-                table.code_of("wcs_outside_g54_g59").expect("emission-legality: условие не объявлено"),
-                "frame_preset.wcs вне словаря Fanuc (G59.x) — кодов нет (COVERAGE §5.1)",
-            )])?;
+            let w = wcs_word(pr.wcs).ok_or_else(|| {
+                vec![diag(
+                    table
+                        .code_of("wcs_outside_g54_g59")
+                        .expect("emission-legality: условие не объявлено"),
+                    "frame_preset.wcs вне словаря Fanuc (G59.x) — кодов нет (COVERAGE §5.1)",
+                )]
+            })?;
             self.line(w);
             self.line(format!(
                 "G92 X{} Y{} Z{}",
@@ -534,10 +577,12 @@ impl<'a> Writer<'a> {
     /// WCS → шпиндель → СОЖ; plane — только у дуг).
     fn pre_state(&mut self, state: &eid_core::ast::State) -> Result<(), Vec<Diagnostic>> {
         if state.wcs != self.cur_wcs {
-            let w = wcs_word(state.wcs).ok_or_else(|| vec![diag(
+            let w = wcs_word(state.wcs).ok_or_else(|| {
+                vec![diag(
                 ErrorCode::UnsupportedSyntax,
                 "state.wcs вне словаря Fanuc — wcs-слово не эмитится (валидатор отсекает ранее)",
-            )])?;
+            )]
+            })?;
             self.line(w);
             self.cur_wcs = state.wcs;
         }
@@ -576,7 +621,11 @@ impl<'a> Writer<'a> {
                 let f = self.feed_word(state, warnings)?;
                 let g = match (op, state.frame) {
                     (_, Frame::Machine) => {
-                        if matches!(op, Op::Rapid { .. }) { "G53 G0" } else { "G53 G1" }
+                        if matches!(op, Op::Rapid { .. }) {
+                            "G53 G0"
+                        } else {
+                            "G53 G1"
+                        }
                     }
                     (Op::Rapid { .. }, _) => "G0",
                     (_, _) => "G1",
@@ -603,12 +652,9 @@ impl<'a> Writer<'a> {
                 self.pre_state(state)?;
                 self.check_tool_jump(state, warnings);
                 // Плоскость из канонической нормали (валидатор отсёк не-ось).
-                let (plane, a0, a1, _naxis) = plane_of(&[
-                    normal.x.clone(),
-                    normal.y.clone(),
-                    normal.z.clone(),
-                ])
-                .map_err(|m| vec![diag(ErrorCode::InvalidInput, m)])?;
+                let (plane, a0, a1, _naxis) =
+                    plane_of(&[normal.x.clone(), normal.y.clone(), normal.z.clone()])
+                        .map_err(|m| vec![diag(ErrorCode::InvalidInput, m)])?;
                 if plane != self.cur_plane {
                     self.line(plane_word(plane));
                     self.cur_plane = plane;
@@ -664,7 +710,10 @@ impl<'a> Writer<'a> {
                 self.line(format!("{g} {axes_part}{arc_words}{f}"));
                 Ok(())
             }
-            Op::Arc { start: StartPoint::Unknown, .. } => {
+            Op::Arc {
+                start: StartPoint::Unknown,
+                ..
+            } => {
                 // validate() отсекает такие программы ранее; защита.
                 Err(vec![diag(
                     ErrorCode::RuntimeState,
@@ -675,7 +724,10 @@ impl<'a> Writer<'a> {
                 self.pre_state(state)?;
                 self.check_tool_jump(state, warnings);
                 if !seconds.value.is_finite() {
-                    return Err(vec![diag(ErrorCode::InvalidInput, "dwell seconds: non-finite")]);
+                    return Err(vec![diag(
+                        ErrorCode::InvalidInput,
+                        "dwell seconds: non-finite",
+                    )]);
                 }
                 // Правило COVERAGE §5.1: seconds·1000 целое (в допуске) →
                 // P = целые мс (decimal point ЗАПРЕЩЁН — DPI-домен P);
@@ -695,7 +747,9 @@ impl<'a> Writer<'a> {
                 self.cur_tool = Some(*tool);
                 Ok(())
             }
-            Op::ProgramStop { optional, state, .. } => {
+            Op::ProgramStop {
+                optional, state, ..
+            } => {
                 self.pre_state(state)?;
                 self.check_tool_jump(state, warnings);
                 self.line(if *optional { "M1" } else { "M0" });
@@ -708,7 +762,9 @@ impl<'a> Writer<'a> {
                 self.line("M30");
                 Ok(())
             }
-            Op::WcsDefine { p, origin, state, .. } => {
+            Op::WcsDefine {
+                p, origin, state, ..
+            } => {
                 self.pre_state(state)?;
                 self.check_tool_jump(state, warnings);
                 self.line(format!(
@@ -733,7 +789,11 @@ impl<'a> Writer<'a> {
     /// F-слово при отличии модального feed от текущего выведенного; иначе "".
     /// F на rapid-кадре воспроизводится (меняет модальный feed — traverse
     /// развёртки §7.7-1 несёт feed кадра). Число — 4dp с точкой ВСЕГДА.
-    fn feed_word(&mut self, state: &eid_core::ast::State, warnings: &mut Vec<String>) -> Result<String, Vec<Diagnostic>> {
+    fn feed_word(
+        &mut self,
+        state: &eid_core::ast::State,
+        warnings: &mut Vec<String>,
+    ) -> Result<String, Vec<Diagnostic>> {
         match &state.feed {
             Some(f) => {
                 if !f.value.is_finite() {
@@ -779,14 +839,20 @@ impl<'a> Writer<'a> {
     /// декод не кончается им.
     fn raw(&mut self, payload_hex: &str) -> Result<(), Vec<Diagnostic>> {
         if payload_hex.len() % 2 != 0 {
-            return Err(vec![diag(ErrorCode::InvalidInput, "raw payload: bad hex length")]);
+            return Err(vec![diag(
+                ErrorCode::InvalidInput,
+                "raw payload: bad hex length",
+            )]);
         }
         let mut bytes = Vec::with_capacity(payload_hex.len() / 2);
         for i in (0..payload_hex.len()).step_by(2) {
             match u8::from_str_radix(&payload_hex[i..i + 2], 16) {
                 Ok(b) => bytes.push(b),
                 Err(_) => {
-                    return Err(vec![diag(ErrorCode::InvalidInput, "raw payload: bad hex pair")])
+                    return Err(vec![diag(
+                        ErrorCode::InvalidInput,
+                        "raw payload: bad hex pair",
+                    )])
                 }
             }
         }

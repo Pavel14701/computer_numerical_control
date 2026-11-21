@@ -33,7 +33,10 @@ fn fanuc_entries() -> Vec<Entry> {
             if in_tier_b {
                 if let (Some(p), Some(d), Some(e)) = (&cur_path, &cur_dialect, &cur_expect) {
                     if d == "fanuc" {
-                        out.push(Entry { path: p.clone(), expect: e.clone() });
+                        out.push(Entry {
+                            path: p.clone(),
+                            expect: e.clone(),
+                        });
                     }
                 }
             }
@@ -57,7 +60,10 @@ fn fanuc_entries() -> Vec<Entry> {
     if in_tier_b {
         if let (Some(p), Some(d), Some(e)) = (&cur_path, &cur_dialect, &cur_expect) {
             if d == "fanuc" {
-                out.push(Entry { path: p.clone(), expect: e.clone() });
+                out.push(Entry {
+                    path: p.clone(),
+                    expect: e.clone(),
+                });
             }
         }
     }
@@ -67,16 +73,19 @@ fn fanuc_entries() -> Vec<Entry> {
 #[test]
 fn smoke_17_fanuc_corpus_files() {
     let entries = fanuc_entries();
-    assert_eq!(entries.len(), 17, "manifest: ожидается 17 fanuc-файлов tier_b");
+    assert_eq!(
+        entries.len(),
+        17,
+        "manifest: ожидается 17 fanuc-файлов tier_b"
+    );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus");
     let mut ok = 0usize;
     let mut diagnosed = 0usize;
     println!("=== СМОУК eid-fanuc: 17 fanuc-файлов корпуса (parse-or-diagnose) ===");
     for e in &entries {
         let full = root.join(&e.path);
-        let src = std::fs::read_to_string(&full).unwrap_or_else(|err| {
-            panic!("{}: файл не читается: {err}", e.path)
-        });
+        let src = std::fs::read_to_string(&full)
+            .unwrap_or_else(|err| panic!("{}: файл не читается: {err}", e.path));
         let adapter = FanucAdapter::new();
         let started = std::time::Instant::now();
         let result = std::panic::catch_unwind(move || adapter.parse(&src, &e.path));
@@ -87,8 +96,12 @@ fn smoke_17_fanuc_corpus_files() {
                 // Same-dialect эмиссия: fixed-point t1 == t2 (байт-в-байт);
                 // panic/Err на легальном AST = смоук-отказ эмиссии.
                 let ad = FanucAdapter::new();
-                let t1 = ad.emit(&program).expect(&format!("{}: emit crashed", e.path));
-                let t2 = ad.emit(&program).expect(&format!("{}: emit#2 crashed", e.path));
+                let t1 = ad
+                    .emit(&program)
+                    .expect(&format!("{}: emit crashed", e.path));
+                let t2 = ad
+                    .emit(&program)
+                    .expect(&format!("{}: emit#2 crashed", e.path));
                 assert_eq!(t1, t2, "{}: emit недетерминирован", e.path);
                 ok += 1;
                 println!(
@@ -119,6 +132,9 @@ fn smoke_17_fanuc_corpus_files() {
             }
         }
     }
-    println!("=== итог: ok={ok} diagnosed={diagnosed} total={} (crash=0) ===", ok + diagnosed);
+    println!(
+        "=== итог: ok={ok} diagnosed={diagnosed} total={} (crash=0) ===",
+        ok + diagnosed
+    );
     assert_eq!(ok + diagnosed, 17, "все 17 файлов — parse-or-diagnose");
 }
