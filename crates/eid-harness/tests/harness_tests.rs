@@ -665,15 +665,16 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
             .find(|v| v.id == id)
             .unwrap_or_else(|| panic!("no {id}"))
     };
-    // notice: true — только #43 (CORPUS §1.1; #13 снят: диспозиция drop →
-    // 360°-дуга, SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
+    // notice: true — #43 (zero-length drop), N11 (M98 → line-level Raw,
+    // ревизия v0.16), N14 (auto-PEND, ревизия v0.16; #13 снят: диспозиция
+    // drop → 360°-дуга, SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
     assert_eq!(
         m.vectors
             .iter()
             .filter(|v| v.notice)
             .map(|v| v.id.clone())
             .collect::<Vec<_>>(),
-        vec!["43".to_string()]
+        vec!["43".to_string(), "N11".to_string(), "N14".to_string()]
     );
     // r4_expect непустой: #27 (grbl E_UNSUPPORTED_SYNTAX) и #47 (обе цели E_RAW_UNTRANSLATABLE)
     let v27 = v("27");
