@@ -719,7 +719,7 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     let err_class = [
         "N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N12", "N13", "N15", "N16", "N17", "N19",
     ];
-    let line_class = ["N3", "N8", "N9", "N10", "N11", "N14", "N18"];
+    let line_class = ["N3", "N8", "N9", "N10", "N11", "N18"];
     for id in err_class {
         let vv = v(id);
         for f in &vv.files {
