@@ -2,18 +2,19 @@
 //! (src/main.rs); тесты exit-матрицы — tests/cli_matrix.rs через [`run`].
 
 use eid_core::adapter::Adapter;
+use eid_core::ast::Units;
 use eid_integration::profile::MachineProfile;
 use eid_integration::sim::{check_program, real_sim_available, validate_program};
 use eid_integration::translate::{
-    format_diagnostic, translate_file, AnyAdapter, TranslateError,
+    format_diagnostic, translate_file_with_profile, AnyAdapter, TranslateError,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1; pending: grbl-hal, fluidnc";
+const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1, fanuc; без адаптера (pending): grbl-hal, fluidnc, fanuc";
 
 const TRANSLATE_FLAGS: &[&str] = &["--from", "--to", "--profile", "--input", "--output"];
-const VERIFY_FLAGS: &[&str] = &["--profile", "--input"];
+const VERIFY_FLAGS: &[&str] = &["--profile", "--dialect", "--input"];
 
 /// Класс ошибки → код выхода: 2 — usage (аргументы), 1 — конфигурация/файлы/
 /// трансляция.
@@ -77,15 +78,30 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
     let flags = parse_flags(args, TRANSLATE_FLAGS)?;
     let from = parse_dialect(require_flag(&flags, "--from")?, "--from")?;
     let to = parse_dialect(require_flag(&flags, "--to")?, "--to")?;
-    let profile_path = PathBuf::from(require_flag(&flags, "--profile")?);
     let input = PathBuf::from(require_flag(&flags, "--input")?);
     let output = PathBuf::from(require_flag(&flags, "--output")?);
 
-    let profile = load_profile(&profile_path)?;
+    // --profile опционален (#10): не задан → дефолтный профиль по целевому
+    // диалекту (--to): семейство GRBL → grbl_default, fanuc → fanuc_default,
+    // linuxcnc/eid-l1 → linuxcnc_default (лимиты COVERAGE §1.2 совпадают).
+    let (profile, profile_path) = match get_flag(&flags, "--profile") {
+        Some(path_str) => {
+            let path = PathBuf::from(path_str);
+            (load_profile(&path)?, Some(path))
+        }
+        None => {
+            let def = MachineProfile::default_for_name(&to);
+            eprintln!(
+                "note: --profile не задан — используется дефолтный профиль «{}» (по --to {})",
+                def.name, to
+            );
+            (def, None)
+        }
+    };
     check_input_file(&input)?;
     check_output_file(&output, &input)?;
 
-    if profile.dialect.as_name() != from {
+    if profile_path.is_some() && profile.dialect.as_name() != from {
         eprintln!(
             "note: диалект профиля ({}) не совпадает с --from ({}); профиль применён как задан",
             profile.dialect.as_name(),
@@ -93,7 +109,7 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
         );
     }
 
-    match translate_file(&from, &to, &input, &output) {
+    match translate_file_with_profile(&from, &to, &input, &output, Some(&profile)) {
         Ok(outcome) => {
             println!(
                 "translate: OK {} -> {} ({} опов)",
@@ -115,7 +131,7 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
                 output.display(),
                 std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0)
             );
-            print_profile(&profile, &profile_path);
+            print_profile(&profile, profile_path.as_deref());
             Ok(())
         }
         Err(err) => Err(report_translate_error(&err)),
@@ -158,10 +174,42 @@ fn cmd_verify(args: &[String]) -> CliResult<()> {
         return Ok(());
     }
     let flags = parse_flags(args, VERIFY_FLAGS)?;
-    let profile_path = PathBuf::from(require_flag(&flags, "--profile")?);
     let input = PathBuf::from(require_flag(&flags, "--input")?);
 
-    let profile = load_profile(&profile_path)?;
+    // --profile опционален (#10): приоритет — профиль > --dialect > дефолт
+    // linuxcnc. --profile и --dialect вместе — неоднозначно → usage (2).
+    let (profile, profile_path) = match (
+        get_flag(&flags, "--profile"),
+        get_flag(&flags, "--dialect"),
+    ) {
+        (Some(path_str), None) => {
+            let path = PathBuf::from(path_str);
+            (load_profile(&path)?, Some(path))
+        }
+        (None, Some(dialect)) => {
+            let canonical = parse_dialect(dialect, "--dialect")?;
+            let def = MachineProfile::default_for_name(&canonical);
+            eprintln!(
+                "note: --profile не задан — используется дефолтный профиль «{}» (по --dialect {canonical})",
+                def.name
+            );
+            (def, None)
+        }
+        (None, None) => {
+            let def = MachineProfile::linuxcnc_default();
+            eprintln!(
+                "note: --profile не задан — используется дефолтный профиль «{}» (linuxcnc)",
+                def.name
+            );
+            (def, None)
+        }
+        (Some(_), Some(_)) => {
+            return Err(CliError::Usage(
+                "флаги --profile и --dialect взаимоисключающие (профиль уже задаёт диалект)"
+                    .to_string(),
+            ))
+        }
+    };
     check_input_file(&input)?;
     let src = std::fs::read_to_string(&input)
         .map_err(|e| CliError::Failure(format!("input {}: {e}", input.display())))?;
@@ -239,7 +287,7 @@ fn cmd_verify(args: &[String]) -> CliResult<()> {
     }
 
     println!("verify: OK ({} опов; mock-sim 0 ошибок)", report.ops_count);
-    print_profile(&profile, &profile_path);
+    print_profile(&profile, profile_path.as_deref());
     Ok(())
 }
 
@@ -317,10 +365,14 @@ fn wants_help(args: &[String]) -> bool {
     args.iter().any(|a| a == "--help" || a == "-h")
 }
 
-/// Канонические имена диалектов registry; `grbl` — алиас `grbl-1.1`
-/// (короткая форма из IMPLEMENTATION-PLAN §5, критерий #9).
+/// Канонические имена диалектов; `grbl` — алиас `grbl-1.1`
+/// (короткая форма из IMPLEMENTATION-PLAN §5, критерий #9). "fanuc" — имя
+/// валидно (#25), адаптер pending → exit 1 с честным pending-сообщением,
+/// не usage.
 fn parse_dialect(s: &str, flag: &str) -> CliResult<String> {
-    const KNOWN: &[&str] = &["grbl-1.1", "grbl-hal", "fluidnc", "linuxcnc", "eid-l1"];
+    const KNOWN: &[&str] = &[
+        "grbl-1.1", "grbl-hal", "fluidnc", "linuxcnc", "eid-l1", "fanuc",
+    ];
     let canonical = if s == "grbl" { "grbl-1.1" } else { s };
     if KNOWN.contains(&canonical) {
         Ok(canonical.to_string())
@@ -391,8 +443,14 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn print_profile(profile: &MachineProfile, path: &Path) {
-    println!("  profile:         {}", path.display());
+fn print_profile(profile: &MachineProfile, path: Option<&Path>) {
+    match path {
+        Some(p) => println!("  profile:         {}", p.display()),
+        None => println!(
+            "  profile:         <дефолт по диалекту {}>",
+            profile.dialect.as_name()
+        ),
+    }
     println!("    name:          \"{}\"", profile.name);
     println!("    dialect:       {}", profile.dialect.as_name());
     let l = &profile.limits;
@@ -406,12 +464,24 @@ fn print_profile(profile: &MachineProfile, path: &Path) {
         "всегда IJK — EQUIVALENCE §4"
     };
     println!("    emit_r_arcs:   {} ({})", profile.emit_r_arcs, r_note);
+    let p_note = if profile.emit_preamble {
+        "первая строка выхода: GENERATED BY EID (verify-in-simulator)"
+    } else {
+        "заголовок не пишется"
+    };
+    println!("    emit_preamble: {} ({})", profile.emit_preamble, p_note);
+    let units = match profile.axis_limits_units {
+        Units::Mm => "mm",
+        Units::In => "in",
+    };
     match &profile.axis_limits {
         Some(a) => println!(
-            "    axis_limits:   x[{}, {}] y[{}, {}] z[{}, {}]",
+            "    axis_limits:   x[{}, {}] y[{}, {}] z[{}, {}] (units: {units}; расхождение единиц программы → масштаб ×25.4)",
             a.x.min, a.x.max, a.y.min, a.y.max, a.z.min, a.z.max
         ),
-        None => println!("    axis_limits:   не заданы (проверка отключена)"),
+        None => println!(
+            "    axis_limits:   не заданы (проверка отключена; units {units} — не применяются)"
+        ),
     }
 }
 
@@ -432,8 +502,8 @@ fn print_main_help() {
 eid — транслятор G-кода через канонический формат EID/L1 (GRBL 1.1 <-> LinuxCNC)
 
 ИСПОЛЬЗОВАНИЕ:
-  eid translate --from <dialect> --to <dialect> --profile <toml> --input <file> --output <file>
-  eid verify --input <file> --profile <toml>
+  eid translate --from <dialect> --to <dialect> [--profile <toml>] --input <file> --output <file>
+  eid verify --input <file> [--profile <toml> | --dialect <name>]
   eid --help | --version
 
 КОМАНДЫ:
@@ -446,14 +516,20 @@ eid — транслятор G-кода через канонический фо
 ОПЦИИ:
   --from <dialect>    Диалект источника (translate)
   --to <dialect>      Диалект цели (translate)
-  --profile <toml>    MachineProfile — TOML (примеры: crates/eid-integration/profiles/)
+  --profile <toml>    MachineProfile — TOML (примеры: crates/eid-integration/profiles/);
+                      опционален: без него — дефолтный профиль по целевому диалекту
+                      (translate: --to; verify: --dialect или linuxcnc)
+  --dialect <name>    Диалект для verify, если --profile не задан (взаимоисключаем
+                      с --profile)
   --input <file>      Входной файл G-кода
   --output <file>     Выходной файл (translate)
 
-СТАТУС (итерация 5, Агент E):
+СТАТУС (итерация 6, Агент E):
   translate: live для grbl-1.1, linuxcnc, eid-l1 (реальные адаптеры C/D/A).
-  grbl-hal/fluidnc — pending (Агент C). verify: parse + validate + mock-sim
-  (structural-проверки: program_end, zero-length, axis_limits профиля).
+  grbl-hal/fluidnc — pending (Агент C); fanuc — pending (#25: парсер этапы 2-3,
+  эмиссия — этап 3; CLI честно отвечает pending). verify: parse + validate +
+  mock-sim (structural-проверки: program_end, zero-length, axis_limits профиля
+  с приведением единиц mm/in — #27; лимиты профиля применяются конвейером — #2).
   real sim (rs274ngc): если не обнаружен в системе — mock-only MVP (REPORT).
 
 КОДЫ ВЫХОДА:
@@ -470,21 +546,30 @@ fn print_translate_help() {
 eid translate — перевод G-кода между диалектами через EID/L1
 
 ИСПОЛЬЗОВАНИЕ:
-  eid translate --from <dialect> --to <dialect> --profile <toml> --input <file> --output <file>
+  eid translate --from <dialect> --to <dialect> [--profile <toml>] --input <file> --output <file>
 
-ФЛАГИ (все обязательны):
+ФЛАГИ:
   --from <dialect>    Диалект источника: {DIALECT_NAMES}
   --to <dialect>      Диалект цели (тот же список)
-  --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml)
+  --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml);
+                      ОПЦИОНАЛЕН (#10): без него — дефолтный профиль по целевому
+                      диалекту (--to): семейство GRBL → grbl_default, fanuc →
+                      fanuc_default, linuxcnc/eid-l1 → linuxcnc_default
   --input <file>      Входной файл G-кода (существует, читается)
   --output <file>     Выходной файл (не совпадает с input; каталог должен существовать)
 
+ПРОФИЛЬ: лимиты профиля применяются конвейером (#2): max_source_lines /
+max_word_chars — до parse, max_ops_per_program / max_unroll_iterations — по AST;
+превышение → E_LIMIT_EXCEEDED, exit 1. emit_preamble=true (#11) → первая строка
+выхода `(GENERATED BY EID — VERIFY IN SIMULATOR BEFORE MACHINING)`.
+
 ПРИМЕР:
   eid translate --from grbl --to linuxcnc --profile crates/eid-integration/profiles/grbl_default.toml --input corpus/tier_a/v0/01_linear_box/linear_box.grbl.ngc --output pocket.ngc
+  eid translate --from grbl --to linuxcnc --input in.ngc --output out.ngc   # дефолт-профиль
 
-СТАТУС (итерация 4): live — реальные адаптеры grbl-1.1/linuxcnc/eid-l1 через
-registry (eid-integration::translate). Отказы parse/emit — диагностики в
-stderr ([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
+СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/eid-l1 через registry
+(eid-integration::translate). Отказы parse/emit — диагностики в stderr
+([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
 emit-warnings (Q3) печатаются отдельно (notice/warning, не отказ).
 
 КОДЫ ВЫХОДА: 0 — перевод выполнен; 1 — профиль/файлы/отказ трансляции; 2 — usage.
@@ -498,17 +583,22 @@ fn print_verify_help() {
 eid verify — проверка программы G-кода: parse + validate + mock-sim
 
 ИСПОЛЬЗОВАНИЕ:
-  eid verify --input <file> --profile <toml>
+  eid verify --input <file> [--profile <toml> | --dialect <name>]
 
-ФЛАГИ (оба обязательны):
+ФЛАГИ:
   --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml);
-                      диалект профиля определяет адаптер обратного parse
+                      диалект профиля определяет адаптер обратного parse;
+                      ОПЦИОНАЛЕН (#10)
+  --dialect <name>    Диалект, если --profile не задан ({DIALECT_NAMES});
+                      взаимоисключаем с --profile; без обоих — linuxcnc
   --input <file>      Входной файл G-кода (существует, читается)
 
 ПРОВЕРКИ: parse адаптером диалекта профиля; eid_core::parser::validate;
 mock-sim structural-проверки (program_end presence, zero-length flood,
-axis_limits профиля). Наличие real sim (linuxcnc/rs274) — детекция и отчёт;
-запуск — решение после MVP (mock-only MVP, PLAN §2-E).
+axis_limits профиля; units программы (G20/G21) != units профиля → координаты
+масштабируются ×25.4/÷25.4 перед сравнением — #27). Наличие real sim
+(linuxcnc/rs274) — детекция и отчёт; запуск — решение после MVP
+(mock-only MVP, PLAN §2-E).
 
 КОДЫ ВЫХОДА: 0 — проверка пройдена; 1 — профиль/файлы/отказ проверок; 2 — usage.
 "

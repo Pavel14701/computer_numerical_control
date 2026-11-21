@@ -11,8 +11,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
 
-  # Итерация 6 (Phase 2.1): lint-гейт. Без -D warnings — warnings чужих
-  # зон (core/grbl/harness) не валят CI; конвенция -D — после чистки.
+  # Итерация 6 (аудит #35): fmt-гейт — блокирующий. rustfmt --check держит
+  # дерево в каноническом формате (диффы форматирования не доходят до review).
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  # Итерация 6 (аудит #35): lint-гейт поднят до блокирующего уровня —
+  # cargo clippy --workspace --all-targets -- -D warnings (было: без -D,
+  # итерация 6 Phase 2.1; чистка warnings чужих зон — в работе параллельно).
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -20,7 +32,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   # Критерий #12 (IMPLEMENTATION-PLAN §5): CHANGELOG проверяется скриптом,
   # не глазами. Скрипт появляется в итерации 1 (агент B); до того — placeholder.

@@ -6,7 +6,7 @@
 //! LinuxCNC/rs274 отсутствует → «mock-only MVP» (REPORT, PLAN §2-E).
 
 use eid_core::ast::{
-    Coolant, Dir, Frame, Num, Op, Point3, Program, SrcSpan, Spindle, StartPoint, State, Units, Wcs,
+    Coolant, Dir, Frame, Num, Op, Point3, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs,
 };
 use eid_integration::profile::{AxisLimits, AxisRange, MachineProfile};
 use eid_integration::sim::{check_program, mock_sim, real_sim_available};
@@ -106,10 +106,7 @@ fn limits(z: (f64, f64)) -> Option<AxisLimits> {
             min: -100.0,
             max: 100.0,
         },
-        z: AxisRange {
-            min: z.0,
-            max: z.1,
-        },
+        z: AxisRange { min: z.0, max: z.1 },
     })
 }
 
@@ -155,10 +152,7 @@ fn sim_check_ok_bbox() {
 
 #[test]
 fn sim_axis_out_max() {
-    let p = program(vec![
-        rapid(StartPoint::Unknown, 0.0, 0.0, 5.0),
-        end_op(),
-    ]);
+    let p = program(vec![rapid(StartPoint::Unknown, 0.0, 0.0, 5.0), end_op()]);
     let report = check_program(&profile_with_limits(limits((0.0, 4.0))), &p);
     assert!(!report.is_ok());
     assert!(
@@ -173,10 +167,7 @@ fn sim_axis_out_max() {
 
 #[test]
 fn sim_axis_out_min() {
-    let p = program(vec![
-        rapid(StartPoint::Unknown, 0.0, 0.0, 5.0),
-        end_op(),
-    ]);
+    let p = program(vec![rapid(StartPoint::Unknown, 0.0, 0.0, 5.0), end_op()]);
     let report = check_program(&profile_with_limits(limits((6.0, 150.0))), &p);
     assert!(!report.is_ok());
     assert!(report.errors.iter().any(|e| e.contains("axis_limits")));
@@ -206,13 +197,13 @@ fn sim_end_missing() {
 
 #[test]
 fn sim_end_not_last() {
-    let p = program(vec![
-        end_op(),
-        rapid(StartPoint::Unknown, 0.0, 0.0, 5.0),
-    ]);
+    let p = program(vec![end_op(), rapid(StartPoint::Unknown, 0.0, 0.0, 5.0)]);
     let report = check_program(&profile_with_limits(None), &p);
     assert!(!report.is_ok());
-    assert!(report.errors.iter().any(|e| e.contains("program_end не последний")));
+    assert!(report
+        .errors
+        .iter()
+        .any(|e| e.contains("program_end не последний")));
 }
 
 #[test]
@@ -237,9 +228,16 @@ fn sim_zero_flood_warning() {
         end_op(),
     ]);
     let report = check_program(&profile_with_limits(None), &p);
-    assert!(report.is_ok(), "zero-length — не error: {:?}", report.errors);
     assert!(
-        report.warnings.iter().any(|w| w.contains("zero-length flood")),
+        report.is_ok(),
+        "zero-length — не error: {:?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("zero-length flood")),
         "warnings: {:?}",
         report.warnings
     );
@@ -321,4 +319,122 @@ fn sim_arc_center_in_limits() {
     let b = report.bbox.expect("bbox");
     assert_eq!(b.max, [10.0, 10.0, 5.0]);
     assert_eq!(b.min, [0.0, 0.0, 5.0]);
+}
+
+// ---------------------------------------------------------------------------
+// #27: units в axis_limits — масштабирование координат перед сравнением
+// ---------------------------------------------------------------------------
+
+/// Профиль с лимитами в заданных единицах (axis_limits_units); диапазон
+/// (min, max) — один на все три оси (для юнит-тестов масштаба #27).
+fn profile_in_units(units: Units, range: (f64, f64)) -> MachineProfile {
+    let mut p = profile_with_limits(None);
+    p.axis_limits = Some(AxisLimits {
+        x: AxisRange {
+            min: range.0,
+            max: range.1,
+        },
+        y: AxisRange {
+            min: range.0,
+            max: range.1,
+        },
+        z: AxisRange {
+            min: range.0,
+            max: range.1,
+        },
+    });
+    p.axis_limits_units = units;
+    p
+}
+
+/// Программа в заданных единицах: rapid (0,0,5) → linear (30,0,5) → end.
+fn program_in_units(units: Units) -> Program {
+    let mut p = program(vec![
+        rapid(StartPoint::Unknown, 0.0, 0.0, 5.0),
+        linear(known((0.0, 0.0, 5.0)), 30.0, 0.0, 5.0),
+        end_op(),
+    ]);
+    p.units = units;
+    p
+}
+
+#[test]
+fn sim_units_inch_program_mm_profile_762_ok() {
+    // мм-профиль (axis_limits_units = mm, лимит z[0,1000]) + inch-программа:
+    // X30 = 762 мм → в пределах → ok. y=0, z=5 inch = 127 мм → ок.
+    let report = check_program(
+        &profile_in_units(Units::Mm, (0.0, 1000.0)),
+        &program_in_units(Units::In),
+    );
+    assert!(
+        report.is_ok(),
+        "762 мм < 1000 мм: errors: {:?}",
+        report.errors
+    );
+    // bbox в единицах ПРОФИЛЯ: x = 30 inch × 25.4 = 762
+    let b = report.bbox.expect("bbox");
+    assert!((b.max[0] - 762.0).abs() < 1e-9, "bbox x max: {}", b.max[0]);
+}
+
+#[test]
+fn sim_units_inch_program_mm_profile_500_refusal() {
+    // тот же inch-файл против лимита 500 мм → отказ; сообщение несёт note
+    // о приведении единиц.
+    let report = check_program(
+        &profile_in_units(Units::Mm, (0.0, 500.0)),
+        &program_in_units(Units::In),
+    );
+    assert!(!report.is_ok(), "762 мм > 500 мм обязан отказать");
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("axis_limits") && e.contains("25.4")),
+        "note о масштабе в ошибке: {:?}",
+        report.errors
+    );
+}
+
+#[test]
+fn sim_units_mm_program_inch_profile() {
+    // наоборот: inch-профиль (лимит x/y/z [0, 60] inch) + мм-программа:
+    // X30 мм = 1.1811 inch → в пределах → ok; z 5 мм = 0.1969 inch → ок.
+    let report = check_program(
+        &profile_in_units(Units::In, (0.0, 60.0)),
+        &program_in_units(Units::Mm),
+    );
+    assert!(
+        report.is_ok(),
+        "30 мм = 1.18 inch < 60 inch: errors: {:?}",
+        report.errors
+    );
+
+    // против лимита 1.0 inch (25.4 мм): X30 мм = 1.181 inch > 1.0 → отказ.
+    let report = check_program(
+        &profile_in_units(Units::In, (0.0, 1.0)),
+        &program_in_units(Units::Mm),
+    );
+    assert!(!report.is_ok(), "30 мм против 1 inch обязан отказать");
+}
+
+#[test]
+fn sim_units_match_untouched() {
+    // одинаковые единицы — масштаб 1.0, поведение как до #27: z=5 против
+    // лимита z[0,4] → отказ (числа не пересчитываются).
+    let report = check_program(
+        &profile_in_units(Units::Mm, (0.0, 4.0)),
+        &program_in_units(Units::Mm),
+    );
+    assert!(!report.is_ok());
+    let report = check_program(
+        &profile_in_units(Units::In, (0.0, 4.0)),
+        &program_in_units(Units::In),
+    );
+    assert!(!report.is_ok());
+    // и Inch-программа против Inch-лимитов [0,100] — ok
+    let report = check_program(
+        &profile_in_units(Units::In, (0.0, 100.0)),
+        &program_in_units(Units::In),
+    );
+    assert!(report.is_ok(), "errors: {:?}", report.errors);
 }

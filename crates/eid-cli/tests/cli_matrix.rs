@@ -74,9 +74,57 @@ fn cli_unknown_command_usage() {
 
 #[test]
 fn cli_unknown_dialect_usage() {
+    // "haas" вне словаря CLI → usage (2). fanuc — имя валидно (#25),
+    // pending-адаптер → exit 1 (см. cli_adapter_pending_fanuc).
     let prof = grbl_profile();
     let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
     let output = tmp().join("ud.out");
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "haas",
+        "--to",
+        "linuxcnc",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 2);
+}
+
+#[test]
+fn cli_adapter_pending_fanuc() {
+    // #25: fanuc — имя валидно, адаптер pending (парсер этапы 2-3, эмиссия
+    // этап 3) → exit 1 с честным pending-сообщением, НЕ usage и не паника.
+    let prof = grbl_profile();
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("fanuc.out");
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "grbl",
+        "--to",
+        "fanuc",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 1);
+    assert!(!output.exists(), "pending-цель не пишет output");
+}
+
+#[test]
+fn cli_adapter_pending_fanuc_source() {
+    // #25: fanuc-ИСТОЧНИК — pending тоже.
+    let prof = grbl_profile();
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("fanuc_src.out");
     let code = code_of(&[
         "translate",
         "--from",
@@ -90,7 +138,7 @@ fn cli_unknown_dialect_usage() {
         "--output",
         p(&output),
     ]);
-    assert_eq!(code, 2);
+    assert_eq!(code, 1);
 }
 
 #[test]
@@ -361,37 +409,73 @@ fn assert_direction(from: &str, to: &str, input: &Path, profile: &Path, tag: &st
 #[test]
 fn cli_dir_grbl_to_linuxcnc() {
     let (d, f) = GRBL_SRC;
-    assert_direction("grbl-1.1", "linuxcnc", &corpus_pilot(d, f), &grbl_profile(), "g2l");
+    assert_direction(
+        "grbl-1.1",
+        "linuxcnc",
+        &corpus_pilot(d, f),
+        &grbl_profile(),
+        "g2l",
+    );
 }
 
 #[test]
 fn cli_dir_linuxcnc_to_grbl() {
     let (d, f) = LNX_SRC;
-    assert_direction("linuxcnc", "grbl-1.1", &corpus_pilot(d, f), &lnx_profile(), "l2g");
+    assert_direction(
+        "linuxcnc",
+        "grbl-1.1",
+        &corpus_pilot(d, f),
+        &lnx_profile(),
+        "l2g",
+    );
 }
 
 #[test]
 fn cli_dir_grbl_to_eidl1() {
     let (d, f) = GRBL_SRC;
-    assert_direction("grbl-1.1", "eid-l1", &corpus_pilot(d, f), &grbl_profile(), "g2e");
+    assert_direction(
+        "grbl-1.1",
+        "eid-l1",
+        &corpus_pilot(d, f),
+        &grbl_profile(),
+        "g2e",
+    );
 }
 
 #[test]
 fn cli_dir_linuxcnc_to_eidl1() {
     let (d, f) = LNX_SRC;
-    assert_direction("linuxcnc", "eid-l1", &corpus_pilot(d, f), &lnx_profile(), "l2e");
+    assert_direction(
+        "linuxcnc",
+        "eid-l1",
+        &corpus_pilot(d, f),
+        &lnx_profile(),
+        "l2e",
+    );
 }
 
 #[test]
 fn cli_dir_eidl1_to_grbl() {
     let (d, f) = EID_SRC;
-    assert_direction("eid-l1", "grbl-1.1", &corpus_pilot(d, f), &grbl_profile(), "e2g");
+    assert_direction(
+        "eid-l1",
+        "grbl-1.1",
+        &corpus_pilot(d, f),
+        &grbl_profile(),
+        "e2g",
+    );
 }
 
 #[test]
 fn cli_dir_eidl1_to_linuxcnc() {
     let (d, f) = EID_SRC;
-    assert_direction("eid-l1", "linuxcnc", &corpus_pilot(d, f), &lnx_profile(), "e2l");
+    assert_direction(
+        "eid-l1",
+        "linuxcnc",
+        &corpus_pilot(d, f),
+        &lnx_profile(),
+        "e2l",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +542,10 @@ fn cli_verify_axis_within_ok() {
     // bbox пилота: x[0,10] y[0,10] z[5,5] — внутри
     let prof = axis_profile((-100.0, 100.0), (0.0, 300.0), (0.0, 150.0));
     let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]), 0);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]),
+        0
+    );
 }
 
 #[test]
@@ -466,7 +553,10 @@ fn cli_verify_axis_out_max() {
     // z[5,5] против z max 4 → [verify] axis_limits → exit 1
     let prof = axis_profile((-100.0, 100.0), (0.0, 300.0), (0.0, 4.0));
     let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]), 1);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]),
+        1
+    );
 }
 
 #[test]
@@ -474,7 +564,10 @@ fn cli_verify_axis_out_min() {
     // z[5,5] против z min 6 → за нижнюю границу → exit 1
     let prof = axis_profile((-100.0, 100.0), (0.0, 300.0), (6.0, 150.0));
     let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]), 1);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]),
+        1
+    );
 }
 
 #[test]
@@ -492,7 +585,10 @@ fn cli_verify_axis_partial_profile() {
          max-word-chars = 32\n",
     );
     let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]), 1);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&input)]),
+        1
+    );
 }
 
 #[test]
@@ -523,7 +619,10 @@ fn cli_verify_zero_flood_ok() {
         "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z5.0000\nG1 X5.0000 F100.0\nG1 X5.0000 F100.0\nM2\n",
     );
     let prof = grbl_profile();
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&flood)]), 0);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&flood)]),
+        0
+    );
 }
 
 #[test]
@@ -546,7 +645,10 @@ fn cli_verify_program_end_autopend_ok() {
 fn cli_verify_parse_reject_garbage() {
     let bad = write_tmp("garbage.ngc", "G1 X0.0000 Y0.0000\n@@garbage@@\n");
     let prof = grbl_profile();
-    assert_eq!(code_of(&["verify", "--profile", p(&prof), "--input", p(&bad)]), 1);
+    assert_eq!(
+        code_of(&["verify", "--profile", p(&prof), "--input", p(&bad)]),
+        1
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -576,64 +678,158 @@ fn cli_exit_codes_repeatable_matrix() {
         case(
             2,
             &[
-                "translate", "--from", "fanuc", "--to", "linuxcnc",
-                "--profile", p(&prof_g), "--input", p(&input),
-                "--output", &out("rep_a.out"),
+                "translate",
+                "--from",
+                "haas",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_a.out"),
+            ],
+        ),
+        case(
+            1,
+            &[
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "fanuc", // pending (#25)
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_fanuc.out"),
+            ],
+        ),
+        case(
+            0,
+            &[
+                // #10: --profile не задан → дефолт-профиль по --to
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_noprof.out"),
             ],
         ),
         case(
             2,
             &[
-                "translate", "--from", "grbl", "--to", "linuxcnc",
-                "--profile", p(&prof_g), "--input", p(&input), // --output отсутствует
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input), // --output отсутствует
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "grbl", "--to", "linuxcnc",
-                "--profile", p(&bad_profile), "--input", p(&input),
-                "--output", &out("rep_b.out"),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&bad_profile),
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_b.out"),
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "grbl", "--to", "linuxcnc",
-                "--profile", p(&prof_g), "--input", p(&missing),
-                "--output", &out("rep_c.out"),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&missing),
+                "--output",
+                &out("rep_c.out"),
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "grbl", "--to", "grbl",
-                "--profile", p(&prof_g), "--input", p(&input),
-                "--output", p(&input),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "grbl",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                p(&input),
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "grbl", "--to", "linuxcnc",
-                "--profile", p(&prof_g), "--input", p(&input),
-                "--output", p(&bad_dir),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                p(&bad_dir),
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "grbl", "--to", "grbl-hal",
-                "--profile", p(&prof_g), "--input", p(&input),
-                "--output", &out("rep_d.out"),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "grbl-hal",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_d.out"),
             ],
         ),
         case(
             1,
             &[
-                "translate", "--from", "linuxcnc", "--to", "grbl",
-                "--profile", p(&prof_l), "--input", p(&t27),
-                "--output", &out("rep_t27.ngc"),
+                "translate",
+                "--from",
+                "linuxcnc",
+                "--to",
+                "grbl",
+                "--profile",
+                p(&prof_l),
+                "--input",
+                p(&t27),
+                "--output",
+                &out("rep_t27.ngc"),
             ],
         ),
         case(
@@ -643,9 +839,17 @@ fn cli_exit_codes_repeatable_matrix() {
         case(
             0,
             &[
-                "translate", "--from", "grbl", "--to", "linuxcnc",
-                "--profile", p(&prof_g), "--input", p(&input),
-                "--output", &out("rep_ok.out"),
+                "translate",
+                "--from",
+                "grbl",
+                "--to",
+                "linuxcnc",
+                "--profile",
+                p(&prof_g),
+                "--input",
+                p(&input),
+                "--output",
+                &out("rep_ok.out"),
             ],
         ),
     ];
@@ -656,4 +860,309 @@ fn cli_exit_codes_repeatable_matrix() {
         assert_eq!(first, second, "exit-код недетерминирован: {args:?}");
         assert_eq!(first, *expected, "exit-код матрицы изменился: {args:?}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// #10: --profile опционален (translate → дефолт по --to; verify → --dialect
+// или дефолт linuxcnc)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cli_translate_no_profile_ok() {
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("noprof_t.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "grbl",
+        "--to",
+        "linuxcnc",
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(
+        code, 0,
+        "translate без --profile обязан работать (дефолт по --to)"
+    );
+    assert!(output.exists());
+}
+
+#[test]
+fn cli_translate_no_profile_grbl_target_ok() {
+    // дефолт по целевому диалекту = grbl → grbl_default: linuxcnc-файл → grbl
+    let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
+    let output = tmp().join("noprof_g.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "linuxcnc",
+        "--to",
+        "grbl",
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 0);
+    assert!(output.exists());
+}
+
+#[test]
+fn cli_verify_no_profile_ok() {
+    // verify без --profile и без --dialect → дефолт linuxcnc
+    let input = corpus_pilot("01_linear_box", "linear_box.linuxcnc.ngc");
+    assert_eq!(
+        code_of(&["verify", "--input", p(&input)]),
+        0,
+        "verify без --profile обязан работать (дефолт linuxcnc)"
+    );
+}
+
+#[test]
+fn cli_verify_dialect_flag_ok() {
+    // --dialect вместо профиля: grbl-файл против grbl-диалекта
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    assert_eq!(
+        code_of(&["verify", "--input", p(&input), "--dialect", "grbl"]),
+        0,
+        "--dialect grbl → дефолт grbl-профиля"
+    );
+    assert_eq!(
+        code_of(&["verify", "--input", p(&input), "--dialect", "linuxcnc"]),
+        0,
+        "--dialect linuxcnc против grbl-файла: parse может пройти или нет, но не usage"
+    );
+}
+
+#[test]
+fn cli_verify_profile_and_dialect_conflict_usage() {
+    let prof = lnx_profile();
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    assert_eq!(
+        code_of(&[
+            "verify",
+            "--input",
+            p(&input),
+            "--profile",
+            p(&prof),
+            "--dialect",
+            "grbl"
+        ]),
+        2,
+        "--profile и --dialect взаимоисключающие → usage"
+    );
+}
+
+#[test]
+fn cli_verify_unknown_dialect_flag_usage() {
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    assert_eq!(
+        code_of(&["verify", "--input", p(&input), "--dialect", "haas"]),
+        2,
+        "неизвестный диалект в --dialect → usage"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #2: лимиты профиля реально применяются через CLI (E_LIMIT_EXCEEDED)
+// ---------------------------------------------------------------------------
+
+const TINY_OPS_PROFILE_TOML: &str = concat!(
+    "name = \"Tiny ops\"\n",
+    "dialect = \"linuxcnc\"\n",
+    "emit-r-arcs = false\n",
+    "\n",
+    "[limits]\n",
+    "max-ops-per-program = 10\n",
+    "max-unroll-iterations = 10000\n",
+    "max-source-lines = 1000000\n",
+    "max-word-chars = 32\n",
+);
+
+/// Программа на 20 linear-опов (+ auto-PEND).
+fn program_20_ops() -> PathBuf {
+    let mut s = String::from("G21 G90\n");
+    for i in 0..20 {
+        s.push_str(&format!("G1 X{i} Y{i} F100.0\n"));
+    }
+    s.push_str("M2\n");
+    write_tmp("ops20.ngc", &s)
+}
+
+#[test]
+fn cli_profile_max_ops_refusal() {
+    // #2-критерий: профиль max_ops_per_program=10, программа на 20 опытах →
+    // отказ E_LIMIT_EXCEEDED → exit 1.
+    let prof = write_tmp("tiny_ops.toml", TINY_OPS_PROFILE_TOML);
+    let input = program_20_ops();
+    let output = tmp().join("tiny.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "grbl",
+        "--to",
+        "linuxcnc",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 1, "20 опов против лимита 10 → отказ");
+    assert!(!output.exists(), "отказ лимита не пишет output");
+
+    // библиотечный уровень: код отказа именно E_LIMIT_EXCEEDED
+    let profile: eid_integration::profile::MachineProfile =
+        toml::from_str(TINY_OPS_PROFILE_TOML).expect("профиль валиден");
+    let err = eid_integration::translate::translate_text_with_profile(
+        "grbl-1.1",
+        "linuxcnc",
+        &std::fs::read_to_string(&input).unwrap(),
+        "ops20.ngc",
+        Some(&profile),
+    )
+    .expect_err("тот же отказ на библиотечном уровне");
+    let lim = err
+        .diagnostics()
+        .iter()
+        .find(|d| d.code.as_str() == "E_LIMIT_EXCEEDED")
+        .expect("E_LIMIT_EXCEEDED в диагностиках");
+    assert_eq!(
+        lim.limit.as_ref().expect("LimitInfo").threshold,
+        "max_ops_per_program"
+    );
+
+    // тот же вход с ДЕФОЛТ-профилем (--profile не задан) — проходит (0)
+    let output2 = tmp().join("tiny_default.out");
+    let _ = std::fs::remove_file(&output2);
+    assert_eq!(
+        code_of(&[
+            "translate",
+            "--from",
+            "grbl",
+            "--to",
+            "linuxcnc",
+            "--input",
+            p(&input),
+            "--output",
+            p(&output2),
+        ]),
+        0,
+        "дефолт-лимит 200000 пропускает 21 оп"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #11: emit_preamble профиля → первая строка выходного .ngc
+// ---------------------------------------------------------------------------
+
+const PREAMBLE_PROFILE_TOML: &str = concat!(
+    "name = \"Preamble bench\"\n",
+    "dialect = \"linuxcnc\"\n",
+    "emit-r-arcs = false\n",
+    "emit-preamble = true\n",
+    "\n",
+    "[limits]\n",
+    "max-ops-per-program = 200000\n",
+    "max-unroll-iterations = 10000\n",
+    "max-source-lines = 1000000\n",
+    "max-word-chars = 32\n",
+);
+
+#[test]
+fn cli_preamble_on_first_line() {
+    let prof = write_tmp("preamble_on.toml", PREAMBLE_PROFILE_TOML);
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("preamble_on.out");
+    let _ = std::fs::remove_file(&output);
+    assert_eq!(
+        code_of(&[
+            "translate",
+            "--from",
+            "grbl",
+            "--to",
+            "linuxcnc",
+            "--profile",
+            p(&prof),
+            "--input",
+            p(&input),
+            "--output",
+            p(&output),
+        ]),
+        0
+    );
+    let written = std::fs::read_to_string(&output).unwrap();
+    assert!(
+        written.starts_with("(GENERATED BY EID — VERIFY IN SIMULATOR BEFORE MACHINING)\n"),
+        "первая строка выхода — заголовок #11: {written:?}"
+    );
+    // семантика не тронута: parse(выход) ≡ parse(вход)
+    let a = parse_with("linuxcnc", &written, "out.ngc").expect("parse выхода с преамбулой");
+    let b = parse_with(
+        "grbl-1.1",
+        &std::fs::read_to_string(&input).unwrap(),
+        "in.ngc",
+    )
+    .expect("parse входа");
+    let d = semantic_diff(&a, &b, &DiffConfig::default());
+    assert!(d.is_empty(), "преамбулa ломает семантику: {d:?}");
+}
+
+#[test]
+fn cli_preamble_off_no_header() {
+    let prof = lnx_profile(); // дефолт: emit-preamble = false
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("preamble_off.out");
+    let _ = std::fs::remove_file(&output);
+    assert_eq!(
+        code_of(&[
+            "translate",
+            "--from",
+            "grbl",
+            "--to",
+            "linuxcnc",
+            "--profile",
+            p(&prof),
+            "--input",
+            p(&input),
+            "--output",
+            p(&output),
+        ]),
+        0
+    );
+    let written = std::fs::read_to_string(&output).unwrap();
+    assert!(
+        !written.contains("GENERATED BY EID"),
+        "при emit-preamble = false заголовка нет: {written:?}"
+    );
+}
+
+#[test]
+fn cli_preamble_no_profile_never_writes_header() {
+    // дефолт-профиль (#10) всегда с emit_preamble=false
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("preamble_def.out");
+    let _ = std::fs::remove_file(&output);
+    assert_eq!(
+        code_of(&[
+            "translate",
+            "--from",
+            "grbl",
+            "--to",
+            "linuxcnc",
+            "--input",
+            p(&input),
+            "--output",
+            p(&output),
+        ]),
+        0
+    );
+    let written = std::fs::read_to_string(&output).unwrap();
+    assert!(!written.contains("GENERATED BY EID"));
 }

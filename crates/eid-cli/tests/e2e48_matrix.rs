@@ -123,9 +123,16 @@ fn known_exception(_id: &str, _msg: &str) -> Option<String> {
 fn e2e48_positive_vectors_full_matrix() {
     let raw = std::fs::read_to_string(repo_root().join("corpus/manifest.toml")).expect("manifest");
     let manifest: ManifestToml = toml::from_str(&raw).expect("manifest TOML parse");
-    let positives: Vec<&VectorToml> =
-        manifest.vectors.iter().filter(|v| v.kind == "positive").collect();
-    assert_eq!(positives.len(), 48, "позитивных векторов в manifest должно быть 48");
+    let positives: Vec<&VectorToml> = manifest
+        .vectors
+        .iter()
+        .filter(|v| v.kind == "positive")
+        .collect();
+    assert_eq!(
+        positives.len(),
+        48,
+        "позитивных векторов в manifest должно быть 48"
+    );
 
     let mut failures: Vec<String> = vec![];
     let mut documented: Vec<String> = vec![];
@@ -142,7 +149,11 @@ fn e2e48_positive_vectors_full_matrix() {
                 let dialect = f.dialect.as_str();
                 let gen = if f.path.contains("/v1/") { "v1" } else { "v0" };
                 let tag = format!("#{} {} [{} {}]", v.id, v_dialect_tag(f), gen, dialect);
-                let other = if dialect == "grbl-1.1" { "linuxcnc" } else { "grbl-1.1" };
+                let other = if dialect == "grbl-1.1" {
+                    "linuxcnc"
+                } else {
+                    "grbl-1.1"
+                };
 
                 // Lossy #41/#45: →grbl SKIP (path_mode-потеря документирована)
                 if (v.id == "41" || v.id == "45") && other == "grbl-1.1" {
@@ -168,12 +179,21 @@ fn e2e48_positive_vectors_full_matrix() {
                 // --- ветка отказа: r4_expect[target] = E_* -------------------
                 if r4.starts_with("E_") {
                     let code = exit_of(&[
-                        "translate", "--from", dialect, "--to", other,
-                        "--profile", p(&profile_for(dialect)),
-                        "--input", p(&input), "--output", p(&output),
+                        "translate",
+                        "--from",
+                        dialect,
+                        "--to",
+                        other,
+                        "--profile",
+                        p(&profile_for(dialect)),
+                        "--input",
+                        p(&input),
+                        "--output",
+                        p(&output),
                     ]);
                     if code != 1 {
-                        let msg = format!("{tag}: ожидался CLI-отказ (r4_expect {r4}), exit={code}");
+                        let msg =
+                            format!("{tag}: ожидался CLI-отказ (r4_expect {r4}), exit={code}");
                         match known_exception(&v.id, &msg) {
                             Some(reason) => documented.push(format!("{msg} — {reason}")),
                             None => failures.push(msg),
@@ -256,12 +276,9 @@ fn e2e48_positive_vectors_full_matrix() {
                             Ok(_) => {
                                 let back = std::fs::read_to_string(&out_rev).unwrap();
                                 let ast_back = parse_src(dialect, &back, "reverse");
-                                let d2 =
-                                    semantic_diff(&ast_in, &ast_back, &DiffConfig::default());
+                                let d2 = semantic_diff(&ast_in, &ast_back, &DiffConfig::default());
                                 if !d2.is_empty() {
-                                    let msg = format!(
-                                        "{tag}: reverse parse != исходный: {d2:?}"
-                                    );
+                                    let msg = format!("{tag}: reverse parse != исходный: {d2:?}");
                                     match known_exception(&v.id, &msg) {
                                         Some(reason) => {
                                             documented.push(format!("{msg} — {reason}"))

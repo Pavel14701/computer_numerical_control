@@ -14,12 +14,16 @@
 use crate::profile::MachineProfile;
 use crate::translate::AnyAdapter;
 use eid_core::adapter::Adapter;
-use eid_core::ast::{Op, Program, StartPoint};
+use eid_core::ast::{Op, Program, StartPoint, Units};
 use eid_core::diag::Diagnostic;
 
 /// Порог «нулевой длины» для structural-проверки (не допуск эквивалентности!):
 /// точное равенство после 4dp-эмиссии, порог — защита от float-шума.
 const ZERO_LEN_EPS: f64 = 1e-9;
+
+/// Миллиметров в дюйме (#27): коэффициент приведения единиц программы к
+/// единицам `MachineProfile::axis_limits_units`.
+const MM_PER_INCH: f64 = 25.4;
 
 /// Bounding box опорных точек motion-опов: концы + центры дуг (консервативно;
 /// экстремумы дуг между опорными точками не вычисляются — структурный MVP,
@@ -52,11 +56,34 @@ impl SimReport {
 // ---------------------------------------------------------------------------
 
 /// Структурные проверки разобранной программы (без обратного parse):
-/// program_end presence, zero-length flood, axis limits.
+/// program_end presence, zero-length flood, axis limits. Координаты
+/// сверяются с лимитами в ЕДИНИЦАХ ПРОФИЛЯ (#27): units программы
+/// (G20/G21 в AST-meta) != `profile.axis_limits_units` → масштабирование
+/// ×25.4 (inch-программа против мм-профиля) или ÷25.4 (наоборот) перед
+/// сравнением; bbox при этом в единицах профиля.
 pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
     let mut report = SimReport {
         ops_count: program.ops.len(),
         ..SimReport::default()
+    };
+
+    // --- #27: приведение единиц программы к единицам axis_limits профиля ---
+    let scale: f64 = match (program.units, profile.axis_limits_units) {
+        (Units::In, Units::Mm) => MM_PER_INCH,
+        (Units::Mm, Units::In) => 1.0 / MM_PER_INCH,
+        _ => 1.0,
+    };
+    let units_note = if scale != 1.0 {
+        format!(
+            " (units программы {p} → {p} профиля, ×{scale:.4})",
+            p = if program.units == Units::In {
+                "in"
+            } else {
+                "mm"
+            },
+        )
+    } else {
+        String::new()
     };
 
     // --- program_end: ровно один и последний (SPEC §3 v0.16: auto-PEND —
@@ -70,9 +97,9 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
         .filter(|op| matches!(op, Op::ProgramEnd { .. }))
         .count();
     match end_count {
-        0 => report.errors.push(
-            "[verify] program_end отсутствует (SPEC §3: ровно один, последний)".to_string(),
-        ),
+        0 => report
+            .errors
+            .push("[verify] program_end отсутствует (SPEC §3: ровно один, последний)".to_string()),
         1 => {
             if !matches!(program.ops.last(), Some(Op::ProgramEnd { .. })) {
                 report
@@ -80,12 +107,14 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
                     .push("[verify] program_end не последний оп (SPEC §3)".to_string());
             }
         }
-        n => report
-            .errors
-            .push(format!("[verify] program_end продублирован: {n} шт (SPEC §3: ровно один)")),
+        n => report.errors.push(format!(
+            "[verify] program_end продублирован: {n} шт (SPEC §3: ровно один)"
+        )),
     }
 
     // --- motion-опы: zero-length flood + axis limits + bbox -----------------
+    // Координаты приводятся к единицам профиля ДО bbox/лимитов (#27);
+    // zero-length-проверка инвариантна к равномерному масштабированию.
     let mut zero_len = 0usize;
     let mut min = [f64::INFINITY; 3];
     let mut max = [f64::NEG_INFINITY; 3];
@@ -115,6 +144,9 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
             points.push((c.x.value(), c.y.value(), c.z.value()));
         }
         for (x, y, z) in points {
+            // #27: масштаб к единицам профиля; unknown-start (Q11) даёт NaN —
+            // NaN × scale = NaN, отсекается следующей проверкой как раньше.
+            let (x, y, z) = (x * scale, y * scale, z * scale);
             // unknown-start (Q11) даёт NaN — символическое значение, вне
             // bbox/лимитов не участвует.
             if x.is_nan() || y.is_nan() || z.is_nan() {
@@ -130,7 +162,7 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
             if let Some(limits) = &profile.axis_limits {
                 if !limits.contains(x, y, z) {
                     report.errors.push(format!(
-                        "[verify] axis_limits: ход вне лимитов профиля (op {i}): x={x} y={y} z={z}"
+                        "[verify] axis_limits: ход вне лимитов профиля (op {i}): x={x} y={y} z={z}{units_note}"
                     ));
                 }
             }
@@ -175,7 +207,10 @@ pub fn mock_sim(profile: &MachineProfile, emitted: &str, file: &str) -> SimRepor
         Ok(p) => p,
         Err(diags) => {
             return SimReport {
-                errors: diags.iter().map(crate::translate::format_diagnostic).collect(),
+                errors: diags
+                    .iter()
+                    .map(crate::translate::format_diagnostic)
+                    .collect(),
                 warnings: adapter.take_notices(),
                 ops_count: 0,
                 bbox: None,
@@ -213,11 +248,7 @@ pub fn real_sim_available() -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|dir| {
-        names
-            .iter()
-            .any(|n| dir.join(n).is_file())
-    })
+    std::env::split_paths(&path).any(|dir| names.iter().any(|n| dir.join(n).is_file()))
 }
 
 fn point(start: &StartPoint) -> (f64, f64, f64) {
