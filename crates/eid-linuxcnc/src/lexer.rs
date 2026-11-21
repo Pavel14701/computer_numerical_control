@@ -10,8 +10,9 @@
 //!    `if/while/do/...` и O-слова → жёсткий отказ E_UNSUPPORTED_SYNTAX
 //!    (SPEC §1.1);
 //!  * слово = буква + число (пробелы между словами необязательны, регистр
-//!    букв не важен); слово длиннее `max_word_chars` (32) → E_LIMIT_EXCEEDED
-//!    (COVERAGE §1.2);
+//!    букв не важен; пробел/таб между буквой и числом слова допустим —
+//!    зонд rs274 #18: `X 10.5` принимается контроллером); слово длиннее
+//!    `max_word_chars` (32) → E_LIMIT_EXCEEDED (COVERAGE §1.2);
 //!  * неизвестная/чужая строка (напр. `$`-конфиг GRBL) → line-level
 //!    RAW{E_UNSUPPORTED_SYNTAX} (правило двух классов, CORPUS #47;
 //!    зеркально eid-grbl); D9 v0.15: payload RAW включает терминатор строки.
@@ -132,7 +133,19 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
 }
 
 fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagnostic>> {
+    // #17: `(` внутри комментария (вложенные скобки) — комментарий закрыт
+    // первой `)`, остаток строки — мусор; реальный rs274 отказывает с
+    // «Nested comment found». Наша строгость честна (поведение не меняется,
+    // аудит #17) — текст диагностики дополняется причиной.
+    let nested_paren = std::cell::Cell::new(false);
     let fail = |code: ErrorCode, msg: String, col: usize| -> Vec<Diagnostic> {
+        let msg = if nested_paren.get() {
+            format!(
+                "{msg} — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)"
+            )
+        } else {
+            msg
+        };
         vec![Diagnostic {
             code,
             stage: Stage::Parse,
@@ -158,6 +171,8 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
         if in_paren {
             if ch == ')' {
                 in_paren = false;
+            } else if ch == '(' {
+                nested_paren.set(true);
             }
             continue;
         }
@@ -243,9 +258,17 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
                 // зеркально `$`-строкам), разбор продолжается.
                 return Ok(LineTok::Unknown);
             }
+            // #18 (зонд rs274): горизонтальные пробелы/табы между буквой и
+            // числом слова ДОПУСТИМЫ — `G0 X 10.5 Y20` / `G1 X5. Y 8. F100`
+            // rs274 принимает (ошибки лексики нет). Пропуск только здесь, в
+            // слово-сканере (комментарии изъяты выше, до разбора слов).
+            let mut num_pos = j;
+            while num_pos < bytes.len() && (bytes[num_pos] == ' ' || bytes[num_pos] == '\t') {
+                num_pos += 1;
+            }
             // Число: [sign] digits [. digits]
-            let num_start = j;
-            let mut m = j;
+            let num_start = num_pos;
+            let mut m = num_pos;
             if m < bytes.len() && (bytes[m] == '+' || bytes[m] == '-') {
                 m += 1;
             }
@@ -356,19 +379,74 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
 /// SPEC §10.6 v0.12 — квантование входа: слова диалектного входа → 4dp
 /// при построении значения (single-final-rounding применяется и ко входам);
 /// zero-length проверки выполняются уже по квантованным значениям.
-/// Формула зеркальна eid-grbl (R3-симметрия): (v·10⁴).round()/10⁴.
+/// #14 (v0.17): округление — целочисленно-десятичное ИЗ ТЕКСТА, half away
+/// from zero. Прежняя формула (v·10⁴).round()/10⁴ округляла ДВАЖДЫ
+/// (десятичная строка → f64 → ×10⁴ → round) — на .5-границах направление
+/// зависело от шума f64-парса («1.23455» давало 1.2345 вместо 1.2346).
 pub fn word_num(s: &str) -> Option<f64> {
-    let norm = if let Some(rest) = s.strip_prefix('+') {
-        if rest.starts_with('.') { format!("0{rest}") } else { rest.to_string() }
-    } else if s.starts_with("-.") {
-        format!("-0{}", &s[1..])
-    } else if s.starts_with('.') {
-        format!("0{s}")
+    let (neg, body0) = if let Some(rest) = s.strip_prefix('+') {
+        (false, rest)
+    } else if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
     } else {
-        s.to_string()
+        (false, s)
     };
-    let v: f64 = norm.parse().ok()?;
-    Some((v * 10_000.0).round() / 10_000.0)
+    let body = if body0.starts_with('.') {
+        format!("0{body0}")
+    } else {
+        body0.to_string()
+    };
+    let (int_part, frac_part) = match body.split_once('.') {
+        Some((a, b)) => (a, b),
+        None => (body.as_str(), ""),
+    };
+    if int_part.is_empty() || !int_part.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if !frac_part.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let fb = frac_part.as_bytes();
+    // 5-й дробный знак решает: ≥5 → вверх (half away from zero: ровно .5 —
+    // тоже вверх), <5 → усечение до 4 знаков.
+    let round_up = fb.len() > 4 && fb[4] >= b'5';
+    let mut frac_out = [0u8; 4];
+    for i in 0..4.min(fb.len()) {
+        frac_out[i] = fb[i] - b'0';
+    }
+    let mut int_out = int_part.to_string();
+    if round_up {
+        // +1 ulp (0.0001) к модулю: перенос по 4-значной дроби, затем в
+        // целую часть (9.99995 → 10.0000).
+        let mut carry = 1u8;
+        for i in (0..4).rev() {
+            let d = frac_out[i] + carry;
+            frac_out[i] = d % 10;
+            carry = d / 10;
+        }
+        if carry == 1 {
+            let mut arr: Vec<u8> = int_out.into_bytes();
+            let mut i = arr.len();
+            loop {
+                if i == 0 {
+                    arr.insert(0, b'1');
+                    break;
+                }
+                i -= 1;
+                if arr[i] == b'9' {
+                    arr[i] = b'0';
+                } else {
+                    arr[i] += 1;
+                    break;
+                }
+            }
+            int_out = String::from_utf8(arr).expect("ascii digits");
+        }
+    }
+    let frac_str: String = frac_out.iter().map(|&d| (b'0' + d) as char).collect();
+    let sign = if neg { "-" } else { "" };
+    let text = format!("{sign}{int_out}.{frac_str}");
+    text.parse().ok()
 }
 
 /// G/M-номер → (major, minor): "91.1" → (91, 1), "0" → (0, 0).

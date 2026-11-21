@@ -14,8 +14,6 @@
 //! [`LinuxCncAdapter::take_diagnostics`] (симметрично EidTextAdapter::
 //! take_notices — trait v0.1 не имеет канала diagnostics при Ok).
 
-#![allow(dead_code)]
-
 pub mod canonicalize;
 pub mod emit;
 pub mod lexer;

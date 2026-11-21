@@ -423,8 +423,8 @@ name = "arc_degenerate_zero_sweep"
 tier = "A"
 kind = "positive"
 golden = "tier_a/v0/13_arc_degenerate_zero_sweep/golden.eid"
-note = "дуга с endpoint'ом <4dp (X0.00004 из (0,0), I5 J0): sweep≈0 → drop+notice, не ошибка (SPEC §6, §3 v0.6); golden = AST БЕЗ опа; R1-AST only (CORPUS §4)"
-notice = true
+note = "дуга с endpoint'ом <4dp (X0.00004 из (0,0), I5 J0): center ≠ start → ПОЛНЫЙ КРУГ 360° (SPEC §6 v0.17, аудит #15 — зонд rs274 ARC_FEED rotation=-1; CORPUS v0.6.7: диспозиция drop → 360°-дуга); дуга сохранена, notice снят"
+notice = false
 regression_files = [{ path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.grbl.ngc", dialect = "grbl-1.1" }, { path = "tier_a/v0/13_arc_degenerate_zero_sweep/arc_degenerate_zero_sweep.linuxcnc.ngc", dialect = "linuxcnc" }]
 regen = "v1"
 [[vectors.files]]

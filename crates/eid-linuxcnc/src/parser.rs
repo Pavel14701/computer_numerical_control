@@ -432,7 +432,15 @@ fn parse_block(
                         format!("T должен быть целым неотрицательным, получено `T{}`", w.number),
                     ));
                 }
-                t_word = Some(maj as u32);
+                // #29: u32::try_from — T4294967296 ранее молча давал T0
+                // (as-cast с отбрасыванием старших битов).
+                let maj = u32::try_from(maj).map_err(|_| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("value out of range: T{maj} — номер инструмента > u32::MAX"),
+                    )
+                })?;
+                t_word = Some(maj);
                 has_t = true;
             }
             'P' => {
@@ -449,7 +457,14 @@ fn parse_block(
                         format!("L должен быть целым неотрицательным, получено `L{}`", w.number),
                     ));
                 }
-                l_word = Some(maj as u32);
+                // #29: u32::try_from — L4294967296 ранее молча давал L0.
+                let maj = u32::try_from(maj).map_err(|_| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("value out of range: L{maj} — счётчик повторов > u32::MAX"),
+                    )
+                })?;
+                l_word = Some(maj);
             }
             'Q' => {
                 q_word = Some(word_num(&w.number)
@@ -596,15 +611,15 @@ fn parse_block(
             ErrorCode::UnsupportedSemantics,
         ));
     }
-    if let Some((reason, code)) = raw_reason {
-        if let Some(t) = t_word {
-            st.selected_tool = Some(t); // предвыбор сохраняется для последующего M6
-        }
-        st.push_raw(line_no, line, ld.term, reason, code);
-        return Ok(());
-    }
-
-    // --- 3. Состояние кадра (SPEC §4, resolved-state) -----------------------
+    // --- 3. Состояние кадра (SPEC §4, resolved-state) — ДО raw-ветки --------
+    // SPEC §8.5 правило 6 (v0.17, аудиторский #33): строка, уходящая в Raw
+    // целиком, ОБЯЗАНА абсорбировать своё frame-level состояние до push_raw
+    // (модальные группы G: plane/distance/arcdist/feedmode/units/wcs/path/
+    // retract/G80, F/S, M3/M4/M5, M7/M8/M9, выбранный инструмент, G92/G10) —
+    // иначе следующий кадр парсится в потерянной модальности (пробой:
+    // `G91 G28 Z0` терял G91 → следующий `G0 X10 Y10` молча абсолютный).
+    // В raw-ветку попадает только построение motion/ops.
+    let mut pending: Vec<Op> = Vec::new();
     if let Some(f) = f_word.clone() {
         st.feed = Some(f);
     }
@@ -620,7 +635,21 @@ fn parse_block(
             3 | 4 => {
                 let n = match &s_word {
                     Some(n) => n.clone(),
-                    None => st.last_s.clone().unwrap_or_else(|| num_snap(0.0)),
+                    None => match st.last_s.clone() {
+                        Some(n) => n,
+                        None => {
+                            // Аудит #20: M3/M4 без S-слова (и без
+                            // наследуемого) — не отказ (спиндель стартует
+                            // с S0.0000), но оператор должен знать.
+                            st.push_diag(
+                                ErrorCode::UnsupportedSemantics,
+                                "W_SPINDLE_S_MISSING: S не задан в тексте; эмитится S0.0000 — на станке задать обороты вручную",
+                                line_no,
+                                line,
+                            );
+                            num_snap(0.0)
+                        }
+                    },
                 };
                 st.spindle = if maj == 3 { Spindle::Cw(n) } else { Spindle::Ccw(n) };
             }
@@ -722,8 +751,120 @@ fn parse_block(
         }
     }
 
+    // --- 3.1 G92 / G10 L2/L20 (SPEC §3/§5.3) — тоже абсорбция состояния -----
+    for &(maj, min) in &gs {
+        if (maj, min) == (92, 0) {
+            if st.preset.is_some() {
+                return Err(fl!(
+                    ErrorCode::UnsupportedSemantics,
+                    "второй G92 — множественные пресетки (Q5, SPEC v0.7; N17)",
+                ));
+            }
+            if st.saw_motion {
+                return Err(fl!(
+                    ErrorCode::UnsupportedSemantics,
+                    "G92 после motion-опа — пресетка только до первого движения (SPEC §3, Q4/Q5; N2)",
+                ));
+            }
+            let values = axes_from_words(&axes, &[0.0; 3]);
+            st.preset = Some(eid_core::ast::FramePreset { values: p3_snap(values), wcs: st.wcs });
+        }
+        if (maj, min) == (10, 0) {
+            // L∉{2,20} — line-level REQUIRES raw (COVERAGE §2.3, скан выше):
+            // состояние не абсорбируется (запись таблицы инструментов — не
+            // frame-state); G10 без L — Err на не-raw пути (см. ниже).
+            let l = match l_word {
+                Some(l @ (2 | 20)) => l,
+                _ => continue,
+            };
+            // #30: домен P валидируется ДО приведения (as-cast): P1.9 молча
+            // давал P1 (тихое искажение номера системы). Значение уже
+            // квантовано к 4dp (§10.6) — fract по квантованному.
+            let p = match p_word.as_ref() {
+                None => None,
+                Some(n) => {
+                    if n.value.fract() != 0.0 || !(1.0..=9.0).contains(&n.value) {
+                        return Err(fl!(
+                            ErrorCode::InvalidInput,
+                            format!("G10 L{l} P{} вне домена 1..9 — требуется целое 1..9 (D7)", n.text),
+                        ));
+                    }
+                    Some(n.value as u32)
+                }
+            };
+            match l {
+                2 => {
+                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L2 без P-слова (1..9)"))?;
+                    // L2 honors G90/G91; старый origin отсутствует → 0
+                    // (интерпретация, отчёт итерации 2).
+                    let old = st.origin[p as usize].unwrap_or([0.0; 3]);
+                    let origin = if st.distance_abs {
+                        axes_from_words(&axes, &old)
+                    } else {
+                        add_axes(&old, &axes)
+                    };
+                    st.origin[p as usize] = Some(origin);
+                    let state = st.snapshot(Frame::Wcs);
+                    let src = st.src(line_no, line);
+                    pending.push(Op::WcsDefine { p: p as u8, origin: p3_snap(origin), state, src });
+                }
+                20 => {
+                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L20 без P-слова (1..9)"))?;
+                    if st.saw_motion {
+                        return Err(fl!(
+                            ErrorCode::UnsupportedSemantics,
+                            "G10 L20 после motion-опа — позиционно-зависим, только пресетка (SPEC §5.3; N15)",
+                        ));
+                    }
+                    let delta = axes_from_words(&axes, &[0.0; 3]);
+                    st.l20[p as usize] = Some(delta);
+                    let state = st.snapshot(Frame::Wcs);
+                    let src = st.src(line_no, line);
+                    pending.push(Op::WcsSetHere { p: p as u8, delta: p3_snap(delta), state, src });
+                }
+                _ => unreachable!("G10 L not in {{2,20}} ушёл в line-level raw"),
+            }
+        }
+    }
+
+    // --- 3.2 Line-level raw-ветка (весь кадр → один RAW-узел, payload=строка)
+    if let Some((reason, code)) = raw_reason {
+        if let Some(t) = t_word {
+            st.selected_tool = Some(t); // предвыбор сохраняется для последующего M6
+        }
+        // W_MODAL_ON_RAW (SPEC §8.5 правило 6, #33): motion-G на RAW-строке
+        // не обновляет st.motion — модальный motion-режим не продолжается
+        // (реальный контроллер продолжил бы G33/G8x-модальность).
+        let raw_motion_g = gs.iter().any(|&(maj, min)| {
+            (min == 0
+                && matches!(maj, 0 | 1 | 2 | 3 | 33 | 38 | 73 | 74 | 76 | 80 | 81..=89))
+                || (maj, min) == (33, 1)
+        });
+        if raw_motion_g {
+            st.push_diag(
+                ErrorCode::UnsupportedSemantics,
+                "W_MODAL_ON_RAW: модальное состояние абсорбировано на RAW-строке; motion-режим не продолжается",
+                line_no,
+                line,
+            );
+        }
+        // G10 L2/L20 этой строки уже обработаны (WcsDefine/WcsSetHere — выше).
+        st.ops.append(&mut pending);
+        if st.ops.len() > MAX_OPS_PER_PROGRAM {
+            return Err(vec![crate::lexer::limit_diag(
+                "max_ops_per_program",
+                MAX_OPS_PER_PROGRAM as f64,
+                st.ops.len() as f64,
+                &st.file,
+                line_no,
+                1,
+            )]);
+        }
+        st.push_raw(line_no, line, ld.term, reason, code);
+        return Ok(());
+    }
+
     // --- 3.5 Циклы LinuxCNC (SPEC §7): разворачивание в явные ходы ----------
-    let mut pending: Vec<Op> = Vec::new();
     let cycle_kind = gs.iter().find_map(|&(maj, min)| match (maj, min) {
         (81, 0) => Some(CycleKind::Drill),
         (82, 0) => Some(CycleKind::DrillDwell),
@@ -749,8 +890,8 @@ fn parse_block(
         )?;
     }
 
-    // --- 4. Опы кадра (порядок LinuxCNC: T/M6 → dwell → stops → frame →
-    //        motion → end) ------------------------------------------------------
+    // --- 4. Опы кадра (порядок LinuxCNC: T/M6 → dwell → stops → motion →
+    //        end; G92/G10 — абсорбция состояния, раздел 3.1 выше) --------------
 
     // T..M6 → ToolChange (SPEC §5.2).
     if has_m6 {
@@ -796,72 +937,10 @@ fn parse_block(
         }
     }
 
-    // G92 / G10 L2 / G10 L20 (SPEC §3/§5.3).
-    for &(maj, min) in &gs {
-        if (maj, min) == (92, 0) {
-            if st.preset.is_some() {
-                return Err(fl!(
-                    ErrorCode::UnsupportedSemantics,
-                    "второй G92 — множественные пресетки (Q5, SPEC v0.7; N17)",
-                ));
-            }
-            if st.saw_motion {
-                return Err(fl!(
-                    ErrorCode::UnsupportedSemantics,
-                    "G92 после motion-опа — пресетка только до первого движения (SPEC §3, Q4/Q5; N2)",
-                ));
-            }
-            let values = axes_from_words(&axes, &[0.0; 3]);
-            st.preset = Some(eid_core::ast::FramePreset { values: p3_snap(values), wcs: st.wcs });
-        }
-        if (maj, min) == (10, 0) {
-            let l = l_word.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 без L-слова"))?;
-            let p = p_word.as_ref().map(|n| n.value as u32);
-            match l {
-                2 => {
-                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L2 без P-слова (1..9)"))?;
-                    if !(1..=9).contains(&p) {
-                        return Err(fl!(
-                            ErrorCode::InvalidInput,
-                            format!("G10 L2 P{p} вне домена 1..9 (D7)"),
-                        ));
-                    }
-                    // L2 honors G90/G91; старый origin отсутствует → 0
-                    // (интерпретация, отчёт итерации 2).
-                    let old = st.origin[p as usize].unwrap_or([0.0; 3]);
-                    let origin = if st.distance_abs {
-                        axes_from_words(&axes, &old)
-                    } else {
-                        add_axes(&old, &axes)
-                    };
-                    st.origin[p as usize] = Some(origin);
-                    let state = st.snapshot(Frame::Wcs);
-                    let src = st.src(line_no, line);
-                    pending.push(Op::WcsDefine { p: p as u8, origin: p3_snap(origin), state, src });
-                }
-                20 => {
-                    let p = p.ok_or_else(|| fl!(ErrorCode::InvalidInput, "G10 L20 без P-слова (1..9)"))?;
-                    if !(1..=9).contains(&p) {
-                        return Err(fl!(
-                            ErrorCode::InvalidInput,
-                            format!("G10 L20 P{p} вне домена 1..9 (D7)"),
-                        ));
-                    }
-                    if st.saw_motion {
-                        return Err(fl!(
-                            ErrorCode::UnsupportedSemantics,
-                            "G10 L20 после motion-опа — позиционно-зависим, только пресетка (SPEC §5.3; N15)",
-                        ));
-                    }
-                    let delta = axes_from_words(&axes, &[0.0; 3]);
-                    st.l20[p as usize] = Some(delta);
-                    let state = st.snapshot(Frame::Wcs);
-                    let src = st.src(line_no, line);
-                    pending.push(Op::WcsSetHere { p: p as u8, delta: p3_snap(delta), state, src });
-                }
-                _ => unreachable!("G10 L not in {{2,20}} ушёл в line-level raw"),
-            }
-        }
+    // G10 без L-слова на не-raw пути: абсорбция выше пропускает (guard
+    // L∈{2,20}); здесь — структурная ошибка входа (COVERAGE §2.3).
+    if gs.iter().any(|&(maj, min)| (maj, min) == (10, 0)) && l_word.is_none() {
+        return Err(fl!(ErrorCode::InvalidInput, "G10 без L-слова"));
     }
 
     // Motion.
@@ -1340,7 +1419,7 @@ fn build_motion(
                         src: st.src(line_no, line),
                         sub: None,
                     };
-                    let msg = "zero-length arc dropped (end quantizes to start, sweep != 360°, pitch == 0; SPEC §3/§6; CORPUS #13)".to_string();
+                    let msg = "zero-length arc dropped (end == start, center == start — degenerate radius 0, pitch == 0; SPEC §3/§6 v0.17; CORPUS #13)".to_string();
                     st.last_motion = Some(LastMotion { end, frame, wcs: st.wcs });
                     st.saw_motion = true;
                     return Ok(MotionBuilt::Dropped(op, NoticeKind::ZeroLengthArc, msg));
@@ -1683,13 +1762,14 @@ fn expand_cycle(
 // ===========================================================================
 
 fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
-    let mut errors: Vec<Diagnostic> = Vec::new();
-
     // SPEC §3 v0.16: program_end ровно один раз, последний; ОТСУТСТВИЕ
     // M2/M30 = неявный конец → авто-PEND + notice (не отказ; реальные
-    // посты часто не пишут program-end — 18+/32 Tier B).
+    // посты часто не пишут program-end — 18+/32 Tier B). Локально — только
+    // авто-PEND; инварианты PEND (дубликат/не-последний), zero-length
+    // drop+notice и feed-требование ДЕЛЕГИРОВАНЫ единственному экземпляру
+    // правил — eid_core::verify::validate_with_notices (аудит #5).
     let end_count = st.ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })).count();
-    let mut notices: Vec<Notice> = st.notices;
+    let mut notices: Vec<Notice> = st.notices; // drop-notice'ы хода разбора (degenerate-дуги)
     if end_count == 0 {
         let auto = Op::ProgramEnd {
             src: SrcSpan {
@@ -1708,131 +1788,46 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         });
         st.ops.push(auto);
     }
-    if end_count > 1 {
-        errors.push(Diagnostic {
-            stage: Stage::Verify,
-            code: ErrorCode::InvalidInput,
-            message: format!("дубликат program_end: {end_count} × M2/M30 (SPEC §3; N13)"),
-            src: None,
-            options: Vec::new(),
-            limit: None,
-        });
-    }
-    match st.ops.last() {
-        Some(last) if !matches!(last, Op::ProgramEnd { .. }) => {
-            let src = op_src(last);
-            errors.push(Diagnostic {
-                stage: Stage::Verify,
-                code: ErrorCode::InvalidInput,
-                message: "program_end не последний (опы после M2/M30 запрещены, SPEC §3; N12)".into(),
-                src: Some(src),
-                options: Vec::new(),
-                limit: None,
-            });
-        }
-        _ => {}
-    }
 
-    // Drop-with-notice (SPEC §3/§5.2/§10.6): ход-разбора (zero-sweep дуги)
-    // + пост-проход (zero-length rapid/linear, dwell 0).
-    let mut kept: Vec<Op> = Vec::new();
-    for (i, o) in st.ops.iter().enumerate() {
-        let zero: Option<(NoticeKind, String)> = match o {
-            Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => match start {
-                StartPoint::Known(s) => {
-                    let sv = to_f64(s);
-                    let ev = to_f64(end);
-                    if sv == ev {
-                        Some((
-                            NoticeKind::ZeroLengthMotion,
-                            "zero-length motion dropped (start == end, SPEC §3)".into(),
-                        ))
-                    } else {
-                        None
-                    }
-                }
-                StartPoint::Unknown => None,
+    let path_mode = match st.path {
+        None => PathMode::ExactPath,
+        Some(PathKind::ExactPath) => PathMode::ExactPath,
+        Some(PathKind::ExactStop) => PathMode::ExactStop,
+        Some(PathKind::Blend) => PathMode::Blend { t: st.path_t },
+    };
+    let draft = Program {
+        eid_version: EID_VERSION.to_string(),
+        units: st.units.unwrap_or(Units::Mm),
+        path_mode: path_mode.clone(),
+        frame_preset: st.preset.clone(),
+        ops: std::mem::take(&mut st.ops),
+    };
+    let report = eid_core::verify::validate_with_notices(&draft);
+    if !report.diagnostics.is_empty() {
+        return Err(report.diagnostics);
+    }
+    // Конвертация Notice-типов core → локальные (ZeroLengthMotion/ZeroDwell;
+    // ZeroLengthArc до сюда не доходит — degenerate-дуги отбрасываются на
+    // ходе разбора с notice, но конвертация тотальная для полноты).
+    for n in report.notices {
+        notices.push(Notice {
+            kind: match n.kind {
+                eid_core::verify::NoticeKind::ZeroLengthMotion => NoticeKind::ZeroLengthMotion,
+                eid_core::verify::NoticeKind::ZeroLengthArc => NoticeKind::ZeroLengthArc,
+                eid_core::verify::NoticeKind::ZeroDwell => NoticeKind::ZeroDwell,
             },
-            Op::Dwell { seconds, .. } => {
-                if seconds.value == 0.0 {
-                    Some((
-                        NoticeKind::ZeroDwell,
-                        "zero dwell dropped (seconds == 0, SPEC §5.2)".into(),
-                    ))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        match zero {
-            Some((kind, message)) => {
-                notices.push(Notice { kind, message, op_index: i, op: o.clone() })
-            }
-            None => kept.push(o.clone()),
-        }
-    }
-
-    // linear/arc в итоговом AST требуют модального feed (SPEC §3);
-    // ARC с start=unknown не доживает до сюда (Err на построении) — защита.
-    for o in &kept {
-        match o {
-            Op::Arc { start: StartPoint::Unknown, src, .. } => {
-                errors.push(Diagnostic {
-                    stage: Stage::Verify,
-                    code: ErrorCode::RuntimeState,
-                    message: "arc с start=unknown (защита, SPEC §2 Q11)".into(),
-                    src: Some(src.clone()),
-                    options: Vec::new(),
-                    limit: None,
-                });
-            }
-            Op::Linear { state, src, .. } | Op::Arc { state, src, .. } => {
-                if state.feed.is_none() {
-                    errors.push(Diagnostic {
-                        stage: Stage::Verify,
-                        code: ErrorCode::InvalidInput,
-                        message: "linear/arc без F до первого содержательного хода — E_INVALID_INPUT (SPEC §3)".into(),
-                        src: Some(src.clone()),
-                        options: Vec::new(),
-                        limit: None,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if !errors.is_empty() {
-        return Err(errors);
+            message: n.message,
+            op_index: n.op_index,
+            op: n.op,
+        });
     }
 
     let program = Program {
         eid_version: EID_VERSION.to_string(),
         units: st.units.unwrap_or(Units::Mm),
-        path_mode: match st.path {
-            None => PathMode::ExactPath,
-            Some(PathKind::ExactPath) => PathMode::ExactPath,
-            Some(PathKind::ExactStop) => PathMode::ExactStop,
-            Some(PathKind::Blend) => PathMode::Blend { t: st.path_t },
-        },
+        path_mode,
         frame_preset: st.preset,
-        ops: kept,
+        ops: report.kept_ops,
     };
     Ok(ParseOut { program, diagnostics: st.diags, notices })
-}
-
-fn op_src(op: &Op) -> SrcSpan {
-    match op {
-        Op::Rapid { src, .. }
-        | Op::Linear { src, .. }
-        | Op::Arc { src, .. }
-        | Op::Dwell { src, .. }
-        | Op::ToolChange { src, .. }
-        | Op::ProgramStop { src, .. }
-        | Op::ProgramEnd { src }
-        | Op::WcsDefine { src, .. }
-        | Op::WcsSetHere { src, .. }
-        | Op::Raw { src, .. } => src.clone(),
-    }
 }

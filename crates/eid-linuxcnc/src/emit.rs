@@ -484,16 +484,10 @@ impl<'a> Writer<'a> {
                     );
                 }
                 let f = self.feed_word(state)?;
-                let g = if state.frame == Frame::Machine {
-                    return Err(vec![diag(
-                        ErrorCode::UnsupportedSemantics,
-                        "G53 с дугой не эмитится (machine-frame ходы прямые; каноническая форма такого не содержит)",
-                    )]);
-                } else if *dir == Dir::Cw {
-                    "G2"
-                } else {
-                    "G3"
-                };
+                // G53+дуга отсекается раньше — validate_linuxcnc
+                // (условие machine_frame_arc таблицы легальности); ветка
+                // здесь недостижима (аудит #6) — удалена.
+                let g = if *dir == Dir::Cw { "G2" } else { "G3" };
                 // Слова смещений в порядке осей X→I, Y→J, Z→K (LinuxCNC-
                 // конвенция, независимо от (u,v) пары плоскости); эмитятся
                 // ровно две in-plane оси (normal-ось не эмитится вовсе).

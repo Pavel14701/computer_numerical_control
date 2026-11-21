@@ -155,10 +155,12 @@ fn tier_a_canonical_comparison_all_v1() {
                     || t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
             });
         let key = dir.replace('/', "_");
-        // #13 arc_degenerate_zero_sweep: нулевая дуга → drop по SPEC §3 →
-        // поток rs274 короче на ARC_FEED — известное различие, не баг.
-        if dir.contains("degenerate") || dir.contains("zero_length") {
-            eprintln!("TIER-A SKIP (zero-sweep drop, SPEC §3): {dir}");
+        // #43 linear_zero_length_dropped: zero-length ход → drop по SPEC §3 →
+        // поток rs274 короче — известное различие, не баг. #13 (degenerate)
+        // с SPEC v0.17 — 360°-дуга вместо drop (аудит #15, CORPUS v0.6.7) →
+        // сравнивается наравне с остальными парами.
+        if dir.contains("zero_length") {
+            eprintln!("TIER-A SKIP (zero-length drop, SPEC §3): {dir}");
             continue;
         }
         if has_raw {

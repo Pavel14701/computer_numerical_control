@@ -661,10 +661,13 @@ fn unit_full_circle_center_form_no_axis_words() {
 }
 
 #[test]
-fn unit_zero_sweep_quantized_end_dropped() {
-    // SPEC §10.6 v0.12 (CORPUS #13): слово X0.00004 квантуется к 0.0000 при
-    // построении значения → end == start при явных словах осей и pitch == 0
-    // → zero-sweep дуга → drop+notice (не полный круг).
+fn audit15_explicit_end_quantized_to_start_is_full_circle() {
+    // SPEC §6 v0.17 (аудит #15, зонд rs274 2026-11-21): `G2 X10. Y0. I-5. J0`
+    // из (10,0) → rs274 ARC_FEED(..., rotation=-1, ...) = ПОЛНЫЙ оборот CW;
+    // CAM-посты (Fusion/Mastercam) систематически пишут end-слова на полных
+    // кругах. Явный end, квантовавшийся к старту, при center ≠ start →
+    // 360°-дуга (правило «формы команды» v0.13 заменено геометрическим
+    // критерием; CORPUS #13: drop → 360°-дуга, golden regen v0.6.7).
     let src = concat!(
         "G21 G90 G94 G17 G91.1\n",
         "G0 X0.0000 Y0.0000 Z0.0000\n",
@@ -674,13 +677,58 @@ fn unit_zero_sweep_quantized_end_dropped() {
     );
     let a = LinuxCncAdapter::new();
     let p = a.parse(src, "unit13.ngc").expect("parses");
-    assert_eq!(p.ops.len(), 3, "RAPID + LINEAR + PEND (дуга отброшена)");
-    assert!(matches!(&p.ops[1], Op::Linear { .. }));
+    assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
+    match &p.ops[1] {
+        Op::Arc { start: StartPoint::Known(s), end, center, sweep_deg, dir, pitch, .. } => {
+            assert_eq!((s.x.value, s.y.value, s.z.value), (0.0, 0.0, 0.0));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (0.0, 0.0, 0.0));
+            assert_eq!((center.x.value, center.y.value, center.z.value), (5.0, 0.0, 0.0));
+            assert_eq!(sweep_deg.value, 360.0, "полный круг — независимо от явного end");
+            assert_eq!(*dir, eid_core::ast::Dir::Cw);
+            assert_eq!(pitch.value, 0.0);
+        }
+        other => panic!("op 1 must be Arc, got {other:?}"),
+    }
+    assert!(a.take_notices().is_empty(), "дуга сохранена — notice нет");
+}
+
+#[test]
+fn audit15_degenerate_center_start_dropped() {
+    // Единственный drop-класс center-формы (v0.17): center == start (радиус
+    // 0) при end == start и pitch == 0. rs274: «Zero-radius arc» (отказ) —
+    // у нас drop+notice по правилу zero-length (SPEC §3).
+    let src = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "G0 X10.0000 Y0.0000 Z0.0000\n",
+        "G2 X10.0000 Y0.0000 I0.0000 J0.0000 F100.0\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "deg.ngc").expect("parses");
+    assert_eq!(p.ops.len(), 2, "RAPID + PEND (дуга отброшена)");
     let notices = a.take_notices();
     assert!(
         notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
         "zero-length arc notice отсутствует: {notices:?}"
     );
+}
+
+#[test]
+fn audit15_degenerate_center_start_inherited_end_dropped() {
+    // Degenerate без слов осей (`G2 I0 J0`, end наследует старт): rs274
+    // отказывает («Zero-radius arc») — drop+notice (v0.17: критерий
+    // геометрический, end == start && center == start).
+    let src = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "G0 X10.0000 Y0.0000 Z0.0000\n",
+        "G2 I0.0000 J0.0000 F100.0\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "deg2.ngc").expect("parses");
+    assert_eq!(p.ops.len(), 2, "RAPID + PEND (дуга отброшена)");
+    let notices = a.take_notices();
+    assert!(notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc), "{notices:?}");
 }
 
 #[test]
@@ -1606,4 +1654,468 @@ fn spec_cov_lcnc_partial_end_first_move_inherits() {
         }
         other => panic!("op 0: {other:?}"),
     }
+}
+
+// ===========================================================================
+// Аудит #33 (SPEC §8.5 правило 6, v0.17): модальная абсорбция на RAW-строках
+// ===========================================================================
+
+#[test]
+fn audit33_g91_absorbed_on_raw_line_incremental_continues() {
+    // Пробой: `G91 G28 Z0` — G28 ушёл в Raw, G91 терялся → следующий
+    // `G0 X10 Y10` молча парсился АБСОЛЮТНЫМ. После фикса G91 абсорбирован:
+    // end = стартовая точка + (10,10) инкрементально.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X5.0000 Y5.0000 Z2.0000\n",
+        "G91 G28 Z0\n",
+        "G0 X10.0000 Y10.0000\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses Ok (G28 — line-level raw)");
+    assert!(
+        p.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+        "строка G28 — RAW-оп"
+    );
+    let mut rapids = p.ops.iter().filter_map(|o| match o {
+        Op::Rapid { start, end, .. } => Some((*start == StartPoint::Unknown, to_f64(end))),
+        _ => None,
+    });
+    let (unknown0, end0) = rapids.next().expect("rapid #0");
+    assert!(unknown0 && end0 == [5.0, 5.0, 2.0], "первый rapid: {end0:?}");
+    let (_, end1) = rapids.next().expect("rapid после RAW-строки");
+    assert_eq!(
+        end1,
+        [15.0, 15.0, 2.0],
+        "G91 абсорбирован: end = (5,5,2) + (10,10) инкрементально (было (10,10,0) — тихое искажение)"
+    );
+    assert!(rapids.next().is_none());
+}
+
+#[test]
+fn audit33_units_absorbed_on_raw_line_g20_g43() {
+    // `G20 G43 H2 X5.` — G43 → RAW, но G20 абсорбирован: units = inch,
+    // следующая строка читается в inch (до фикса units терялись → mm).
+    let adapter = LinuxCncAdapter::new();
+    let src = concat!(
+        "G20 G43 H2 X5.\n",
+        "G1 X1.0 F10.0\n",
+        "M2\n",
+    );
+    let p = adapter.parse(src, "a33_units.ngc").expect("parses Ok");
+    assert_eq!(p.units, eid_core::ast::Units::In, "G20 абсорбирован с RAW-строки");
+    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+}
+
+#[test]
+fn audit33_feed_spindle_absorbed_on_raw_line() {
+    // F/S/M3 на RAW-строке (`G43 H2 F240.0 M3 S6000`) абсорбируются:
+    // следующий linear несёт feed=240 и шпиндель Cw(6000) без своих слов.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G43 H2 F240.0 M3 S6000\n",
+        "G1 X10.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses Ok");
+    let lin = p.ops.iter().find_map(|o| match o {
+        Op::Linear { state, .. } => Some(state.clone()),
+        _ => None,
+    }).expect("linear op");
+    assert_eq!(lin.feed.as_ref().map(|f| f.value), Some(240.0), "F240 абсорбирован");
+    assert!(
+        matches!(&lin.spindle, eid_core::ast::Spindle::Cw(n) if n.value == 6000.0),
+        "M3 S6000 абсорбирован: {lin:?}"
+    );
+}
+
+#[test]
+fn audit33_w_modal_on_raw_notice_on_motion_g() {
+    // Motion-G на RAW-строке: st.motion НЕ обновляется + notice W_MODAL_ON_RAW.
+    // `G0 X20.0 G43 H2` — G43 → RAW; модальный motion остаётся G1 (строка ниже),
+    // G0 этой строки НЕ становится модальным.
+    let adapter = LinuxCncAdapter::new();
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G1 X5.0 F100.0\n",
+        "G0 X20.0 G43 H2\n",
+        "G1 X8.0\n",
+        "M2\n",
+    );
+    let p = adapter.parse(src, "a33_notice.ngc").expect("parses Ok");
+    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+    let diags = adapter.take_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.message.contains("W_MODAL_ON_RAW")
+            && d.message.contains("модальное состояние абсорбировано")),
+        "ожидалась W_MODAL_ON_RAW-диагностика, получено: {:?}",
+        diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn audit33_g92_preset_absorbed_on_raw_line() {
+    // G92 на RAW-строке абсорбируется: frame_preset задан, следующий ход
+    // связывается с якоря пресетки (start known).
+    let src = concat!(
+        "G21 G90 G17\n",
+        "G92 X0.0 Y0.0 Z5.0 G28\n",
+        "G0 X1.0 Y1.0 Z6.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses Ok");
+    let pr = p.frame_preset.as_ref().expect("G92 абсорбирован: пресетка задана");
+    assert_eq!(to_f64(&pr.values), [0.0, 0.0, 5.0]);
+    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+    match &p.ops.iter().find(|o| matches!(o, Op::Rapid { .. })).expect("rapid") {
+        Op::Rapid { start: StartPoint::Known(s), end, .. } => {
+            assert_eq!(to_f64(s), [0.0, 0.0, 5.0], "start = якорь пресетки");
+            assert_eq!(to_f64(end), [1.0, 1.0, 6.0]);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn audit33_g10_l2_absorbed_on_raw_line_emits_wcs_define() {
+    // G10 L2 на RAW-строке: состояние origin абсорбировано + WcsDefine-оп
+    // эмитится (ветка raw попадает только на motion/ops-построение), строка
+    // дополнительно сохранена RAW (fidelity байт).
+    let src = concat!(
+        "G21 G90 G17\n",
+        "G10 L2 P2 X1.0 Y2.0 Z3.0 G28\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses Ok");
+    assert!(
+        p.ops.iter().any(|o| matches!(o, Op::WcsDefine { p: 2, .. })),
+        "WcsDefine(p=2) эмитится с RAW-строки"
+    );
+    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+}
+
+// ===========================================================================
+// Аудит #29/#30: try_from для T/L, домен P до приведения
+// ===========================================================================
+
+#[test]
+fn audit29_t_word_out_of_range_is_err_not_silent_t0() {
+    // T4294967296 ранее молча давал T0 (as-cast с отбрасыванием битов) —
+    // теперь E_INVALID_INPUT «value out of range».
+    let err = parse_str("G21 G90\nT4294967296 M6\nM2\n").expect_err("T > u32::MAX");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(err.iter().any(|d| d.message.contains("out of range")), "{err:?}");
+    // Граница домена: T4294967295 — легален (уходит в предвыбор/Raw, но не T0).
+    let a = LinuxCncAdapter::new();
+    let p = a
+        .parse("G21 G90\nT4294967295\nM2\n", "t_max.ngc")
+        .expect("T = u32::MAX легален");
+    assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })), "одиночное T — Raw");
+}
+
+#[test]
+fn audit29_l_word_out_of_range_is_err_not_silent_l0() {
+    // L4294967296 ранее молча давал L0 — теперь E_INVALID_INPUT.
+    let err = parse_str(concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G99 G81 X1.0000 Y1.0000 Z-1.0000 R0.0000 F100.0 L4294967296\n",
+        "M2\n",
+    ))
+    .expect_err("L > u32::MAX");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(err.iter().any(|d| d.message.contains("out of range")), "{err:?}");
+}
+
+#[test]
+fn audit30_g10_p_fractional_is_err_not_silent_p1() {
+    // P1.9 ранее молча давал P1 (as-cast) — номер системы искажён; теперь
+    // E_INVALID_INPUT (домен проверяется ДО приведения).
+    for p_word in ["P1.9", "P2.5", "P0.5"] {
+        let src = format!("G21 G90 G17\nG10 L2 {p_word} X1.0 Y2.0 Z3.0\nM2\n");
+        let err = parse_str(&src)
+            .expect_err(&format!("{p_word} — дробный P обязан дать E_INVALID_INPUT"));
+        assert!(
+            err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+            "{p_word}: {err:?}"
+        );
+    }
+    let err = parse_str("G21 G90 G17\nG10 L20 P1.9 X1.0 Y2.0 Z3.0\nM2\n").expect_err("L20 P1.9");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+}
+
+#[test]
+fn audit30_g10_p_zero_and_ten_out_of_domain() {
+    // P0 и P10 — вне домена 1..9 (D7): E_INVALID_INPUT (раньше P0 давал
+    // p=0 → доменная ошибка и так; теперь единая pre-cast проверка).
+    let err = parse_str("G21 G90 G17\nG10 L2 P0 X1.0 Y2.0 Z3.0\nM2\n").expect_err("P0");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    let err = parse_str("G21 G90 G17\nG10 L2 P10 X1.0 Y2.0 Z3.0\nM2\n").expect_err("P10");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    // Легальная граница: P1 и P9, в т.ч. verbatim-форма P1.0000 (fract == 0).
+    assert!(parse_str("G21 G90 G17\nG10 L2 P1 X1.0 Y2.0 Z3.0\nM2\n").is_ok());
+    assert!(parse_str("G21 G90 G17\nG10 L2 P9 X1.0 Y2.0 Z3.0\nM2\n").is_ok());
+    assert!(parse_str("G21 G90 G17\nG10 L2 P1.0000 X1.0 Y2.0 Z3.0\nM2\n").is_ok());
+}
+
+// ===========================================================================
+// Аудит #18/#17: пробел внутри слова; вложенные комментарии (текст диагностики)
+// ===========================================================================
+
+#[test]
+fn audit18_space_between_letter_and_number_accepted() {
+    // Зонд rs274: `G0 X 10.5 Y20` + `G1 X5. Y 8. F100` — контроллер
+    // ПРИНИМАЕТ (ошибки лексики нет). Ранее наш лексер давал
+    // «word X без числа» — расхождение с контроллером.
+    let p = parse_str(concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X 10.5 Y20\n",
+        "G1 X5. Y 8. F100\n",
+        "M2\n",
+    ))
+    .expect("пробел между буквой и числом — легален (rs274-симметрия)");
+    // rapid end = (10.5, 20, 0); linear end = (5, 8, 0)
+    let ends: Vec<[f64; 3]> = p.ops.iter().filter_map(|o| match o {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
+        _ => None,
+    }).collect();
+    assert_eq!(ends, vec![[10.5, 20.0, 0.0], [5.0, 8.0, 0.0]], "{ends:?}");
+    // множественные пробелы и таб — тоже
+    let p = parse_str("G21 G90\nG0 X  10.0\nG1 Y\t3.0 F10.0\nM2\n").expect("tabs/multiple spaces ok");
+    let ends: Vec<[f64; 3]> = p.ops.iter().filter_map(|o| match o {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => Some(to_f64(end)),
+        _ => None,
+    }).collect();
+    assert_eq!(ends, vec![[10.0, 0.0, 0.0], [10.0, 3.0, 0.0]]);
+    // буква без числа ПОСЛЕ пропуска пробела — по-прежнему отказ
+    let err = parse_str("G21 G90\nG0 X Y20\nM2\n").expect_err("X без числа (даже с пробелом)");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+}
+
+#[test]
+fn audit17_nested_comment_diagnostic_mentions_rs274() {
+    // Зонд rs274: вложенные скобки → «Nested comment found» = отказ.
+    // Наша строгость честна (отказ сохранён), текст диагностики называет
+    // причину (аудит #17 — поведение не меняется).
+    let err = parse_str("G21 G90\nG1 (outer (inner) more) X10.0\nM2\n")
+        .expect_err("вложенный комментарий — лексический отказ");
+    assert!(err.iter().all(|d| d.code == ErrorCode::InvalidInput), "{err:?}");
+    assert!(
+        err.iter().any(|d| d.message.contains("вложенные скобки")
+            && d.message.contains("Nested comment found")),
+        "текст диагностики должен упоминать вложенность и rs274: {err:?}"
+    );
+    // Незакрытая одиночная '(' без вложенности — прежний протокол «остаток
+    // строки комментируется»: строка парсится (hint не добавляется).
+    assert!(
+        parse_str("G21 G90\nG0 X5.0 (незакрытый комментарий\nM2\n").is_ok(),
+        "незакрытая ( — хвост-комментарий, код до неё валиден"
+    );
+}
+
+// ===========================================================================
+// Аудит #14: word_num — один финальный раунд из ТЕКСТА (half away from zero)
+// ===========================================================================
+
+#[test]
+fn audit14_word_num_single_final_rounding_from_text() {
+    use eid_linuxcnc::lexer::word_num;
+    // .5-границы: 5-й знак ≥ 5 → вверх по ТЕКСТУ, без f64-шума парса.
+    assert_eq!(word_num("1.23455"), Some(1.2346), "старая формула давала 1.2345 (двойное округление)");
+    assert_eq!(word_num("0.00005"), Some(0.0001));
+    assert_eq!(word_num("1.99995"), Some(2.0), "перенос в целую часть");
+    assert_eq!(word_num("-1.23455"), Some(-1.2346), "half AWAY from zero");
+    // 5-й знак < 5 → усечение (без округления вверх).
+    assert_eq!(word_num("1.23454"), Some(1.2345));
+    assert_eq!(word_num("0.00004"), Some(0.0), "CORPUS #13 — квантование к старту");
+    // ≤ 4 дробных знаков — значение текста без изменений.
+    assert_eq!(word_num("10."), Some(10.0));
+    assert_eq!(word_num("+5"), Some(5.0));
+    assert_eq!(word_num("-.5"), Some(-0.5));
+    assert_eq!(word_num("10.0000"), Some(10.0));
+    assert_eq!(word_num("0"), Some(0.0));
+    // Мусор — None.
+    assert_eq!(word_num(""), None);
+    assert_eq!(word_num("-"), None);
+    assert_eq!(word_num("1.2.3"), None);
+    assert_eq!(word_num("abc"), None);
+}
+
+#[test]
+fn audit14_word_num_fmt_num_roundtrip_invariant() {
+    // Инвариант (аудит #14): word_num(s) — неподвижная точка fmt_num:
+    // word_num(s) == parse(fmt_num(word_num(s))) на .5-границах.
+    use eid_linuxcnc::lexer::word_num;
+    for s in ["1.23455", "0.00005", "2.00005", "-1.23455", "9.99995", "1.23454", "123.45675", "0.00015"] {
+        let v = word_num(s).expect("parses");
+        let rt: f64 = eid_core::emitter::fmt_num(v).parse().expect("fmt_num parses");
+        assert_eq!(v, rt, "инвариант сломан на {s}: {v} vs fmt_num {}", eid_core::emitter::fmt_num(v));
+    }
+}
+
+// ===========================================================================
+// Аудит #19 (пин G55 G53 G0 X0), #20 (M3 без S), #34 (round-trip G18/G19)
+// ===========================================================================
+
+#[test]
+fn audit19_g55_g53_machine_frame_keeps_wcs_state() {
+    // Пин (аудит #19): `G55 G53 G0 X0` — WCS сменён на G55 и ход
+    // исполняется в machine-frame (SPEC §5.3; wcs_to_p(G55) = p2 — origin
+    // G55 определён in-text, §5.3(b)); следующая строка — в G55:
+    // чтение = machine − origin(G55). Соответствует LinuxCNC.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G10 L2 P2 X1.0000 Y2.0000 Z3.0000\n",
+        "G55\n",
+        "G53 G0 X0.0000 Y0.0000 Z0.0000\n",
+        "G0 X1.0000 Y2.0000 Z3.0000\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    let motions: Vec<(&eid_core::ast::Frame, eid_core::ast::Wcs, bool, [f64; 3])> =
+        p.ops.iter().filter_map(|o| match o {
+            Op::Rapid { start, end, state, .. } => Some((
+                &state.frame,
+                state.wcs,
+                *start == StartPoint::Unknown,
+                to_f64(end),
+            )),
+            _ => None,
+        }).collect();
+    assert_eq!(motions.len(), 2, "{motions:?}");
+    // Ход 1: machine-frame, wcs = G55 (p=5), end (0,0,0).
+    assert_eq!(*motions[0].0, eid_core::ast::Frame::Machine, "G53 → machine-frame");
+    assert_eq!(motions[0].1, eid_core::ast::Wcs::G55, "WCS сменён на G55 ДО machine-хода");
+    assert!(motions[0].2, "первый machine-ход: start unknown (M₀ внешний)");
+    assert_eq!(motions[0].3, [0.0, 0.0, 0.0]);
+    // Ход 2: возврат в WCS G55: start = machine(0,0,0) − origin(G55).
+    assert_eq!(*motions[1].0, eid_core::ast::Frame::Wcs);
+    assert_eq!(motions[1].1, eid_core::ast::Wcs::G55, "следующая строка — в G55");
+    assert!(!motions[1].2, "start известен: (0,0,0) − (1,2,3)");
+    let _ = motions[1].3;
+    // round-trip: эмиссия воспроизводит G55 + G53 G0.
+    let emitted = LinuxCncAdapter::new().emit(&p).expect("emits");
+    assert!(emitted.contains("G55"), "{emitted}");
+    assert!(emitted.contains("G53 G0"), "{emitted}");
+}
+
+#[test]
+fn audit20_m3_without_s_is_warning_not_err() {
+    // Аудит #20: M3/M4 без S — notice-warning (не Err): эмитится S0.0000.
+    let a = LinuxCncAdapter::new();
+    let p = a
+        .parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n", "a20.ngc")
+        .expect("M3 без S — Ok, не отказ");
+    let diags = a.take_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")
+            && d.message.contains("задать обороты вручную")),
+        "ожидалась W_SPINDLE_S_MISSING: {diags:?}"
+    );
+    // AST: шпиндель Cw(0) — S0.0000 при эмиссии.
+    let emitted = a.emit(&p).expect("emits");
+    assert!(emitted.contains("M3 S0.0000"), "{emitted}");
+    // M4 — тот же класс.
+    let a2 = LinuxCncAdapter::new();
+    a2.parse("G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM4\nG1 X10.0000 F100.0\nM2\n", "a20b.ngc")
+        .expect("M4 без S — Ok");
+    assert!(
+        a2.take_diagnostics().iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
+        "M4: {diags:?}"
+    );
+    // Наследование предыдущего S-слова — БЕЗ warning (S модален).
+    let a3 = LinuxCncAdapter::new();
+    a3.parse("G21 G90 G94 G17\nS5000\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n", "a20c.ngc")
+        .expect("M3 с наследованным S — Ok");
+    assert!(
+        !a3.take_diagnostics().iter().any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
+        "наследованный S5000 — warning не нужен"
+    );
+}
+
+#[test]
+fn audit34_roundtrip_g18_arcs_negative_ik() {
+    // Аудит #34: round-trip emit→parse для G18-дуг с отрицательными I/K —
+    // 180°, винтовая (pitch через Y) и полный круг (end==start, center≠start).
+    let src = concat!(
+        "G21 G90 G94 G18 G91.1\n",
+        "M3 S8000\n",
+        "G0 X0.0000 Y0.0000 Z10.0000\n",
+        "G2 X-10.0000 Z4.0000 I-5.0000 K-3.0000 F100.0\n",
+        "G3 X0.0000 Z10.0000 I5.0000 K3.0000\n",
+        "G2 X-10.0000 Z4.0000 Y6.0000 I-5.0000 K-3.0000\n",
+        "G2 X-10.0000 Z4.0000 I-5.0000 K-3.0000\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p1 = a.parse(src, "a34_g18.ngc").expect("parses");
+    // Контроль: полный круг присутствует (sweep=360, F2-правило для явного end).
+    let arcs: Vec<(f64, f64, eid_core::ast::Dir)> = p1.ops.iter().filter_map(|o| match o {
+        Op::Arc { sweep_deg, pitch, dir, .. } => Some((sweep_deg.value, pitch.value, *dir)),
+        _ => None,
+    }).collect();
+    assert_eq!(
+        arcs,
+        vec![(180.0, 0.0, eid_core::ast::Dir::Cw), (180.0, 0.0, eid_core::ast::Dir::Ccw), (180.0, 6.0, eid_core::ast::Dir::Cw), (360.0, 0.0, eid_core::ast::Dir::Cw)],
+        "{arcs:?}"
+    );
+    let emitted = a.emit(&p1).expect("emits");
+    // Эмиссия G18: in-plane пара I+K (не J), смена плоскости отдельной строкой.
+    assert!(emitted.contains("G18"), "{emitted}");
+    assert!(emitted.contains("I-5.0000 K-3.0000"), "{emitted}");
+    assert!(!emitted.contains(" J"), "{emitted}");
+    // Полный круг — без слов осей (CORPUS #08 форма; F модален — на 4-й дуге
+    // feed уже 100, слово не воспроизводится).
+    assert!(emitted.contains("\nG2 I-5.0000 K-3.0000\n"), "{emitted}");
+    let p2 = a.parse(&emitted, "a34_g18_rt.ngc").expect("re-parses");
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "G18 round-trip divergences: {d:?}");
+}
+
+#[test]
+fn audit34_roundtrip_g19_arcs_negative_jk() {
+    // Аудит #34: G19-дуги с отрицательными J/K — 180°, helical (X), полный круг.
+    let src = concat!(
+        "G21 G90 G94 G19 G91.1\n",
+        "M3 S8000\n",
+        "G0 X0.0000 Y0.0000 Z10.0000\n",
+        "G3 Y-10.0000 Z4.0000 J-5.0000 K-3.0000 F100.0\n",
+        "G2 Y0.0000 Z10.0000 J5.0000 K3.0000\n",
+        "G3 Y-10.0000 Z4.0000 X6.0000 J-5.0000 K-3.0000\n",
+        "G3 Y-10.0000 Z4.0000 J-5.0000 K-3.0000\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p1 = a.parse(src, "a34_g19.ngc").expect("parses");
+    let arcs: Vec<(f64, f64)> = p1.ops.iter().filter_map(|o| match o {
+        Op::Arc { sweep_deg, pitch, .. } => Some((sweep_deg.value, pitch.value)),
+        _ => None,
+    }).collect();
+    assert_eq!(arcs, vec![(180.0, 0.0), (180.0, 0.0), (180.0, 6.0), (360.0, 0.0)], "{arcs:?}");
+    let emitted = a.emit(&p1).expect("emits");
+    assert!(emitted.contains("G19"), "{emitted}");
+    assert!(emitted.contains("J-5.0000 K-3.0000"), "{emitted}");
+    assert!(!emitted.contains(" I-"), "{emitted} — I не in-plane для G19");
+    let p2 = a.parse(&emitted, "a34_g19_rt.ngc").expect("re-parses");
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "G19 round-trip divergences: {d:?}");
+}
+
+#[test]
+fn audit19_g53_partial_end_is_runtime_state() {
+    // Дополнение пина #19: буквально `G53 G0 X0` (частичный end) —
+    // machine-ходы не наследуют нуль (SPEC §2 v0.13) → E_RUNTIME_STATE;
+    // wcs-абсорбция G55 при этом не при чём.
+    let err = parse_str(concat!(
+        "G21 G90 G94 G17\n",
+        "G10 L2 P2 X1.0000 Y2.0000 Z3.0000\n",
+        "G55\n",
+        "G53 G0 X0.0000\n",
+        "M2\n",
+    ))
+    .expect_err("machine-ход с частичным end — E_RUNTIME_STATE");
+    assert!(err.iter().all(|d| d.code == ErrorCode::RuntimeState), "{err:?}");
 }

@@ -61,12 +61,12 @@ pub struct ResolvedArc {
     pub radius: f64,
 }
 
-/// Итог разрешения: оп или zero-sweep drop (SPEC §10.6 v0.12 / CORPUS #13).
+/// Итог разрешения: оп или zero-sweep drop (SPEC §10.6 v0.12/v0.17, CORPUS #13).
 pub enum ArcOutcome {
-    /// Явные слова осей в кадре + квантованный end == start (в плоскости) +
-    /// pitch == 0 → нулевая дуга → drop+notice. Различение с full-circle —
-    /// по форме команды (без слов осей end наследуется → полный круг),
-    /// зеркально eid-grbl (R3-симметрия).
+    /// Degenerate: end == start (в плоскости, явные или наследованные слова)
+    /// И center == start (радиус 0) И pitch == 0 → нулевая дуга →
+    /// drop+notice (v0.17, #15: rs274 — «Zero-radius arc»; полный круг —
+    /// это center ≠ start, единственный drop-класс center-формы).
     ZeroSweep,
     Resolved(ResolvedArc),
 }
@@ -117,15 +117,22 @@ fn dist2(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// * `offsets` — значения I/J/K по осям X/Y/Z (None = слово не задано → 0);
 /// * `r_word` — R-слово; при наличии — приоритет над IJK (интерпретация,
 ///   см. отчёт итерации 2);
-/// * `explicit_end` — в кадре были слова осей (форма команды; §10.6/§6 v0.12).
+/// * `explicit_end` — были ли слова осей в кадре. v0.17 (#15): критерий
+///   полноты круга — геометрический (center vs start), форма команды НЕ
+///   участвует; параметр сохранён в сигнатуре для симметрии с eid-grbl (R3).
 ///
-/// sweep-выведение (v0.12): IJK-форма, start == end (в плоскости):
-///  * без слов осей (end наследуется) или при pitch ≠ 0 → sweep = 360°
-///    (полный круг / винтовая, CORPUS #08);
-///  * явный end, квантованный к старту, pitch == 0 → [`ArcOutcome::ZeroSweep`]
-///    → drop+notice у вызывающего (CORPUS #13); различение — по форме
-///    команды, зеркально eid-grbl (R3-симметрия).
-///  * R-форма при start == end → `ArcError::RFullCircle` (N19).
+/// sweep-выведение (v0.17, аудит #15 — зонд rs274): IJK-форма,
+/// start == end (в плоскости):
+///  * center ≠ start → sweep = 360° — НЕЗАВИСИМО от формы команды (явные
+///    end-слова, квантовавшиеся в старт, или наследованные): реальный
+///    контроллер (`G2 X10. Y0. I-5. J0` из (10,0) → `ARC_FEED(...,
+///    rotation = -1, ...)`) и CAM-посты (Fusion/Mastercam) пишут end-слова
+///    на полных кругах; pitch ≠ 0 — винтовой полный оборот;
+///  * center == start (degenerate), pitch == 0 → [`ArcOutcome::ZeroSweep`]
+///    → drop+notice у вызывающего (CORPUS #13 — единственный drop-класс
+///    center-формы; форма команды не важна — rs274 отказывает обе);
+///  * R-форма при start == end → `ArcError::RFullCircle` (N19) — без
+///    изменений (центр неоднозначен).
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_arc(
     start: &[f64; 3],
@@ -136,7 +143,7 @@ pub fn resolve_arc(
     offsets: [Option<f64>; 3],
     r_word: Option<f64>,
     eps_pos: f64,
-    explicit_end: bool,
+    _explicit_end: bool,
 ) -> Result<ArcOutcome, ArcError> {
     let (n_axis, u, v) = plane_def(plane);
     let s2 = [start[u], start[v]];
@@ -174,11 +181,16 @@ pub fn resolve_arc(
     }
 
     if planar_eq(s2, e2) {
-        if explicit_end && pitch.abs() < 1e-9 {
-            return Ok(ArcOutcome::ZeroSweep); // §10.6 v0.12, CORPUS #13
+        // SPEC §3/§6 v0.17 (аудит #15, зонд rs274): полный круг 360° — по
+        // геометрии (center ≠ start), не по форме команды; drop — только
+        // degenerate-центр (радиус 0; rs274: «Zero-radius arc» — отказ на
+        // обеих формах, у нас drop+notice) при pitch == 0.
+        let degenerate_center = planar_eq(s2, [center[u], center[v]]);
+        if pitch.abs() < 1e-9 && degenerate_center {
+            return Ok(ArcOutcome::ZeroSweep); // §10.6 v0.12/v0.17, CORPUS #13
         }
-        // Полный круг center-формой (SPEC §6 v0.12, CORPUS #08): end
-        // наследуется (без слов осей) либо винтовая с pitch ≠ 0.
+        // Полный круг center-формой (SPEC §6 v0.12/v0.17, CORPUS #08/#15):
+        // end наследуется или квантовался к старту; pitch ≠ 0 — винтовая.
         return Ok(ArcOutcome::Resolved(ResolvedArc {
             center,
             sweep_deg: 360.0,
