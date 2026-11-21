@@ -27,6 +27,12 @@ fn dialect_of(fname: &str) -> (&'static str, bool) {
     } else if fname.starts_with("gcb_") || fname.starts_with("olle_") {
         // gcb: CAM-пост с G64+M6; olle: G91.1 + `;`-комментарии
         ("linuxcnc", false)
+    } else if fname.starts_with("gce_") || fname.starts_with("mpe_") || fname.starts_with("cncsim_")
+        || fname.starts_with("ncm_")
+    {
+        // fanuc/haas-цель (конструкционный добор, PROVENANCE б.5): парсим
+        // linuxcnc-адаптером до регистрации eid-fanuc (Ok-случаи → Raw/Err)
+        ("fanuc-подобный", false)
     } else {
         ("linuxcnc", false)
     }

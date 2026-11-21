@@ -334,17 +334,68 @@ T-предвыбор). Отброшено при сборе: FluidNC/grblHAL/gne
 
 ---
 
+## Источник 5 (итерация 6, конструкционно-целевой добор): 23 файла, 5 под-источников (8 MIT + 6 GPL-2.0 + 4 GPL-3.0 + 5 NOASSERTION)
+
+Дата: 2026-11-21. Сборщик: агент сбора; license-ревью и приёмка — оркестратор
+(лицензии независимо перепроверены GitHub API `/repos/<repo>/license`:
+MIT — 0BAB1/gcodeEstimator, cnc4me/macro-programming-examples; GPL-2.0 —
+LinuxCNC; GPL-3.0 — ismael-figueiredo/cnc-simulator; **NOASSERTION** —
+CNC-Master-xyz/NC-Code: /license 404, LICENSE-файла нет; первичный
+grep-выдача «MIT» была ошибкой /search/repositories — сдвиг пар,
+перепроверено точечным запросом). Полный отчёт сбора с per-file таблицами:
+`_construct_collection.md`.
+
+Цель добора — **конструкционное покрытие** (2–3 файла на конструкцию), не
+контент-разнообразие: G33/G33.1/G84/G74, G76 ×4 диалекта, G87/G88,
+G65/M98/M99/Macro B, G41-D-word, комбинированные `G43 H# Z#.`, G69,
+G43.4-RTCP, G12.1/G13.1, G15-lathe, M70/M72/M73/M61, Fanuc-ловушки
+(`;`-EOB, bare-integer DPI, G10L2P1Z-беспробельно, `%`+O, T0101-пары).
+Итог: 7/11 конструкций закрыты корпусом, 3 частично, список сирот
+(конструкции без публичных сэмплов вообще) — §4 `_construct_collection.md`.
+
+### 0BAB1/gcodeEstimator — MIT (4 файла) → inbox
+
+- URL: https://github.com/0BAB1/gcodeEstimator (tests/g_test_files)
+- Диалект: fanuc (TEST_G74/G76/G71/full — lathe-программы с EOB, DPI).
+
+### cnc4me/macro-programming-examples — MIT (4 файла) → inbox
+
+- URL: https://github.com/cnc4me/macro-programming-examples (programs/, examples/)
+- Диалект: fanuc Macro B (G65+args, IF/GOTO, WHILE, Renishaw-стиль probe).
+
+### LinuxCNC/linuxcnc — GPL-2.0 (6 файлов) → local
+
+- URL: https://github.com/LinuxCNC/linuxcnc (nc_files/, docs/)
+- Диалект: linuxcnc. G33.1-файл — verbatim-выдержка документации (5 строк).
+
+### ismael-figueiredo/cnc-simulator — GPL-3.0 (4 файла) → local
+
+- URL: https://github.com/ismael-figueiredo/cnc-simulator (examples/)
+- Диалект: fanuc (ROMI GL300 lathe, Haas VF2 mill) — `;`-EOB, G154 P,
+  комбинированные `G43 Z#. H#`.
+
+### CNC-Master-xyz/NC-Code — NOASSERTION (5 файлов) → local (license unclear — local only)
+
+- URL: https://github.com/CNC-Master-xyz/NC-Code (Fanuc/, Haas/)
+- Диалект: fanuc/haas (2.5D mill, 3D 5X, RTCP 5X, TURN_1, TURN).
+- **Cap-исключения (приняты оркестратором):** `ncm_g434_rtcp_5x_milling.nc`
+  (2.1MB — единственный публичный RTCP-сэмпл в GitHub) и
+  `ncm_g43_g69_3d5x_milling.nc` (2.5MB — G69 5X) — единственные источники
+  конструкций G43.4/G69; local-контур, не публикуются.
+
+---
+
 ## Сводка
 
-- **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **61 файл**
-  (58 MIT + 3 Apache-2.0); local-dev (tier_b/local) = **60 файлов**
-  (GPL-2.0/неясные, не публикуются). Итого manifest: **121**.
-- Диалект-разбивка inbox: grbl-предположение 37 (cncjs 15 + svg2gcode 3 +
-  PyCNC 3 + shapeoko 3 + cncwebsim 2 + ddprint 3 вне-словарные + vince 5 +
-  vis 3); linuxcnc-предположение 21 (hilbert + 2 прочих + gcb 16 + olle 5);
-  marlin-3dp 3 (ddprint, E-слова — robustness-диагностика).
-- published: MIT 58 + Apache-2.0 3 — чистые; local-dev: GPL-2.0/per-file
-  неизвестно.
+- **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **69 файлов**
+  (66 MIT + 3 Apache-2.0); local-dev (tier_b/local) = **75 файлов**
+  (GPL-2.0/GPL-3.0/NOASSERTION — не публикуются). Итого manifest: **144**
+  (из них dialect=fanuc: 17 — Pending до регистрации eid-fanuc в
+  adapter-реестре).
+- Конструкционное покрытие (iter-6 добор): 7/11 закрыто, 3 частично,
+  1 (G5/G6-сплайны вне LinuxCNC-NURBS) — без публичных источников.
+- published: MIT 66 + Apache-2.0 3; local-dev: GPL-2.0 66 + GPL-3.0 4 +
+  NOASSERTION 5.
 - Контент-профили для приёмки: LinuxCNC — вендор-примеры + тесты
   интерпретатора (tests/interp содержит параметрику/OWord — часть файлов
   ожидаемо даст E_UNSUPPORTED_SYNTAX/RUNTIME_STATE — штатный parse-or-
