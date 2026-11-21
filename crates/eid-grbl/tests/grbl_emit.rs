@@ -971,3 +971,123 @@ fn spec_cov_emit_path_mode_warnings() {
         assert!(text.contains("G21 G90 G94"), "{rel}: заголовок на месте");
     }
 }
+
+#[test]
+fn cycle_f_word_reemitted_on_each_f_frame() {
+    // SPEC §7.4a v0.18, эмиссионное следствие (зеркало linuxcnc feed_word,
+    // агент C): rs274 ассертит SET_FEED_RATE на каждом кадре с F-словом —
+    // эмиттер переизлучает F на ПЕРВОМ производном опе (sub=1) каждого
+    // F-кадра, даже при неизменном значении. Тест 1:1 с linuxcnc_emit
+    // cycle_f_word_reemitted_on_each_f_frame: 2 подряд G81 F120 → ОБА
+    // traverse-блока с F. АСТ строится напрямую: словарь GRBL canned cycles
+    // не содержит (см. spec_cov_cycles_raw_classes в grbl_parse.rs) —
+    // cycle-производные опы появляются в grbl-эмиссии только кросс-
+    // диалектно (golden/перевод, §7.7: traverse sub=1, подход sub=2,
+    // feed sub=3, отвод sub=4 — все несут модальный feed кадра).
+    let n = |v: f64| Num::new(format!("{v}"), v);
+    let span0 = || SrcSpan {
+        file: "t.ngc".into(),
+        line_start: 1,
+        col_start: 1,
+        line_end: 1,
+        col_end: 1,
+    };
+    let st120 = State {
+        feed: Some(Num::new("120.0".into(), 120.0)),
+        spindle: Spindle::Off,
+        coolant: Coolant::default(),
+        tool: None,
+        frame: Frame::Wcs,
+        wcs: Wcs::G54,
+    };
+    let st_none = State {
+        feed: None,
+        spindle: Spindle::Off,
+        coolant: Coolant::default(),
+        tool: None,
+        frame: Frame::Wcs,
+        wcs: Wcs::G54,
+    };
+    let p3 = |x: f64, y: f64, z: f64| Point3 {
+        x: n(x),
+        y: n(y),
+        z: n(z),
+    };
+    let rapid = |start: Option<(f64, f64, f64)>,
+                 end: (f64, f64, f64),
+                 sub: Option<u32>,
+                 feed120: bool| Op::Rapid {
+        start: match start {
+            Some((x, y, z)) => StartPoint::Known(p3(x, y, z)),
+            None => StartPoint::Unknown,
+        },
+        end: p3(end.0, end.1, end.2),
+        state: if feed120 {
+            st120.clone()
+        } else {
+            st_none.clone()
+        },
+        src: span0(),
+        sub,
+    };
+    let linear = |start: (f64, f64, f64), end: (f64, f64, f64), sub: Option<u32>| Op::Linear {
+        start: StartPoint::Known(p3(start.0, start.1, start.2)),
+        end: p3(end.0, end.1, end.2),
+        state: st120.clone(),
+        src: span0(),
+        sub,
+    };
+    let prog = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: eid_core::ast::PathMode::ExactPath,
+        frame_preset: None,
+        ops: vec![
+            // G0 X0 Y0 Z5 (до циклов; feed ещё не установлен).
+            rapid(None, (0.0, 0.0, 5.0), None, false),
+            // Кадр цикла 1: traverse sub=1 → подход sub=2 → feed sub=3 →
+            // отвод sub=4 (канон-шаблон §7.7, все несут feed кадра).
+            rapid(Some((0.0, 0.0, 5.0)), (10.0, 0.0, 5.0), Some(1), true),
+            rapid(Some((10.0, 0.0, 5.0)), (10.0, 0.0, 2.0), Some(2), true),
+            linear((10.0, 0.0, 2.0), (10.0, 0.0, -3.0), Some(3)),
+            rapid(Some((10.0, 0.0, -3.0)), (10.0, 0.0, 2.0), Some(4), true),
+            // Кадр цикла 2: feed модальный НЕ изменился (120.0) — traverse
+            // sub=1 всё равно обязан переизлучить F (суть v0.18).
+            rapid(Some((10.0, 0.0, 2.0)), (20.0, 0.0, 2.0), Some(1), true),
+            rapid(Some((20.0, 0.0, 2.0)), (20.0, 0.0, 3.0), Some(2), true),
+            linear((20.0, 0.0, 3.0), (20.0, 0.0, -3.0), Some(3)),
+            rapid(Some((20.0, 0.0, -3.0)), (20.0, 0.0, 3.0), Some(4), true),
+            Op::ProgramEnd { src: span0() },
+        ],
+    };
+    let ad = GrblAdapter::new();
+    let text = ad.emit(&prog).expect("emit ok");
+    // Второй блок: traverse с F (sub=1 переизлучение при неизменном значении),
+    // подход/feed/отвод без F — только traverse несёт F120.
+    let second_block: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("G0 X20.0000"))
+        .collect();
+    assert_eq!(
+        second_block.first(),
+        Some(&"G0 X20.0000 Y0.0000 Z2.0000 F120.0000"),
+        "первый производный оп кадра с F:\n{text}"
+    );
+    assert_eq!(
+        second_block.len(),
+        3,
+        "traverse + подход + отвод (только traverse с F):\n{text}"
+    );
+    let f_count = text.lines().filter(|l| l.contains(" F120.0000")).count();
+    assert_eq!(f_count, 2, "оба блока с F:\n{text}");
+    // Детерминизм: emit дважды байт-в-байт.
+    let text2 = ad.emit(&prog).expect("emit ok 2");
+    assert_eq!(text, text2, "emit недетерминирован");
+    // R1-семантика: F-переизлучение на sub=1 не меняет AST при парс-бэке
+    // (feed модален) — semantic_diff = 0 против исходного АСТа.
+    let reparsed = GrblAdapter::new()
+        .parse(&text, "t_reparse.ngc")
+        .expect("reparse");
+    let d = semantic_diff(&prog, &reparsed, &DiffConfig::default());
+    assert!(d.is_empty(), "round-trip divergences: {d:?}");
+}

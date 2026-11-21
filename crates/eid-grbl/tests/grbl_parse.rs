@@ -17,6 +17,10 @@
 //!   G84 → spec_cov_cycles_raw_syntax (матрица N/A→SYNTAX; SEMANTICS —
 //!   LinuxCNC-диспозиция, расхождение с буквой брифа — отчёт), G80-naked→
 //!   unit_g80_naked_coords_invalid; разворот/L-лимит — D-зона.
+//!   SPEC v0.18 §7.4a: G73/G82/G85/G86/G89 → spec_cov_cycles_raw_classes
+//!   (вне словаря → Raw{SYNTAX}, разворачивания нет — клиренс/G73-модель/
+//!   G86-P являются константами D-канонизатора циклов, у grbl поверхности
+//!   нет; эмиссионное зеркало — F-кадр sub=1 в grbl_emit).
 //! FRAME/WCS §5.3: G10L2/L20→g10_l20_and_l2+pilot_36, L20-mid→n15,
 //!   double-preset→n17, G92-mid→n2, G92-partial→spec_cov_frame_g92_partial,
 //!   G92.1→spec_cov_frame_g92_1_raw, G53-conditions→#37+n1+n16,
@@ -1149,9 +1153,34 @@ fn spec_cov_cycles_raw_classes() {
     // источника → Raw{SYNTAX}; G74/G84/G87/G88 — refuse-класс конструкции-
     // источника (LinuxCNC-словарь валиден, «не представимо ходами») →
     // Raw{SEMANTICS}. Разворот/L-лимит — D-зона.
+    //
+    // SPEC v0.18 §7.4a (зеркало D, агент C): канонизатор циклов в eid-grbl
+    // ОТСУТСТВУЕТ — GRBL 1.1 не имеет canned cycles в словаре, G73/G82/G83/
+    // G85/G86/G89 — вне словаря → Raw{SYNTAX} и БЕЗ разворачивания. Поэтому
+    // клиренс пека (0.254/0.01), G73-модель (одиночный rapid d+клиренс) и
+    // G86-требование P — D-константы канонизатора циклов; на grbl-стороне
+    // поверхности НЕ имеют (пин диспозиции ниже; эмиссионное зеркало v0.18 —
+    // F-кадр на sub=1 — в grbl_emit).
     let cases = [
         ("G81 X1.0 Y2.0 Z-3.0 R1.0", ErrorCode::UnsupportedSyntax),
+        (
+            "G82 X1.0 Y2.0 Z-3.0 R1.0 P0.5",
+            ErrorCode::UnsupportedSyntax,
+        ),
         ("G83 X1.0 Y2.0 Z-5.0 Q1.0 L3", ErrorCode::UnsupportedSyntax),
+        (
+            "G73 X1.0 Y2.0 Z-5.0 Q2.0 R2.0",
+            ErrorCode::UnsupportedSyntax,
+        ),
+        ("G85 X1.0 Y2.0 Z-3.0 R1.0", ErrorCode::UnsupportedSyntax),
+        (
+            "G86 X1.0 Y2.0 Z-3.0 R1.0 P1.0",
+            ErrorCode::UnsupportedSyntax,
+        ),
+        (
+            "G89 X1.0 Y2.0 Z-3.0 R1.0 P0.5",
+            ErrorCode::UnsupportedSyntax,
+        ),
         ("G84 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
         ("G74 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
         ("G87 X1.0 Y2.0 Z-5.0", ErrorCode::UnsupportedSemantics),
@@ -1167,6 +1196,21 @@ fn spec_cov_cycles_raw_classes() {
             "{g}: ожидался {code:?}"
         );
     }
+    // G86 БЕЗ P — та же диспозиция SYNTAX (требование P §7.4a — проверка
+    // канонизатора циклов LinuxCNC/Fanuc; словарь GRBL отвергает G86 ДО
+    // любых проверок слов).
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG86 X1.0 Y2.0 Z-3.0 R1.0\nF100.0\nM2\n",
+        "c.ngc",
+    )
+    .expect("Ok + Raw");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
 }
 
 #[test]

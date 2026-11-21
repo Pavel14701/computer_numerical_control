@@ -427,7 +427,12 @@ fn decode_hex(s: &str) -> Vec<u8> {
 
 fn emit_op(ctx: &mut Ectx, op: &Op) {
     match op {
-        Op::Rapid { end, state, .. } | Op::Linear { end, state, .. } => {
+        Op::Rapid {
+            end, state, sub, ..
+        }
+        | Op::Linear {
+            end, state, sub, ..
+        } => {
             ctx.state_prefix(state);
             let frame = if state.frame == eid_core::ast::Frame::Machine {
                 "G53 "
@@ -445,9 +450,15 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             // F-дельта ВКЛЮЧАЯ rapid (§7.7-1 развёртки: traverse/approach несут
             // modal feed кадра; "G0 F.." легален в GRBL — устанавливает F).
             // Без F на rapid парс-бэк даёт feed=none ≠ golden (#17–#26).
+            // ПЛЮС первый производный оп кадра цикла (sub=1): F переизлучается
+            // даже при неизменном значении (SPEC §7.4a v0.18 — зеркало
+            // linuxcnc feed_word: rs274 ассертит SET_FEED_RATE на каждом
+            // кадре с F-словом; маркер — sub=Some(1), обычные кадры sub=None).
             let fv = state.feed.as_ref().map(|n| n.value());
             if let Some(fv) = fv {
-                if Some(fv) != ctx.feed {
+                let changed = Some(fv) != ctx.feed;
+                let first_derived = *sub == Some(1);
+                if changed || first_derived {
                     line.push_str(&format!(" F{}", fmt_num(fv)));
                     ctx.feed = Some(fv);
                 }
@@ -463,6 +474,7 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             state,
             sweep_deg,
             pitch,
+            sub,
             ..
         } => {
             ctx.state_prefix(state);
@@ -507,10 +519,15 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             // target и offsets несут ведущий пробел; полный круг — target
             // пуст → одинарный пробел после G2/G3 (CORPUS #13 regen v1).
             let mut line = format!("{}{}{}", motion_code(op), target, offsets);
+            // F при смене значения ИЛИ на первом производном опе кадра цикла
+            // (sub=1) — SPEC §7.4a v0.18 (зеркало linuxcnc feed_word);
+            // feed=none на дуге невозможен (motion_feed_none в валидации).
             let fv = state.feed.as_ref().map(|num| num.value());
-            if fv != ctx.feed {
-                line.push_str(&format!(" F{}", fmt_num(fv.unwrap())));
-                ctx.feed = fv;
+            if fv != ctx.feed || *sub == Some(1) {
+                if let Some(fv) = fv {
+                    line.push_str(&format!(" F{}", fmt_num(fv)));
+                    ctx.feed = Some(fv);
+                }
             }
             ctx.line(&line);
             ctx.first_motion = false;
