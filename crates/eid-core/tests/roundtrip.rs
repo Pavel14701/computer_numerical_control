@@ -607,6 +607,36 @@ fn d9_raw_payload() {
     expect_err(&badcode, Some(ErrorCode::InvalidInput), "bad diag code");
 }
 
+/// grammar v0.4 (аудит #12): экранирование \" и \\ в quoted — parse → emit →
+/// parse (R1), emit-текст байт-в-байт воспроизводит escape-форму; reason без
+/// обратного слэша декодируется как в v0.3 (back-compat).
+#[test]
+fn raw_reason_escape_roundtrip_v04() {
+    // reason = cross "path\quote  →  текст: reason="cross \"path\\quote"
+    let text = prog("OP 001 RAW reason=\"cross \\\"path\\\\quote\" code=E_INVALID_INPUT src=0.1-0.0 payload=0D0A\nOP 002 PEND\n");
+    let p = parser::parse(&text, "t").expect("escaped reason parses");
+    match &p.ops[0] {
+        Op::Raw { reason, .. } => assert_eq!(reason, "cross \"path\\quote", "decoded"),
+        other => panic!("expected Raw, got {other:?}"),
+    }
+    let t1 = emitter::emit(&p).expect("emit with escapes");
+    assert!(
+        t1.contains("reason=\"cross \\\"path\\\\quote\""),
+        "emit reproduces escape form: {t1}"
+    );
+    let p2 = parser::parse(&t1, "t").expect("re-parse escaped text");
+    assert!(programq(&p, &p2), "R1: parse(emit(x)) == x");
+    assert_eq!(t1, emitter::emit(&p2).unwrap(), "emit(emit(x)) byte-stable");
+    // back-compat: reason без обратного слэша — семантика v0.3 без изменений
+    let plain = prog("OP 001 RAW reason=\"vendor macro\" code=E_UNSUPPORTED_SYNTAX src=47.1-49.0 payload=0D0A25\nOP 002 PEND\n");
+    let p = parser::parse(&plain, "t").expect("plain reason parses");
+    match &p.ops[0] {
+        Op::Raw { reason, .. } => assert_eq!(reason, "vendor macro"),
+        other => panic!("expected Raw, got {other:?}"),
+    }
+    assert_eq!(emitter::emit(&p).unwrap(), plain, "v0.3 round-trip unchanged");
+}
+
 #[test]
 fn path_mode_blend_t() {
     // grammar v0.2 (A1): blend [ SP "t=" number ]; bare blend легален (G64 без P).
@@ -846,11 +876,22 @@ fn emit_rejects_invalid_canonical_forms() {
     let t = emitter::emit(&p).unwrap();
     assert!(t.contains("PATH_MODE blend\n"));
 
-    // RAW reason с кавычкой — не представим (нет экранирования)
+    // RAW reason с кавычкой — представим экранированием (grammar v0.4,
+    // аудит #12); R1: parse(emit(x)) == x
     let mut p = parser::parse(&prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"), "t").unwrap();
     for op in p.ops.iter_mut() {
         if let Op::Raw { reason, .. } = op {
-            *reason = "bad\"quote".into();
+            *reason = "bad\"quote\\path".into();
+        }
+    }
+    let t = emitter::emit(&p).expect("quote/backslash escapable (v0.4)");
+    assert!(t.contains("reason=\"bad\\\"quote\\\\path\""), "escaped: {t}");
+    let back = parser::parse(&t, "t").expect("re-parse escaped reason");
+    assert!(programq(&p, &back), "R1 after escape round-trip");
+    // перевод строки — по-прежнему не представим (один оп = одна строка)
+    for op in p.ops.iter_mut() {
+        if let Op::Raw { reason, .. } = op {
+            *reason = "bad\nnewline".into();
         }
     }
     assert!(emitter::emit(&p).is_err());
@@ -858,9 +899,9 @@ fn emit_rejects_invalid_canonical_forms() {
 
 #[test]
 fn emit_op_number_limit() {
-    // op_num = ровно 3 цифры: AST из 999 опов эмитится, 1000-й номер —
-    // E_LIMIT_EXCEEDED (охрана эмиссии). В тексте 4-значный номер невозможен
-    // лексически (парсер отвергает).
+    // op_num = 3+ цифр (grammar v0.4, back-compatible superset — аудит #3):
+    // zero-pad min 3 сохранён эмиттером ({n:03}); 1000+ легальны — лимита
+    // нумерации больше нет. parse → emit → parse для 999/1000/1001 опов.
     let mk = |v: f64| Num::new(emitter::fmt_num(v), v);
     let p3 = |x: f64| Point3 { x: mk(x), y: mk(0.0), z: mk(0.0) };
     let state = State {
@@ -897,18 +938,26 @@ fn emit_op_number_limit() {
             ops,
         }
     };
-    // 998 rapid + PEND = 999 опов — номер последнего 999, всё представимо
+    // 998 rapid + PEND = 999 опов — zero-pad: номер последнего 999
     let ok = build(998);
     let t = emitter::emit(&ok).expect("999 ops emit ok");
+    assert!(t.contains("OP 999 PEND"), "zero-pad min 3: {t}");
     let reparsed = parser::parse(&t, "t").expect("999 ops re-parse");
     assert!(programq(&ok, &reparsed));
-    // 999 rapid + PEND = 1000 опов — PEND получает номер 1000 → лимит
-    let too_many = build(999);
-    let ds = emitter::emit(&too_many).unwrap_err();
-    assert!(
-        ds.iter().any(|d| d.code == ErrorCode::LimitExceeded),
-        "expected E_LIMIT_EXCEEDED, got {ds:?}"
-    );
+    // 999 rapid + PEND = 1000 опов — PEND получает номер 1000: легален (v0.4)
+    let k = build(999);
+    let t1000 = emitter::emit(&k).expect("1000 ops emit ok (grammar v0.4)");
+    assert!(t1000.contains("OP 1000 PEND"), "4-digit op_num: {t1000}");
+    let back1000 = parser::parse(&t1000, "t").expect("1000 ops re-parse");
+    assert!(programq(&k, &back1000), "R1 at 1000 ops");
+    // 1000 rapid + PEND = 1001 оп; emit(emit(x)) байт-в-байт (двойной emit)
+    let k1 = build(1000);
+    let t1001 = emitter::emit(&k1).expect("1001 ops emit ok");
+    assert!(t1001.contains("OP 1001 PEND"), "OP 1001: {t1001}");
+    let back1001 = parser::parse(&t1001, "t").expect("1001 ops re-parse");
+    assert!(programq(&k1, &back1001), "R1 at 1001 ops");
+    let t1001_again = emitter::emit(&back1001).expect("re-emit");
+    assert_eq!(t1001, t1001_again, "emit(emit(x)) byte-stable at 4-digit numbering");
 }
 
 // ===========================================================================
@@ -1233,7 +1282,8 @@ fn diagnostic_stage_provenance() {
         ds.iter().map(|d| d.stage).collect::<Vec<_>>()
     );
 
-    // Emit: RAW reason с кавычкой
+    // Emit: RAW reason с переводом строки (quoted — одна физическая строка;
+    // экранирование v0.4 покрывает только \" и \\)
     let mut p = parser::parse(
         &prog("OP 001 RAW reason=\"x\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"),
         "t",
@@ -1241,28 +1291,14 @@ fn diagnostic_stage_provenance() {
     .unwrap();
     for op in p.ops.iter_mut() {
         if let Op::Raw { reason, .. } = op {
-            *reason = "bad\"quote".into();
+            *reason = "bad\nnewline".into();
         }
     }
     let ds = emitter::emit(&p).unwrap_err();
     assert!(ds.iter().all(|d| d.stage == Stage::Emit));
 
-    // Emit: лимит нумерации (1000 опов → номер 1000 не представим 3 цифрами)
-    use astbuild::*;
-    let mut ops = Vec::new();
-    for i in 0..999 {
-        let start = if i == 0 {
-            StartPoint::Unknown
-        } else {
-            StartPoint::Known(p3(i as f64, 0.0, 0.0))
-        };
-        ops.push(rapid(start, p3((i + 1) as f64, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs, None)));
-    }
-    ops.push(pend());
-    let p = program(ops);
-    let ds = emitter::emit(&p).unwrap_err();
-    assert!(
-        ds.iter().any(|d| d.code == ErrorCode::LimitExceeded && d.stage == Stage::Emit),
-        "limit exceeded with Emit stage: {ds:?}"
-    );
+    // Примечание (grammar v0.4): прежний третий Emit-сэмпл «лимит нумерации
+    // (1000 опов)» удалён — op_num 3+ цифр легален, E_LIMIT_EXCEEDED для
+    // нумерации больше не существует (аудит #3); provenance Stage::Emit
+    // доказан eid_version- и RAW-NL-сэмплами выше.
 }

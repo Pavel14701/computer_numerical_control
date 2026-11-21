@@ -11,7 +11,7 @@
 //! идентично итерации 4 — рефактор под защитой тестов (48 golden + 36 unit).
 //!
 //! ===========================================================================
-//! ЧЕК-ЛИСТ ОБЯЗАТЕЛЬСТВ SPEC-EID-L1 v0.15 → ТЕСТЫ (grep по obligation-словам
+//! ЧЕК-ЛИСТ ОБЯЗАТЕЛЬСТВ SPEC-EID-L1 v0.17 → ТЕСТЫ (grep по obligation-словам
 //! §2/§3/§5/§6/§10; трассируемость правило↔тест. Тесты: tests/spec_obligations.rs
 //! [новые, spec_*], tests/roundtrip.rs, tests/grammar_conformance.rs):
 //!   §2 принцип 2 (Q11):
@@ -42,6 +42,13 @@
 //!     linear/arc в итоговом AST требуют feed ≠ none (после отбрасывания!) —
 //!          → spec_3_feed_final_ast, roundtrip::linear_feed_none_rejected,
 //!            zero_length_linear_feed_none_dropped_not_error
+//!     linear/arc: feed present-but-zero → refusal «zero feed rate on move»
+//!          (реальные контроллеры отказывают ход: rs274 «Cannot do g1 with
+//!          zero feed rate»; feed=None — прежнее правило без изменений;
+//!          G93-resolved feed, заквантованный в 0.0000, ловится тем же
+//!          правилом nval==0.0; rapid без ограничений) —
+//!          → spec_3_feed_zero_on_move_refused, spec_3_feed_final_ast,
+//!            spec_4_rapid_feed_no_constraint
 //!     zero-length (start == end; arc: sweep≠360 + pitch=0; dwell 0) —
 //!         drop+notice, не ошибка → spec_3_zero_length_all_kinds_with_preset,
 //!         roundtrip::zero_length_rapid_dropped_with_notice, dwell_zero_*
@@ -64,6 +71,13 @@
 //!         sub_valid_on_motion_ops, sub_invalid_on_non_motion
 //!   §6 (в EID AST нет R-формы — R-правила знака/chord>2R/start==end —
 //!      канонизатор C/D; инварианты РЕЗУЛЬТАата проверяются здесь):
+//!     канонический знак нормали (PINNED канон-форма, аудит #13): normal =
+//!          положительная ось плоскости (+X/+Y/+Z — ровно одна компонента
+//!          ≈ +1, остальные ≈ 0; (0,0,-1)-перевёртыш и не-осевые — не канон:
+//!          dir определён правой рукой относительно +normal, «переворачивать
+//!          dir» запрещено; единая точка правила для всех адаптеров,
+//!          зеркало plane_of validate_linuxcnc) —
+//!          → spec_6_normal_positive_axis
 //!     ρ_start ≈ ρ_end планиметрически (хорда > 2R → невозможная дуга) —
 //!          → spec_6_impossible_arc, roundtrip::arc_domains_and_geometry
 //!     (end−start)·normal ≈ pitch → verify_broken [#11-семейство],
@@ -83,9 +97,10 @@
 //!            0.0001 ≠ 0.0000 → kept]
 //! ===========================================================================
 //!
-//! Источники правил: SPEC-EID-L1 v0.15 (§3 инварианты, §5 опы, §6 каноническая
+//! Источники правил: SPEC-EID-L1 v0.17 (§3 инварианты, §5 опы, §6 каноническая
 //! форма дуги, §2 принцип 2 / Q11 — точки разрыва и связывание), grammar.ebnf
-//! v0.3 (D4–D8), допуски — EQUIVALENCE §4. Все диагностики pass'а помечены
+//! v0.4 (D4–D8; op_num 3+ цифр, экранирование quoted — back-compat superset),
+//! допуски — EQUIVALENCE §4. Все диагностики pass'а помечены
 //! [`Stage::Verify`] (interface v0.1.2).
 //!
 //! Два режима:
@@ -408,13 +423,7 @@ fn zero_arc(start: &StartPoint, end: &Point3, sweep_deg: &Num, pitch: &Num) -> O
 fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
     match op {
         Op::Linear { state, .. } => {
-            if state.feed.is_none() {
-                errors.push(diag(
-                    ErrorCode::InvalidInput,
-                    "linear with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
-                    op_src(op),
-                ));
-            }
+            check_feed_modal(op, "linear", state, errors);
         }
         Op::Arc { start, end, center, normal, dir, sweep_deg, pitch, state, .. } => {
             if matches!(start, StartPoint::Unknown) {
@@ -441,13 +450,8 @@ fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
                     op_src(op),
                 ));
             }
-            if state.feed.is_none() {
-                errors.push(diag(
-                    ErrorCode::InvalidInput,
-                    "arc with feed=none (SPEC §3: linear/arc in the final AST require modal feed)",
-                    op_src(op),
-                ));
-            }
+            check_normal_positive_axis(op, normal, errors);
+            check_feed_modal(op, "arc", state, errors);
             if let StartPoint::Known(sk) = start {
                 check_arc_geometry(op, sk, end, center, normal, *dir, nval(sweep_deg), nval(pitch), eps_pos, errors);
             }
@@ -460,6 +464,61 @@ fn verify_kept_op(op: &Op, eps_pos: f64, errors: &mut Vec<Diagnostic>) {
         | Op::WcsDefine { .. }
         | Op::WcsSetHere { .. }
         | Op::Raw { .. } => {}
+    }
+}
+
+/// feed на linear/arc (итоговый AST, SPEC §3 + аудит #32): модальное значение
+/// обязано присутствовать (feed=none — прежнее правило, без изменений) И быть
+/// ненулевым: feed present-but-zero → refusal «zero feed rate on move»
+/// (реальные контроллеры отказывают ход: rs274 «Cannot do g1 with zero feed
+/// rate»). G93-resolved feed, заквантованный в 0.0000, ловится тем же правилом
+/// (nval == 0.0 покрывает и -0.0). Rapid без ограничений (SPEC §4, G0).
+/// Проверка — по выжившим: zero-length оп с feed=0/none отброшен канонизацией
+/// и не диагностируется (spec_3_feed_final_ast).
+fn check_feed_modal(op: &Op, what: &str, state: &State, errors: &mut Vec<Diagnostic>) {
+    match &state.feed {
+        None => errors.push(diag(
+            ErrorCode::InvalidInput,
+            format!(
+                "{what} with feed=none (SPEC §3: linear/arc in the final AST require modal feed)"
+            ),
+            op_src(op),
+        )),
+        Some(f) if nval(f) == 0.0 => errors.push(diag(
+            ErrorCode::InvalidInput,
+            format!(
+                "{what} with feed={} — zero feed rate on move (feed must be > 0; real controllers refuse the move: rs274 \"Cannot do g1 with zero feed rate\")",
+                f.text
+            ),
+            op_src(op),
+        )),
+        Some(_) => {}
+    }
+}
+
+/// Канонический знак нормали дуги (SPEC §6, PINNED канон-форма — аудит #13):
+/// normal = положительная ось плоскости (+X/+Y/+Z) — ровно одна компонента
+/// ≈ +1, остальные ≈ 0 (допуск 0.001 — 4dp-квантование компонент). Отрицательная
+/// ось (напр. (0,0,-1)) — не канон: dir определён правилом правой руки
+/// относительно +normal, «переворачивать dir» запрещено ruling'ом. Не-осевые
+/// нормали не выражают G17/G18/G19. Единая точка правила для всех адаптеров
+/// (зеркало plane_of validate_linuxcnc — эмиттеры дают свою диагностику
+/// независимо; verify обязателен для любого источника AST).
+fn check_normal_positive_axis(op: &Op, normal: &Point3, errors: &mut Vec<Diagnostic>) {
+    let nv = vec_vals(normal);
+    let t = 0.001_f64;
+    let pos_axis = ((nv.0 - 1.0).abs() <= t && nv.1.abs() <= t && nv.2.abs() <= t)
+        || (nv.0.abs() <= t && (nv.1 - 1.0).abs() <= t && nv.2.abs() <= t)
+        || (nv.0.abs() <= t && nv.1.abs() <= t && (nv.2 - 1.0).abs() <= t);
+    if !pos_axis {
+        errors.push(diag(
+            ErrorCode::InvalidInput,
+            format!(
+                "arc normal = ({:.4},{:.4},{:.4}) is not a canonical +axis unit vector (SPEC §6: G17→+Z, G18→+Y, G19→+X; flipped or off-axis normal is not canonical)",
+                nv.0, nv.1, nv.2
+            ),
+            op_src(op),
+        ));
     }
 }
 
@@ -508,7 +567,7 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
 
     // --- Program-level post: связывание start (SPEC §2 принцип 2, Q11; v0.9
     //     обязанность) по выжившим -------------------------------------------
-    check_linking(program, &kept, &mut errors);
+    check_linking(program, &kept, eps_pos, &mut errors);
 
     (kept, notices, errors)
 }
@@ -764,7 +823,7 @@ fn expect_start(
     }
 }
 
-fn check_linking(program: &Program, kept: &[Op], errors: &mut Vec<Diagnostic>) {
+fn check_linking(program: &Program, kept: &[Op], eps_pos: f64, errors: &mut Vec<Diagnostic>) {
     let mut known_origin: [Option<Point3>; 10] = Default::default();
     let mut set_here: [Option<Point3>; 10] = Default::default();
     let mut prev: Option<PrevMotion> = None;
@@ -823,12 +882,15 @@ fn check_linking(program: &Program, kept: &[Op], errors: &mut Vec<Diagnostic>) {
                     }
                     (StartPoint::Known(v), StartExpect::Tol(exp)) => {
                         let d = vdist(&p3_vals(v), &p3_vals(&exp));
-                        if d > 0.001 {
-                            // ε_abs из EQUIVALENCE §4 (floor 4dp-эмиссии с запасом ×10)
+                        if d > eps_pos {
+                            // ε_pos из EQUIVALENCE §4: max(0.001, 1e-7·L) — тот же
+                            // допуск, что и §6-геометрия (аудит #4: раньше был
+                            // захардкожен floor 0.001; поведение на L < 10000
+                            // идентично — floor активен)
                             errors.push(diag(
                                 ErrorCode::InvalidInput,
                                 format!(
-                                    "start {} != frame-adjusted previous end {} (|Δ| = {d:.6} > 0.001, SPEC §2 v0.9)",
+                                    "start {} != frame-adjusted previous end {} (|Δ| = {d:.6} > {eps_pos:.6}, SPEC §2 v0.9)",
                                     fmt_point(v), fmt_point(&exp)
                                 ),
                                 op_src(o),

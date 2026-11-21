@@ -1,4 +1,4 @@
-//! Детерминированный эмиттер канонического текста EID/L1 (grammar.ebnf v0.3):
+//! Детерминированный эмиттер канонического текста EID/L1 (grammar.ebnf v0.4):
 //!   * один оп = одна физическая строка; строки — LF;
 //!   * все поля state в фиксированном порядке feed, spindle, coolant, tool,
 //!     frame, wcs (D3); оси X, Y, Z (D2);
@@ -8,6 +8,10 @@
 //!     воспроизводится байт-в-байт (SPEC §10.1 — точный same-dialect
 //!     round-trip); иначе число канонизируется из f64-зеркала;
 //!   * emit(emit(x)) по AST — байт-в-байт (двойной emit детерминирован);
+//!   * op_num — zero-pad min 3 ({n:03}): 001…999, 1000+ легальны
+//!     (grammar v0.4, back-compatible superset — аудит #3);
+//!   * RAW reason: экранирование \" и \\ (grammar v0.4 — аудит #12);
+//!     перевод строки в quoted непредставим — отказ;
 //!   * перед эмиссией программа валидируется (SPEC §3): zero-length опы и
 //!     прочие нарушения канонической формы — ошибка, не молчаливый пропуск.
 
@@ -41,7 +45,10 @@ fn err(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
 }
 
 /// Число на эмиссию: verbatim-текст, если он уже каноничен (4 dp, не
-/// "-0.0000"), иначе канонизация из f64-зеркала.
+/// "-0.0000"), иначе канонизация из f64-зеркала. Незначимость отсекается
+/// ранним is_finite-exit — ветка канонизации всегда даёт 4dp-десятичный
+/// текст (аудит #8: мёртвая проверка s == "NaN" | "inf" удалена —
+/// недостижима после is_finite).
 fn emit_num(n: &Num, errors: &mut Vec<Diagnostic>, what: &str) -> String {
     if !n.value.is_finite() {
         errors.push(err(
@@ -53,12 +60,7 @@ fn emit_num(n: &Num, errors: &mut Vec<Diagnostic>, what: &str) -> String {
     if parser::parse_num(&n.text).is_some() && n.text != "-0.0000" {
         n.text.clone()
     } else {
-        let s = fmt_num(n.value);
-        if s == "NaN" || s == "inf" {
-            errors.push(err(ErrorCode::InvalidInput, format!("{what}: non-finite value")));
-            return "0.0000".to_string();
-        }
-        s
+        fmt_num(n.value)
     }
 }
 
@@ -108,8 +110,8 @@ fn emit_sub(sub: &Option<u32>) -> String {
 }
 
 /// EID Program → канонический текст. Отказы: нарушение канонической формы
-/// (SPEC §3), непредставимость (RAW reason с кавычкой — без экранирования),
-/// лимит нумерации опов (3 цифры).
+/// (SPEC §3), непредставимость (RAW reason с переводом строки — quoted не
+/// переносится; экранирование \"/\\ — grammar v0.4).
 pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     let mut errors: Vec<Diagnostic> = Vec::new();
 
@@ -165,22 +167,8 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
 
     for (i, op) in program.ops.iter().enumerate() {
         let n = i + 1;
-        if n > 999 {
-            // op_num = ровно 3 цифры (grammar); охрана эмиссии — E_LIMIT_EXCEEDED.
-            errors.push(Diagnostic {
-                code: ErrorCode::LimitExceeded,
-                stage: Stage::Emit,
-                message: format!("op number {n} exceeds 3-digit numbering (grammar v0.3: 001..999)"),
-                src: None,
-                options: Vec::new(),
-                limit: Some(crate::diag::LimitInfo {
-                    threshold: "op_number_max",
-                    threshold_value: 999.0,
-                    actual: n as f64,
-                }),
-            });
-            break;
-        }
+        // op_num = 3+ цифр (grammar v0.4): {n:03} — zero-pad min 3 (001…999),
+        // 1000+ эмитятся как есть; лимита нумерации больше нет (аудит #3).
         out.push_str(&format!("OP {n:03} "));
         emit_op(op, &mut out, &mut errors);
         out.push('\n');
@@ -278,16 +266,26 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
         }
         Op::Raw { payload_hex, reason, code, src } => {
             // D6: state нет. D9: payload hex, lossless, чётная длина.
-            if !reason.contains('"') && !reason.contains('\n') && !reason.contains('\r') {
-                out.push_str(&format!(
-                    "RAW reason=\"{reason}\" code={} src={} payload={payload_hex}",
-                    code.as_str(),
-                    emit_src(src)
-                ));
-            } else {
+            // grammar v0.4: экранирование \" и \\ (аудит #12); NL/CR в quoted
+            // непредставимы (одна физическая строка на оп) — отказ.
+            if reason.contains('\n') || reason.contains('\r') {
                 errors.push(err(
                     ErrorCode::InvalidInput,
-                    "RAW reason содержит кавычку/перевод строки — grammar v0.3 не определяет экранирование",
+                    "RAW reason содержит перевод строки — quoted не переносится (один оп = одна строка)",
+                ));
+            } else {
+                out.push_str("RAW reason=\"");
+                for ch in reason.chars() {
+                    match ch {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        c => out.push(c),
+                    }
+                }
+                out.push_str(&format!(
+                    "\" code={} src={} payload={payload_hex}",
+                    code.as_str(),
+                    emit_src(src)
                 ));
             }
         }

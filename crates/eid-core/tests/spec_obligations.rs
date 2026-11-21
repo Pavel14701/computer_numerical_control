@@ -472,6 +472,78 @@ fn spec_4_rapid_feed_no_constraint() {
     let without = program(vec![rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)), pend()]);
     assert!(verify::validate(&with).is_empty());
     assert!(verify::validate(&without).is_empty());
+    // и rapid с feed=0 — БЕЗ ограничения (ход не использует feed; аудит #32
+    // касается только linear/arc)
+    let zero = program(vec![rapid(StartPoint::Unknown, p3(1.0, 0.0, 0.0), st(Some(0.0), Wcs::G54, Frame::Wcs)), pend()]);
+    assert!(verify::validate(&zero).is_empty());
+}
+
+// ===========================================================================
+// §3/аудит #32: feed present-but-zero на linear/arc → refusal
+// ===========================================================================
+
+/// linear/arc с feed, равным нулю, — E_INVALID_INPUT «zero feed rate on move»
+/// (реальные контроллеры отказывают ход: rs274 «Cannot do g1 with zero feed
+/// rate»). feed=none — прежнее правило (spec_3_feed_final_ast), не затронуто.
+/// G93-resolved feed, заквантованный в 0.0000 (в т.ч. -0.0000), ловится тем же
+/// правилом (nval == 0.0). Rapid — без ограничений.
+#[test]
+fn spec_3_feed_zero_on_move_refused() {
+    let zero_st = st(Some(0.0), Wcs::G54, Frame::Wcs);
+    let neg0_st = State { feed: Some(Num { text: "-0.0000".into(), value: -0.0 }), ..st(Some(0.0), Wcs::G54, Frame::Wcs) };
+    let tiny_st = st(Some(0.0001), Wcs::G54, Frame::Wcs);
+    let ok_st = st(Some(100.0), Wcs::G54, Frame::Wcs);
+
+    // негатив: linear feed=0.0000
+    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), zero_st.clone()), pend()]);
+    let ds = verify::validate(&p);
+    assert!(
+        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.code == ErrorCode::InvalidInput),
+        "{ds:?}"
+    );
+    // негатив: arc feed=0.0000 (геометрия корректна — отказ именно по feed)
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 0.0, zero_st.clone()),
+        pend(),
+    ]);
+    let ds = verify::validate(&p);
+    assert!(
+        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.code == ErrorCode::InvalidInput),
+        "{ds:?}"
+    );
+    // негатив: -0.0000 ≡ 0 после квантования (G93-resolved feed → 0.0000)
+    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), neg0_st), pend()]);
+    let ds = verify::validate(&p);
+    assert!(
+        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.message.contains("-0.0000")),
+        "{ds:?}"
+    );
+    // позитив: минимальный ненулевой feed (0.0001) — чисто; обычный feed — чисто
+    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), tiny_st), pend()]);
+    assert!(verify::validate(&p).is_empty());
+    let p = program(vec![linear(StartPoint::Unknown, p3(1.0, 0.0, 0.0), ok_st), pend()]);
+    assert!(verify::validate(&p).is_empty());
+    // rapid feed=0 — не ход под feed (spec_4_rapid_feed_no_constraint выше)
+    // drop-путь: zero-length linear с feed=0 отбрасывается канонизацией —
+    // feed-диагностики НЕТ (правило — по итоговому AST, как feed=none)
+    let p = program(vec![
+        linear(StartPoint::Known(p3(1.0, 0.0, 0.0)), p3(1.0, 0.0, 0.0), zero_st.clone()),
+        pend(),
+    ]);
+    let rep = verify::validate_with_notices(&p);
+    assert!(rep.diagnostics.is_empty(), "feed=0 must not fire on dropped op: {:#?}", rep.diagnostics);
+    assert_eq!(rep.notices.len(), 1);
+    // reject-режим (эмиссия): zero-length диагностика присутствует
+    let ds = verify::validate(&p);
+    assert!(ds.iter().any(|d| d.message.contains("must be dropped")));
+    // текст-уровень: feed=0.0000 в тексте EID → parse отказ (Stage::Verify)
+    let text = format!("{HDR}OP 001 LINEAR start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 feed=0.0000 spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 002 PEND\nEND\n");
+    let ds = parser::parse(&text, "t").unwrap_err();
+    assert!(
+        ds.iter().any(|d| d.message.contains("zero feed rate on move") && d.stage == Stage::Verify),
+        "{ds:?}"
+    );
 }
 
 // ===========================================================================
@@ -576,22 +648,33 @@ END
     assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify));
 }
 
-/// 3-значная нумерация опов (grammar: 001..999): OP 999 легален, OP 1000 → Err.
+/// Нумерация опов (grammar v0.4 — 3+ цифр, back-compat superset, аудит #3):
+/// OP 999 и OP 1000 легальны; меньше 3 цифр — Err (zero-pad min 3).
 #[test]
 fn mutants_op_numbering_boundary_999_1000() {
     let ok_text = format!("{HDR}OP 999 PEND
 END
 ");
     assert!(parser::parse(&ok_text, "t").is_ok(), "OP 999 легален");
-    let over_text = format!("{HDR}OP 1000 PEND
+    // 1000+ легальны с grammar v0.4 (прежде: Err «ровно 3 цифры»)
+    let v4_text = format!("{HDR}OP 1000 PEND
 END
 ");
-    let ds = parser::parse(&over_text, "t").unwrap_err();
-    assert!(ds.iter().any(|d| d.message.contains("3 digits")), "{ds:?}");
+    assert!(parser::parse(&v4_text, "t").is_ok(), "OP 1000 легален (grammar v0.4)");
+    let pad_text = format!("{HDR}OP 0999 PEND
+END
+");
+    assert!(parser::parse(&pad_text, "t").is_ok(), "OP 0999 легален (3+ цифр)");
+    let short_text = format!("{HDR}OP 99 PEND
+END
+");
+    let ds = parser::parse(&short_text, "t").unwrap_err();
+    assert!(ds.iter().any(|d| d.message.contains("3+ digits")), "{ds:?}");
 }
 
-/// quoted-границы (grammar v0.3: без escape): голая кавычка как всё поле и
-/// кавычка внутри quoted-поля reason → parse Err (мутанты ||→&& в quoted).
+/// quoted-границы: голая кавычка как всё поле и НЕЭКРАНИРОВАННАЯ кавычка
+/// внутри quoted-поля reason → parse Err (grammar v0.4: экранируются только
+/// \" и \\; голая кавычка по-прежнему ломает поле — мутанты ||→&& в quoted).
 #[test]
 fn mutants_quoted_boundaries_rejected() {
     // голая кавычка: quoted(`"`) — len < 2
@@ -639,4 +722,99 @@ fn mutants_emit_num_minus_zero_canonicalized() {
     let text = eid_core::emitter::emit(&prog).expect("эмиссия Ok");
     assert!(text.contains("0.0000"), "{text}");
     assert!(!text.contains("-0.0000"), "минус-ноль канонизуется: {text}");
+}
+
+// ===========================================================================
+// §6/аудит #13 (PINNED): канонический знак нормали = +ось плоскости
+// ===========================================================================
+
+/// Канон-форма нормали дуги: положительная компонента по оси плоскости
+/// (+X/+Y/+Z — ровно одна компонента ≈ +1, остальные ≈ 0). Перевёрнутая ось
+/// (0,0,-1) и не-осевые нормали → refusal «not a canonical +axis»; dir НЕ
+/// переворачивается (ruling: требовать канон, не нормализовать эмиттером).
+/// Единая точка правила для всех адаптеров.
+#[test]
+fn spec_6_normal_positive_axis() {
+    let st_arc = st(Some(100.0), Wcs::G54, Frame::Wcs);
+    // позитивы: +Z (G17), +Y (G18), +X (G19) — геометрия сходится
+    //  +Z: start (0,0,0), center (0,5,0), ccw 90° → end (5,5,0)
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+        arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), p3(0.0, 0.0, 1.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        pend(),
+    ]);
+    assert!(verify::validate(&p).is_empty(), "+Z canonical: {:#?}", verify::validate(&p));
+    //  +Y: start (5,0,0), center (0,0,0), ccw 90° вокруг +Y → end (0,0,-5)
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(5.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+        arc(StartPoint::Known(p3(5.0, 0.0, 0.0)), p3(0.0, 0.0, -5.0), p3(0.0, 0.0, 0.0), p3(0.0, 1.0, 0.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        pend(),
+    ]);
+    assert!(verify::validate(&p).is_empty(), "+Y canonical: {:#?}", verify::validate(&p));
+    //  +X: start (0,5,0), center (0,0,0), ccw 90° вокруг +X → end (0,0,5)
+    let p = program(vec![
+        rapid(StartPoint::Unknown, p3(0.0, 5.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+        arc(StartPoint::Known(p3(0.0, 5.0, 0.0)), p3(0.0, 0.0, 5.0), p3(0.0, 0.0, 0.0), p3(1.0, 0.0, 0.0), Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+        pend(),
+    ]);
+    assert!(verify::validate(&p).is_empty(), "+X canonical: {:#?}", verify::validate(&p));
+
+    // негативы: перевёрнутая ось — (0,0,-1) — refusal ( ruling-пример),
+    // (0,-1,0), (-1,0,0); не-осевая (0.7071,0,0.7071)
+    let mk_neg = |normal: Point3| {
+        program(vec![
+            rapid(StartPoint::Unknown, p3(0.0, 0.0, 0.0), st(None, Wcs::G54, Frame::Wcs)),
+            arc(StartPoint::Known(p3(0.0, 0.0, 0.0)), p3(5.0, 5.0, 0.0), p3(0.0, 5.0, 0.0), normal, Dir::Ccw, 90.0, 0.0, st_arc.clone()),
+            pend(),
+        ])
+    };
+    for (normal, ctx) in [
+        (p3(0.0, 0.0, -1.0), "flipped +Z (0,0,-1)"),
+        (p3(0.0, -1.0, 0.0), "flipped +Y"),
+        (p3(-1.0, 0.0, 0.0), "flipped +X"),
+        (p3(0.7071, 0.0, 0.7071), "off-axis"),
+    ] {
+        let ds = verify::validate(&mk_neg(normal));
+        assert!(
+            ds.iter().any(|d| d.message.contains("not a canonical +axis") && d.code == ErrorCode::InvalidInput),
+            "{ctx}: {ds:?}"
+        );
+    }
+    // допуск: (0,0,1.0001) — в пределах 4dp-кванта (0.001) → канон;
+    // (0,0,1.0020) — вне допуска → и канон-отказ, и D7-домен |n|=1
+    let ds = verify::validate(&mk_neg(p3(0.0, 0.0, 1.0001)));
+    assert!(!ds.iter().any(|d| d.message.contains("not a canonical +axis")), "1.0001 in 4dp tol: {ds:?}");
+    let ds = verify::validate(&mk_neg(p3(0.0, 0.0, 1.0020)));
+    assert!(ds.iter().any(|d| d.message.contains("not a canonical +axis")), "1.0020 out of tol: {ds:?}");
+}
+
+// ===========================================================================
+// §2/аудит #4: связывание Tol-ветка использует вычисленный ε_pos
+// ===========================================================================
+
+/// Рамочно-скорректированное сравнение start (Tol-ветка: смена wcs с
+/// вычислимой разностью origin) использует ε_pos = max(0.001, 1e-7·L)
+/// (EQUIVALENCE §4), а не захардкоженный 0.001. На больших координатах
+/// (L ≥ 10000 → ε_pos > 0.001) отклонение, прежним допуском отвергаемое,
+/// легально; за пределами ε_pos — по-прежнему refusal.
+#[test]
+fn spec_2_linking_tol_uses_eps_pos() {
+    // L ≈ 100001 → ε_pos = 1e-7·L ≈ 0.0100. Смена G54 (origin 100000) →
+    // G55 (origin 0): expected start = prev_end + O_prev − O_new = 200000;
+    // фактический start 200000.0040 — |Δ| = 0.004: > floor 0.001, < ε_pos.
+    let defined = "OP 001 WCS_DEFINE p=1 origin=100000.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 002 WCS_DEFINE p=2 origin=0.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\n";
+    let ok_text = format!(
+        "{HDR}{defined}OP 003 RAPID start=unknown end=100000.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 004 RAPID start=200000.0000,0.0040,0.0000 end=200001.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G55\nOP 005 PEND\nEND\n"
+    );
+    let p = parser::parse(&ok_text, "t").unwrap_or_else(|ds| panic!("|Δ|=0.004 < eps_pos≈0.0100 must link: {ds:#?}"));
+    assert_eq!(p.ops.len(), 5);
+    // негатив: |Δ| = 0.02 > ε_pos → refusal (тот же корпус, большее отклонение)
+    let bad_text = format!(
+        "{HDR}{defined}OP 003 RAPID start=unknown end=100000.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 004 RAPID start=200000.0000,0.0200,0.0000 end=200001.0000,0.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G55\nOP 005 PEND\nEND\n"
+    );
+    let ds = parser::parse(&bad_text, "t").unwrap_err();
+    assert!(
+        ds.iter().any(|d| d.message.contains("frame-adjusted previous end") && d.code == ErrorCode::InvalidInput),
+        "{ds:?}"
+    );
 }

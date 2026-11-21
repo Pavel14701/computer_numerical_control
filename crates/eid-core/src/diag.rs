@@ -60,3 +60,37 @@ pub struct LimitInfo {
     pub threshold_value: f64,
     pub actual: f64,
 }
+
+// ===========================================================================
+// RAW-правило кросс-диалектной трансляции (SPEC §8.2) — единая точка
+// (аудит #7: дубликат eid-harness::translate::raw_refusal ↔
+// eid-integration::translate::raw_refusal с риском дрейфа устранён; оба
+// call-site вызывают eid_core::diag::raw_refusal).
+// ===========================================================================
+
+/// `file:line.col-line.col` — канонический строковый формат спана (опции
+/// RAW-отказа; формат 1:1 с прежними зеркалами harness/integration).
+pub fn format_span(s: &crate::ast::SrcSpan) -> String {
+    format!(
+        "{}:{}.{}-{}.{}",
+        s.file, s.line_start, s.col_start, s.line_end, s.col_end
+    )
+}
+
+/// Одна диагностика отказа кросс-диалектной трансляции программы с Raw-опами:
+/// код `E_RAW_UNTRANSLATABLE`, все Raw-спаны перечислены (`options` + первый
+/// в `src`), количество — в message. Этап — [`Stage::Emit`] (Translate —
+/// emit-сторона потока parse → canonicalize → verify → emit).
+pub fn raw_refusal(raw_spans: &[crate::ast::SrcSpan]) -> Diagnostic {
+    Diagnostic {
+        stage: Stage::Emit,
+        code: ErrorCode::RawUntranslatable,
+        message: format!(
+            "cross-dialect translation of a program containing {} RAW op(s) is forbidden (SPEC §8.2: same-dialect only)",
+            raw_spans.len()
+        ),
+        src: raw_spans.first().cloned(),
+        options: raw_spans.iter().map(format_span).collect(),
+        limit: None,
+    }
+}

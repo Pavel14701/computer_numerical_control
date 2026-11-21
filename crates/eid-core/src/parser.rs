@@ -1,5 +1,10 @@
-//! EID/L1 — парсер канонического текстового формата (grammar.ebnf v0.3,
-//! правила D1–D10). SPEC-EID-L1 v0.15.
+//! EID/L1 — парсер канонического текстового формата (grammar.ebnf v0.4,
+//! правила D1–D10). SPEC-EID-L1 v0.17.
+//!
+//! grammar v0.4 — back-compatible superset v0.3 (аудит #3/#12): op_num —
+//! 3+ цифр (zero-pad min 3, 1000+ легальны), quoted-строки — экранирование
+//! `\"` и `\\`. MAGIC НЕ менялся ("EID/L1 v0.3" — версия ФОРМАТА, SPEC
+//! §10.4): строгий парсер принимает v0.3-файлы как раньше.
 //!
 //! Итерация 4 (MLIR-паттерн): валидация канонического AST вынесена в
 //! отдельный pass [`crate::verify`] — единственная копия правил; parser.rs
@@ -165,16 +170,36 @@ fn span(s: &str) -> Result<(u32, u32, u32, u32), String> {
     Ok((ls, cs, le, ce))
 }
 
-/// quoted = '"' { char_without_quote_or_nl } '"' — без escape-механизма.
+/// quoted = '"' , { escaped | char_without_quote_or_nl } '"' — grammar v0.4:
+/// экранирование `\"` (кавычка) и `\\` (обратный слэш); NL/CR внутри
+/// непредставимы (один оп = одна физическая строка). Строки без обратного
+/// слэша декодируются как в v0.3 (back-compat); `\` не перед `"`/`\` —
+/// лексическая ошибка (каноничность: у одного AST одна текстовая форма).
 fn quoted(s: &str) -> Result<String, String> {
     if s.len() < 2 || !s.starts_with('"') || !s.ends_with('"') {
         return Err(format!("invalid quoted string `{s}`"));
     }
     let inner = &s[1..s.len() - 1];
-    if inner.contains('"') || inner.contains('\n') || inner.contains('\r') {
-        return Err("quoted string must not contain quote/newline (grammar v0.3 has no escapes)".into());
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Err("unexpected unescaped quote inside quoted string".into()),
+            '\n' | '\r' => return Err("newline inside quoted string (one op = one line)".into()),
+            '\\' => match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                other => {
+                    return Err(format!(
+                        "invalid escape `\\{}` (grammar v0.4: only \\\" and \\\\)",
+                        other.map(|o| o.to_string()).unwrap_or_default()
+                    ))
+                }
+            },
+            c => out.push(c),
+        }
     }
-    Ok(inner.to_string())
+    Ok(out)
 }
 
 /// hex_digit = 0-9 | A-F; чётная длина (D9); пустой payload грамматичен.
@@ -229,7 +254,7 @@ impl<'a> Cur<'a> {
             .f
             .get(self.i)
             .copied()
-            .ok_or_else(|| format!("missing field `{prefix}` (fixed field order, grammar v0.3)"))?;
+            .ok_or_else(|| format!("missing field `{prefix}` (fixed field order, grammar v0.4)"))?;
         if !s.starts_with(prefix) {
             return Err(format!(
                 "expected field `{prefix}` (fixed order), got `{s}`"
@@ -386,7 +411,7 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
         }
     };
 
-    // PATH_MODE (grammar v0.3: exact_path | exact_stop | blend [ SP "t=" number ];
+    // PATH_MODE (grammar v0.4: exact_path | exact_stop | blend [ SP "t=" number ];
     // без t= легален — bare G64; t — G64 P-, число по D1)
     let path_mode = match lines[2].strip_prefix("PATH_MODE ") {
         Some("exact_path") => PathMode::ExactPath,
@@ -396,28 +421,28 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
             Some(t) => PathMode::Blend {
                 t: Some(num(t).map_err(|e| fail(format!("PATH_MODE blend: {e}"), 3, lines[2]))?),
             },
-            None => {
-                return Err(fail(
-                    format!(
-                        "invalid PATH_MODE `{}` (grammar v0.3: exact_path|exact_stop|blend [ t=<number> ])",
-                        lines[2]
-                    ),
-                    3,
-                    lines[2],
-                ))
-            }
-        },
-        None => {
-            return Err(fail(
-                format!(
-                    "invalid PATH_MODE `{}` (grammar v0.3: exact_path|exact_stop|blend [ t=<number> ])",
-                    lines[2]
-                ),
-                3,
-                lines[2],
-            ))
-        }
-    };
+                    None => {
+                        return Err(fail(
+                            format!(
+                                "invalid PATH_MODE `{}` (grammar v0.4: exact_path|exact_stop|blend [ t=<number> ])",
+                                lines[2]
+                            ),
+                            3,
+                            lines[2],
+                        ))
+                    }
+                },
+                None => {
+                    return Err(fail(
+                        format!(
+                            "invalid PATH_MODE `{}` (grammar v0.4: exact_path|exact_stop|blend [ t=<number> ])",
+                            lines[2]
+                        ),
+                        3,
+                        lines[2],
+                    ))
+                }
+            };
 
     // FRAME_PRESET (опциональная строка; отсутствие = none)
     let mut i = 3usize;
@@ -508,8 +533,9 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 }
 
 /// Токенизация OP-строки: поля через одиночный SP; символ '"' переключает
-/// режим «в кавычках» (reason может содержать пробелы; экранирования в
-/// grammar v0.3 нет — `char_without_quote_or_nl`).
+/// режим «в кавычках» (reason может содержать пробелы). Внутри кавычек `\`
+/// начинает escape-последовательность grammar v0.4 (`\"`, `\\`) — экранированная
+/// кавычка НЕ переключает режим и не рвёт поле.
 fn split_fields(line: &str) -> Result<Vec<&str>, String> {
     let b = line.as_bytes();
     let mut out: Vec<&str> = Vec::new();
@@ -518,6 +544,11 @@ fn split_fields(line: &str) -> Result<Vec<&str>, String> {
     let mut i = 0usize;
     while i < b.len() {
         match b[i] {
+            b'\\' if in_quote => {
+                // escape: пропустить оба байта (\x); `\` последним байтом
+                // строки оставляет in_quote=true → unterminated
+                i += 2;
+            }
             b'"' => {
                 in_quote = !in_quote;
                 i += 1;
@@ -552,10 +583,13 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
     if fields.len() < 2 {
         return Err("OP line needs op number and op keyword".into());
     }
-    // op_num = ровно 3 цифры (zero-padded: 001…)
+    // op_num = 3+ цифр (grammar v0.4, back-compatible superset v0.3 — аудит #3):
+    // zero-pad min 3 (эмиттер format!("{n:03}") → 001…999), 1000+ легальны
     let numf = fields[0];
-    if numf.len() != 3 || !numf.bytes().all(|c| c.is_ascii_digit()) {
-        return Err(format!("invalid op number `{numf}` (expected zero-padded 3 digits, e.g. 001)"));
+    if numf.len() < 3 || !numf.bytes().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            "invalid op number `{numf}` (expected zero-padded 3+ digits, e.g. 001)"
+        ));
     }
     let kw = fields[1];
     let mut c = Cur { f: &fields[2..], i: 0 };

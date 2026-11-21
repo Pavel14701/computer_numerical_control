@@ -294,17 +294,21 @@ fn frame_preset_invalid() {
 
 #[test]
 fn op_num_valid() {
-    // zero-padded: 001…999
-    for n in [1, 42, 999] {
+    // zero-padded: 001…, минимум 3 цифры; 1000+ легальны (grammar v0.4 — аудит #3)
+    for n in [1, 42, 999, 1000, 1234] {
         let text = wrap(&format!("OP {n:03} PEND\n"));
         let p = ok_lex(&text, "op_num");
         assert_eq!(p.ops.len(), 1);
     }
+    // zero-pad min 3 сохраняется эмиттером ({n:03})
+    let text = wrap("OP 007 PEND\n");
+    ok_lex(&text, "op_num zero-pad");
 }
 
 #[test]
 fn op_num_invalid() {
-    for bad in ["1", "01", "0001", "12a", "abc", "-01", "  1"] {
+    // меньше 3 цифр / нецифры
+    for bad in ["1", "01", "12a", "abc", "-01", "  1"] {
         let text = wrap(&format!("OP {bad} PEND\n"));
         err_lex(&text, "bad op_num");
     }
@@ -609,7 +613,8 @@ fn raw_payload_invalid() {
 
 #[test]
 fn raw_reason_quoted_valid() {
-    // quoted = '"' { char_without_quote_or_nl } '"' — пробелы внутри легальны
+    // quoted = '"' , { escaped | char_without_quote_or_nl } '"' — пробелы
+    // внутри легальны; строки без обратного слэша декодируются как в v0.3
     for r in ["vendor macro", "", "G65 call #1 (see COVERAGE)", "0D0A"] {
         let text = wrap(&format!("OP 001 RAW reason=\"{r}\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"));
         let p = ok_lex(&text, "raw reason");
@@ -618,15 +623,36 @@ fn raw_reason_quoted_valid() {
             other => panic!("expected Raw, got {other:?}"),
         }
     }
+    // grammar v0.4 (аудит #12): экранирование \" → '"' и \\ → '\'
+    let cases = [
+        ("say \\\"hi\\\"", "say \"hi\""),
+        ("C:\\\\path", "C:\\path"),
+        ("end\\\\", "end\\"),
+        ("\\\"\\\"", "\"\""),
+    ];
+    for (src, decoded) in cases {
+        let text = wrap(&format!("OP 001 RAW reason=\"{src}\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"));
+        let p = ok_lex(&text, "escaped reason");
+        match &p.ops[0] {
+            Op::Raw { reason, .. } => assert_eq!(reason, decoded, "escape {src:?}"),
+            other => panic!("expected Raw, got {other:?}"),
+        }
+    }
 }
 
 #[test]
 fn raw_reason_invalid() {
-    // экранирования нет: '"' внутри; незакрытая; NL внутри невозможен одной
-    // строкой, но кавычка-чек проверяем
+    // непарная кавычка-текст: `"` внутри; незакрытая; NL внутри невозможен
+    // одной строкой, но кавычка-чек проверяем
     for r in ["bad\"quote", "unterminated", "\""] {
         let text = wrap(&format!("OP 001 RAW reason={r} code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"));
         err_lex(&text, "bad raw reason");
+    }
+    // grammar v0.4: `\` не перед `"`/`\` — невалидный escape (каноничность:
+    // у одного AST одна текстовая форма)
+    for r in ["a\\zb", "a\\", "\\ x", "x\\"] {
+        let text = wrap(&format!("OP 001 RAW reason=\"{r}\" code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n"));
+        err_lex(&text, "invalid escape");
     }
     // нет reason=
     let miss = wrap("OP 001 RAW code=E_INVALID_INPUT src=0.1-0.0 payload=00\nOP 002 PEND\n");

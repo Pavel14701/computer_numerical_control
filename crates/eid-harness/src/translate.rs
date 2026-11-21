@@ -6,10 +6,14 @@
 //! translate): [`translate_checked`] для файловых источников,
 //! [`translate_checked_golden`] для golden-AST (диалектно-нейтральный источник:
 //! любой Raw-оп отказывает любой цели).
+//!
+//! Формат диагностики отказа — `eid_core::diag::raw_refusal` (аудит #7:
+//! прежний локальный дубликат с зеркалом в eid-integration::translate
+//! устранён — единая точка в core).
 
 use eid_core::adapter::Adapter;
-use eid_core::ast::{Op, Program, SrcSpan};
-use eid_core::diag::{Diagnostic, ErrorCode, Stage};
+use eid_core::ast::{Op, Program};
+use eid_core::diag::{raw_refusal, Diagnostic};
 
 /// Кросс-диалектная трансляция с проверкой RAW-правила:
 /// 1) `parse` от источника;
@@ -44,11 +48,11 @@ fn checked_emit(
     program: &Program,
     cross: bool,
 ) -> Result<(Program, String), Vec<Diagnostic>> {
-    let raw_spans: Vec<&SrcSpan> = program
+    let raw_spans: Vec<eid_core::ast::SrcSpan> = program
         .ops
         .iter()
         .filter_map(|o| match o {
-            Op::Raw { src, .. } => Some(src),
+            Op::Raw { src, .. } => Some(src.clone()),
             _ => None,
         })
         .collect();
@@ -59,37 +63,13 @@ fn checked_emit(
     Ok((program.clone(), text))
 }
 
-/// Одна диагностика отказа: код `E_RAW_UNTRANSLATABLE`, все Raw-спаны
-/// перечислены (`options` + первый в `src`), количество — в message.
-fn raw_refusal(raw_spans: &[&SrcSpan]) -> Diagnostic {
-    Diagnostic {
-        stage: Stage::Emit,
-        code: ErrorCode::RawUntranslatable,
-        message: format!(
-            "cross-dialect translation of a program containing {} RAW op(s) is forbidden (SPEC §8.2: same-dialect only)",
-            raw_spans.len()
-        ),
-        src: raw_spans.first().map(|s| (*s).clone()),
-        options: raw_spans.iter().map(|s| format_span(s)).collect(),
-        limit: None,
-        // Translate (EID → целевой диалект) — emit-сторона потока
-        // parse → canonicalize → verify → emit (diag.rs, итерация 4).
-    }
-}
-
-fn format_span(s: &SrcSpan) -> String {
-    format!(
-        "{}:{}.{}-{}.{}",
-        s.file, s.line_start, s.col_start, s.line_end, s.col_end
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use eid_core::ast::{
         Coolant, Frame, Num, PathMode, Spindle, SrcSpan, State, Units, Wcs,
     };
+    use eid_core::diag::{ErrorCode, Stage};
 
     fn num(v: f64) -> Num {
         Num::new(format!("{v:.4}"), v)
