@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-21 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.16 · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.8 (Fanuc-колонка) · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev) — все внесены, лицензии проверены**
+**Версии:** SPEC v0.16 · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.8 (Fanuc-колонка) · CORPUS v0.7 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev) — все внесены, лицензии проверены**
 
 ---
 
