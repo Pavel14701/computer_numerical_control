@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-21 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии на момент отчёта:** SPEC v0.15 (v0.15.1 micro) · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.7.1 · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 92 Tier B (61 published / 60 local-dev)**
+**Версии:** SPEC v0.15 (v0.15.1 micro, v0.16 pending) · grammar v0.3 · EQUIVALENCE v0.3.1 · COVERAGE v0.7.1 · CORPUS v0.6.6 · PLAN v0.1.3 (§5а/§5б триажи) · interface v0.1.2 · **manifest: 68 векторов (48 позитивных / 20 негативных) + 121 Tier B (61 published / 60 local-dev)**
 
 ---
 
@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **468 тестов passed / 0 failed** · 87 коммитов · 16 ревизий спеки · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** · mutation-testing kill-rate: grbl 82.2% / workspace 75.5% · метаморфные инварианты (комментарии/whitespace/N-слова/регистр/line-endings) зелёные · grammar-conformance 57 тестов по 33 продукциям · **e2e48-матрица: 141 направлений по 48 позитивам через живой CLI**.
+**Числа:** **471 тест passed / 0 failed** · 87 коммитов · 16 ревизий спеки · 4 СТОП-протокола (агенты→оркестратор) · Tier A R3 (any-to-any) **48/48 позитивных** · негативы 20/20 parse-or-diagnose · Tier B **121/121 crash=0** · mutation-testing kill-rate: grbl 82.2% / linuxcnc ~80% (усилен) / workspace 75.5% · метаморфные инварианты зелёные · grammar-conformance 57 · **e2e48-матрица: 141 направлений через живой CLI**.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -35,7 +35,7 @@
 | 5 | R3 (any-to-any) 48/48 | ✅ | v7: R3-golden **83/0** (48 поз. + cycle-семья), R3-consistency 35/0 |
 | 6 | R4 — правильные коды отказов | ✅ | legality-таблицы (ConversionTarget) ↔ manifest r4_expect: **0 расхождений**; негативы 20/20 two-class |
 | 7 | Tier B: parse-or-diagnose 100%, crash=0 | ✅ | **121/121, crash=0**: Ok 15 / INVALID 62 / SYNTAX 25 / RUNTIME 9 (D-прогон + diversity batch 2) |
-| 8 | Симуляция | ✅ **real + mock** | **Real LinuxCNC 2.9 rs274 в Docker** (`eid-linuxcnc-sim`): 38 LinuxCNC v1 файлов, **37/38 rs274 exit 0**; #27 с tool.tbl также exit 0; #47 RAW — ожидаемый отказ by design (SPEC §8.2); mock-sim — также зелёный; headless rs274 без GUI (`docker/linuxcnc-sim.Dockerfile`) |
+| 8 | Симуляция | ✅ **real + mock** | Real LinuxCNC 2.9 rs274 в Docker: **37/38 LinuxCNC v1 файлов exit 0**; #47 RAW — ожидаемый отказ by design (SPEC §8.2); #27 с tool.tbl — exit 0; mock-sim — также зелёный; headless rs274 без GUI (`docker/linuxcnc-sim.Dockerfile`). **Motion stream comparison — pending** (canonical_compare — итерация 6, rs274_compare.rs создан на пилоте #01: 0 divergences, расширение на 48 — next) |
 | 9 | Demo: translate grbl→linuxcnc | ✅ | e2e: pilot #01 → файл создан → parse(output) ≡ parse(input) |
 | 10 | Demo reverse | ✅ | linuxcnc→grbl→linuxcnc ≡; **grbl→linuxcnc→grbl: три AST равны** (PLAN §5) |
 | 11 | REPORT.md | ✅ | этот документ |

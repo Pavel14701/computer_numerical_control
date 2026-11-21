@@ -3,7 +3,7 @@
 - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)
 - corpus: `v0.1-pilot` (векторов: 68)
 - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)
-- сводка runner: Pass = 344, Fail = 2, Pending = 0, Skipped = 2
+- сводка runner: Pass = 343, Fail = 3, Pending = 0, Skipped = 2
 
 ## Отказы по этапам (Diagnostic.stage, interface v0.1.2)
 
@@ -13,12 +13,12 @@
 | Canonicalize | 0 |
 | Verify | 0 |
 | Emit | 0 |
-| не-диагностический | 2 |
+| не-диагностический | 3 |
 
 ## Tier B — parse-or-diagnose
 
-- файлов: 92, Ok: 29, no-adapter: 6, panics: 0
-- отказы по классам: E_INVALID_INPUT × 25, E_RUNTIME_STATE × 7, E_UNSUPPORTED_SYNTAX × 25
+- файлов: 92, Ok: 36, no-adapter: 6, panics: 0
+- отказы по классам: E_INVALID_INPUT × 29, E_RUNTIME_STATE × 20, E_UNSUPPORTED_SEMANTICS × 1
 - crash-free: true
 
 ## Счётчики по отношениям
@@ -31,7 +31,7 @@
 | R3-consistency | 35 | 0 | 0 | 0 |
 | R1-text | 8 | 0 | 0 | 0 |
 | R4 | 8 | 0 | 0 | 2 |
-| parse | 114 | 2 | 0 | 0 |
+| parse | 113 | 3 | 0 | 0 |
 
 ## Покрытие R3 (CORPUS v0.6)
 
@@ -46,6 +46,10 @@ R3 (any-to-any) доказывается ТОЛЬКО на материализ�
 
 - `R4` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n3_raw_vendor_block/raw_vendor_block.grbl.ngc→grbl-1.1` | ожидалось: emit отказ E_RAW_UNTRANSLATABLE | фактически: Skipped: same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)
 - `R4` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n3_raw_vendor_block/raw_vendor_block.linuxcnc.ngc→linuxcnc` | ожидалось: emit отказ E_RAW_UNTRANSLATABLE | фактически: Skipped: same-dialect пара: RAW-эмиссия легальна (verbatim, CORPUS v0.5.3)
+
+### N11 — m98_call
+
+- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc` | ожидалось: отказ E_UNSUPPORTED_SYNTAX | фактически: Fail: expected refusal E_UNSUPPORTED_SYNTAX, parsed ok (правило двух классов: структурный негатив не может быть Ok)
 
 ### N14 — program_end_missing
 
