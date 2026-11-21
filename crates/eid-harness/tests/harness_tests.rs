@@ -478,10 +478,11 @@ fn manifest_loads_40_vectors_20_goldens() {
 fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     let m = load_manifest();
     let v = |id: &str| m.vectors.iter().find(|v| v.id == id).unwrap_or_else(|| panic!("no {id}"));
-    // notice: true — только #13 (CORPUS §1.1)
+    // notice: true — только #43 (CORPUS §1.1; #13 снят: диспозиция drop →
+    // 360°-дуга, SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
     assert_eq!(
         m.vectors.iter().filter(|v| v.notice).map(|v| v.id.clone()).collect::<Vec<_>>(),
-        vec!["13".to_string(), "43".to_string()]
+        vec!["43".to_string()]
     );
     // r4_expect непустой: #27 (grbl E_UNSUPPORTED_SYNTAX) и #47 (обе цели E_RAW_UNTRANSLATABLE)
     let v27 = v("27");
@@ -626,15 +627,27 @@ fn golden_47_raw_payload_byte_exact() {
 }
 
 #[test]
-fn golden_13_is_canonical_without_dropped_op() {
+fn golden_13_is_canonical_full_circle() {
+    // CORPUS v0.6.7 (SPEC §6 v0.17, аудит #15): #13 — явный end, кванто-
+    // вавшийся к старту, при center ≠ start = ПОЛНЫЙ КРУГ 360° (не drop);
+    // golden = RAPID + ARC(cw, sweep=360°) + LINEAR + PEND, notice снят.
     let eid = EidTextAdapter::new();
     let path = golden_path("13_arc_degenerate_zero_sweep/golden.eid");
     let text = std::fs::read_to_string(&path).unwrap();
     let p = eid.parse(&text, "golden13").unwrap();
-    assert!(eid.take_notices().is_empty(), "golden AST каноничен: нулевой оп уже отброшен");
-    assert_eq!(p.ops.len(), 3, "RAPID + LINEAR + PEND (дуга отсутствует)");
+    assert!(eid.take_notices().is_empty(), "golden AST каноничен");
+    assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
     assert!(matches!(p.ops[0], Op::Rapid { .. }));
-    assert!(matches!(p.ops[1], Op::Linear { .. }));
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, dir, center, .. } => {
+            assert_eq!(sweep_deg.value, 360.0, "полный круг — drop→360°-дуга (v0.17)");
+            assert_eq!(*dir, Dir::Cw);
+            assert_eq!(center.x.value, 5.0);
+            assert_eq!(center.y.value, 0.0);
+        }
+        other => panic!("op 1 must be Arc, got {other:?}"),
+    }
+    assert!(matches!(p.ops[2], Op::Linear { .. }));
     let emitted = eid.emit(&p).unwrap();
     assert_eq!(emitted, text);
 }
@@ -1086,9 +1099,12 @@ fn registry_basics() {
 use eid_harness::runner::run_tier_b;
 
 #[test]
-fn tier_b_loader_parses_real_92() {
+fn tier_b_loader_parses_real_corpus() {
     let m = load_manifest();
-    assert_eq!(m.tier_b_files.len(), 92, "92 записи D (CORPUS Tier B первый выпуск)");
+    // Число-дисциплина CORPUS R-1: ожидание = фактическое число manifest-записей,
+    // никаких захардкоженных счётчиков (корпус растёт — тест не должен падать).
+    let total = m.tier_b_files.len();
+    assert!(total > 0, "manifest Tier B пуст");
     assert!(m.tier_b_files.iter().all(|f| f.path.is_file()), "все пути существуют");
     assert!(
         m.tier_b_files.iter().all(|f| f.expect == "parse-or-diagnose"),
@@ -1098,18 +1114,34 @@ fn tier_b_loader_parses_real_92() {
         m.tier_b_files.iter().all(|f| f.license.is_some() || f.source.is_some()),
         "provenance: лицензия/источник указаны"
     );
-    // После нормализации (ruling): все dialect-ключи канонические
-    let grbl = m.tier_b_files.iter().filter(|f| f.dialect == "grbl-1.1").count();
-    let lcnc = m.tier_b_files.iter().filter(|f| f.dialect == "linuxcnc").count();
-    let other = m.tier_b_files.iter().filter(|f| f.dialect != "grbl-1.1" && f.dialect != "linuxcnc").count();
-    assert_eq!(grbl + lcnc + other, 92, "92 = grbl-1.1 + linuxcnc + сторонние (marlin — no-adapter легален)");
-    assert_eq!(other, 6, "marlin-3dp — единственный сторонний диалект (сейчас {other})");
+    // Диалект-дисциплина: разбиение канонические/сторонние покрывает все записи,
+    // а каждый ключ — из известного набора (канонические grbl-1.1/linuxcnc;
+    // сторонние no-adapter: marlin-3dp, fanuc до регистрации eid-fanuc).
+    // Ловит опечатки и незарегистрированные диалекты без захардкоженных количеств.
+    const KNOWN_DIALECTS: [&str; 4] = ["grbl-1.1", "linuxcnc", "marlin-3dp", "fanuc"];
+    let canonical = m
+        .tier_b_files
+        .iter()
+        .filter(|f| f.dialect == "grbl-1.1" || f.dialect == "linuxcnc")
+        .count();
+    assert_eq!(
+        canonical + (total - canonical),
+        total,
+        "разбиение диалектов покрывает все записи"
+    );
+    assert!(
+        m.tier_b_files
+            .iter()
+            .all(|f| KNOWN_DIALECTS.contains(&f.dialect.as_str())),
+        "все dialect-ключи из известного набора {KNOWN_DIALECTS:?} — новый диалект сначала зарегистрируй"
+    );
 }
 
 #[test]
-fn tier_b_runner_parse_or_diagnose_real_92() {
-    // Реальный прогон 92 файлов: crash=0 инвариант (тест сам не паникует),
-    // Ok-счётчик и отказы по классам фиксируются; no-adapter для сторонних.
+fn tier_b_runner_parse_or_diagnose_real_corpus() {
+    // Реальный прогон всего Tier B (CORPUS R-1: ожидания из manifest, никаких
+    // захардкоженных счётчиков): crash=0 инвариант, runner обработал ровно все
+    // manifest-записи, каждая — Ok / отказ (по классам) / no-adapter.
     let m = load_manifest();
     let mut extra = BTreeMap::new();
     extra.insert(
@@ -1122,10 +1154,20 @@ fn tier_b_runner_parse_or_diagnose_real_92() {
     );
     let reg = Registry::new();
     let rep = run_tier_b(&m, &reg, &extra);
+    let total = m.tier_b_files.len();
     assert!(rep.is_crash_free(), "crash=0 инвариант Tier B");
-    assert_eq!(rep.total, 92);
-    assert_eq!(rep.parse_ok + rep.no_adapter + rep.refused_by_code.values().sum::<usize>(), 92,
-        "каждый файл: Ok, отказ (по классам) или no-adapter");
+    assert_eq!(rep.total, total, "runner обработал ровно все manifest-записи");
+    assert_eq!(rep.entries.len(), total, "исход зафиксирован по каждой записи");
+    assert_eq!(
+        rep.parse_ok + rep.no_adapter + rep.refused_by_code.values().sum::<usize>(),
+        total,
+        "каждый файл: Ok, отказ (по классам) или no-adapter"
+    );
+    // каждая manifest-запись в отчёте ровно один раз (пути не дублируются)
+    let mut seen: Vec<&str> = rep.entries.iter().map(|e| e.path.as_str()).collect();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), total, "пути в отчёте уникальны и покрывают manifest");
     println!(
         "tier_b: total={} ok={} no_adapter={} refused={:?}",
         rep.total, rep.parse_ok, rep.no_adapter, rep.refused_by_code
