@@ -1,6 +1,6 @@
 (* ==================================================================
    EID/L1 — канонический текстовый формат. АВТОРИТЕТНОЕ ОПРЕДЕЛЕНИЕ.
-   Версия: v0.3 (привязан к SPEC-EID-L1 v0.15, EQUIVALENCE v0.2,
+   Версия: v0.4 (привязан к SPEC-EID-L1 v0.17, EQUIVALENCE v0.2,
    CORPUS-CONTRACT v0.4). Ревизии — через CHANGELOG.md.
    v0.2: PATH_MODE blend принимает t= (G64 P; вопрос A1 отчёта A) —
    без t= легален (bare G64); magic-строка = "EID/L1 v0.2".
@@ -67,7 +67,10 @@ axis_letter      = "X" | "Y" | "Z" ;
 
 (* один оп = одна физическая строка (SPEC §12) *)
 op_line          = "OP" , SP , op_num , SP , op_body , NL ;
-op_num           = digit , digit , digit ;                (* zero-padded: 001… *)
+(* v0.4: op_num = 3+ цифр (back-compatible superset; эмиттер сохраняет
+   zero-pad min 3 → 001…999, 1000+ легальны; magic НЕ меняется —
+   существующие v0.3-файлы валидны без изменений, аудит #3) *)
+op_num           = digit , digit , digit , { digit } ;    (* zero-padded: 001… *)
 
 op_body          = rapid_op | linear_op | arc_op | dwell_op | tool_change_op
                  | stop_op | pend_op | wcs_define_op | wcs_set_here_op
@@ -152,6 +155,11 @@ integer          = digits ;
 digits           = digit , { digit } ;
 digit            = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
 hex_digit        = digit | "A" | "B" | "C" | "D" | "E" | "F" ;
-quoted           = '"' , { char_without_quote_or_nl } , '"' ;
+(* v0.4: экранирование \-префиксом (back-compatible superset; аудит #12) —
+   existing quoted-строки без обратного слэша семантика та же *)
+quoted           = '"' , { escaped | char_without_quote_or_nl } , '"' ;
+escaped          = backslash , ( quote | backslash ) ;
+quote            = "'"'" ;           (* символ двойной кавычки *)
+backslash        = "\\" ;            (* символ обратного слэша *)
 NL               = перевод строки ;
 SP               = одиночный пробел ;
