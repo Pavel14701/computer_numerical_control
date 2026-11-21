@@ -1,8 +1,15 @@
-//! Блок (кадр) Fanuc — результат разбора файла. Этап 1: lexing + word-классификация
-//! + проверка «один код на модальную группу», БЕЗ канонизации в EID.
+//! Блок (кадр) Fanuc — результат разбора файла. Этапы 1–2: lexing +
+//! word-классификация + проверка «один код на модальную группу» + byte-exact
+//! payload для RAW-опов, БЕЗ канонизации в EID.
 //! EOB `;` делит физическую строку на блоки (lexer.rs); пустые блоки — пропуск
 //! без диагностики (§1.3). Порядок слов в блоке произвольный (адресный язык,
 //! §1.3) — парсер адресных слов, не позиционный.
+//!
+//! RAW payload (ruling 5 оркестратора, D9-конвенция): payload Raw-фрагмента =
+//! точная байтовая вырезка фрагмента (`;` включён, whitespace сохранён);
+//! гарантия round-trip — конкатенация фрагментов строки + терминатор строки =
+//! исходная строка байт-в-байт. Пустые фрагменты между `;` (`G0;; G1`) —
+//! перенос байтов в payload следующего блока той же строки.
 
 use crate::lexer::{self, BlockToks, LexError, RawNum, Tok};
 use crate::state::{modal_group, GCode, MCode, ModalGroup, WordKind};
@@ -27,17 +34,21 @@ pub struct WordValue {
 pub struct Block {
     /// Физическая строка файла (несколько блоков могут делить строку — EOB).
     pub line_no: u32,
-    /// Текст фрагмента блока (между EOB `;`; для RAW payload — этап 2).
+    /// Текст фрагмента блока: точная вырезка (+ `;`; последний фрагмент строки
+    /// получает терминатор строки `\n`) — RAW payload, ruling 5.
     pub raw: String,
     pub g_codes: Vec<GCode>,
     pub m_codes: Vec<MCode>,
-    /// Слова-параметры словаря этапа 1 (F/I/J/K/R/S/X/Y/Z).
+    /// Слова-параметры словаря (F/I/J/K/R/S/X/Y/Z/P/Q/T/H/D/L/O/U/V/W/A/B/C/E).
     pub words: Vec<WordValue>,
-    /// Слова вне словаря этапа 1 (G/M вне словаря, P/Q/T/H/D/L/O/…) — сырьё
-    /// для line-level Raw (молчаливый пропуск запрещён).
+    /// G/M-коды вне словаря и вне raw-таблицы (generic-ведро) — сырьё для
+    /// line-level Raw с диагностикой текста (молчаливый пропуск запрещён).
     pub unsupported_words: Vec<WordValue>,
     pub comments: Vec<String>,
     pub marker: Option<Marker>,
+    /// Macro B-детект: `#`-слово / `[ ]`-выражение / letter-run — весь блок
+    /// line-level Raw{E_UNSUPPORTED_SYNTAX} (§4.3, COVERAGE §4).
+    pub macro_b: bool,
     /// Два кода одной модальной группы в блоке (нарушение Fanuc-правила, §1.1).
     pub modal_violation: Option<(ModalGroup, GCode)>,
 }
@@ -61,6 +72,15 @@ impl Block {
     pub fn units(&self) -> Option<GCode> {
         self.first_modal(ModalGroup::Units06)
     }
+    pub fn cycle(&self) -> Option<GCode> {
+        self.first_modal(ModalGroup::Cycle09)
+    }
+    pub fn retract(&self) -> Option<GCode> {
+        self.first_modal(ModalGroup::Retract10)
+    }
+    pub fn wcs(&self) -> Option<GCode> {
+        self.first_modal(ModalGroup::Wcs12)
+    }
 
     fn first_modal(&self, group: ModalGroup) -> Option<GCode> {
         self.g_codes.iter().copied().find(|g| modal_group(*g) == Some(group))
@@ -83,6 +103,7 @@ fn from_toks(bt: BlockToks, line_no: u32) -> Block {
         unsupported_words: Vec::new(),
         comments: Vec::new(),
         marker: None,
+        macro_b: false,
         modal_violation: None,
     };
     let mut seen: Vec<(ModalGroup, GCode)> = Vec::new();
@@ -119,34 +140,61 @@ fn from_toks(bt: BlockToks, line_no: u32) -> Block {
             Tok::Comment(text) => b.comments.push(text),
             Tok::Percent => b.marker = Some(Marker::Percent),
             Tok::Slash => b.marker = Some(Marker::BlockDelete),
+            Tok::MacroB => b.macro_b = true,
         }
     }
     b
 }
 
 /// Разбор файла целиком: физические строки → EOB-фрагменты → блоки.
-/// Пустые блоки (нет токенов и нет текста) — пропуск без диагностики (§1.3).
+/// Пустые блоки (нет токенов) — пропуск; их байты переносятся в payload
+/// следующего блока той же строки (byte-exact reconstruction, ruling 5).
 /// `%`-маркер — инертный файловый маркер (IGNORED_SAFE, §1.3): блока не
 /// создаёт, чтобы не ломать структурные проверки порядка program_end
 /// (trailing `%` после M30 — норма DNC-файлов).
-/// Raw-байты строки с терминатором — вопрос RAW payload (этап 2); этап 1 хранит
-/// фрагмент без `;`.
+/// Последний блок строки получает терминатор `\n` в payload (payload
+/// конкатенации фрагментов = исходная строка включая терминатор).
 pub fn parse_file(src: &str) -> ParsedFile {
     let mut out = ParsedFile { blocks: Vec::new(), lex_errors: Vec::new() };
-    for (idx, line) in src.split('\n').enumerate() {
+    let lines: Vec<&str> = src.split('\n').collect();
+    for (idx, line) in lines.iter().enumerate() {
         let line_no = (idx + 1) as u32;
+        // Есть ли `\n` после этой строки (split даёт хвостовой кусок после
+        // завершающего \n — тогда Terminated = true для предыдущих строк).
+        let terminated = idx + 1 < lines.len();
         match lexer::lex_line(line, line_no) {
             Err(e) => out.lex_errors.push(e),
             Ok(groups) => {
+                let mut carry = String::new();
+                let mut last_block: Option<usize> = None;
                 for bt in groups {
                     if bt.toks.is_empty() {
-                        continue; // пустой блок — легален (§1.3)
+                        carry.push_str(&bt.text); // пустой фрагмент — байты к следующему
+                        continue;
                     }
                     // Лексер гарантирует: `%`-строка = ровно один токен Percent.
                     if matches!(bt.toks[0], Tok::Percent) && bt.toks.len() == 1 {
                         continue;
                     }
-                    out.blocks.push(from_toks(bt, line_no));
+                    let mut raw = std::mem::take(&mut carry);
+                    raw.push_str(&bt.text);
+                    let bi = out.blocks.len();
+                    out.blocks.push(from_toks(
+                        BlockToks { toks: bt.toks, text: raw },
+                        line_no,
+                    ));
+                    last_block = Some(bi);
+                }
+                // Byte-exact (ruling 5): байты после последнего блока строки
+                // (напр. `\r` CRLF-терминатора, whitespace до `\n`) — к payload
+                // последнего блока строки; терминатор `\n` — в конец.
+                if let Some(bi) = last_block {
+                    if !carry.is_empty() {
+                        out.blocks[bi].raw.push_str(&carry);
+                    }
+                    if terminated {
+                        out.blocks[bi].raw.push('\n');
+                    }
                 }
             }
         }
@@ -183,7 +231,9 @@ mod tests {
         assert_eq!(f.blocks[1].line_no, 1);
         assert_eq!(f.blocks[0].motion(), Some(GCode::Rapid));
         assert_eq!(f.blocks[1].motion(), Some(GCode::Linear));
-        assert_eq!(f.blocks[1].raw, "G1 X5.");
+        // ruling 5: payload = точная вырезка + `\n` на последнем фрагменте.
+        assert_eq!(f.blocks[0].raw, "G0 X0;");
+        assert_eq!(f.blocks[1].raw, " G1 X5.;\n");
     }
 
     #[test]
@@ -192,6 +242,17 @@ mod tests {
         assert_eq!(f.blocks.len(), 2); // пустые `;;`/`;` и `%`-маркер пропущены
         assert_eq!(f.blocks[0].g_codes, vec![GCode::UnitsMm]);
         assert_eq!(f.blocks[1].motion(), Some(GCode::Rapid));
+    }
+
+    #[test]
+    fn empty_fragment_bytes_carry_to_next_block() {
+        // `G0;; G1 X5` — пустой фрагмент `;` переносится в payload следующего.
+        let f = parse_file("G0;; G1 X5.\n");
+        assert_eq!(f.blocks.len(), 2);
+        assert_eq!(f.blocks[0].raw, "G0;");
+        assert_eq!(f.blocks[1].raw, "; G1 X5.\n");
+        // Конкатенация payload'ов = исходная строка (ruling 5).
+        assert_eq!(format!("{}{}", f.blocks[0].raw, f.blocks[1].raw), "G0;; G1 X5.\n");
     }
 
     #[test]
@@ -208,12 +269,27 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_words_out_of_dictionary() {
-        // G43 + H — вне словаря этапа 1; G54 — этап 2; T — вне словаря.
-        let f = parse_file("G43 H2;\nG54;\nT5;\nM3;\n");
-        for b in &f.blocks {
-            assert!(!b.unsupported_words.is_empty(), "raw-сырьё: {:?}", b.raw);
-        }
+    fn stage2_words_and_gcodes_in_dictionary() {
+        // Этап 2: G43/H — вне enum (raw-таблица → unsupported); G54 — enum
+        // (группа 12); T/P/Q/L — contextual-слова (не unsupported).
+        let f = parse_file("G43 H2;\nG54;\nT5 P500 Q2 L3;\nM3;\n");
+        assert!(f.blocks[0].unsupported_words.len() == 1, "G43 → unsupported (raw-таблица)");
+        assert!(f.blocks[0].word('H').is_some());
+        assert_eq!(f.blocks[1].wcs(), Some(GCode::Wcs54));
+        assert!(f.blocks[1].unsupported_words.is_empty());
+        assert_eq!(f.blocks[2].word('T').map(|n| n.value), Some(5.0));
+        assert_eq!(f.blocks[2].word('P').map(|n| n.value), Some(500.0));
+        assert_eq!(f.blocks[2].word('Q').map(|n| n.value), Some(2.0));
+        assert_eq!(f.blocks[2].word('L').map(|n| n.value), Some(3.0));
+        assert_eq!(f.blocks[3].m_codes, vec![MCode::SpindleCw]);
+    }
+
+    #[test]
+    fn macro_b_flagged() {
+        let f = parse_file("#100 = 5;\nIF [1 GT 2] GOTO 9;\nG1 X5. F100.;\n");
+        assert!(f.blocks[0].macro_b);
+        assert!(f.blocks[1].macro_b);
+        assert!(!f.blocks[2].macro_b);
     }
 
     #[test]
@@ -221,18 +297,40 @@ mod tests {
         let b = &parse_file("G0 G1 X5.;\n").blocks[0];
         assert_eq!(b.modal_violation, Some((ModalGroup::Motion01, GCode::Rapid)));
         // Несколько групп в одном блоке легальны (§1.1).
-        let b = &parse_file("G90 G17 G21 G0 X0 Y0;\n").blocks[0];
+        let b = &parse_file("G90 G17 G21 G94 G54 G0 X0 Y0;\n").blocks[0];
         assert_eq!(b.modal_violation, None);
+        // Цикл + motion (разные группы 09/01) легальны — цикл старше в кадре.
+        let b = &parse_file("G0 G81 X10. Z-5. R2.;\n").blocks[0];
+        assert_eq!(b.modal_violation, None);
+        assert_eq!(b.cycle(), Some(GCode::CycleDrill));
+        // Два кода группы 09 — нарушение.
+        let b = &parse_file("G81 G82 X10. Z-5. R2.;\n").blocks[0];
+        assert_eq!(b.modal_violation, Some((ModalGroup::Cycle09, GCode::CycleDrill)));
     }
 
     #[test]
-    fn m30_and_bare_s() {
-        let f = parse_file("M30;\nM2;\nS5000;\n");
-        assert_eq!(f.blocks[0].m_codes, vec![MCode::ProgramEnd]);
-        assert_eq!(f.blocks[1].m_codes, vec![MCode::ProgramEnd]);
+    fn m_codes_stage2_matrix() {
+        let f = parse_file("M0;\nM1;\nM3;\nM6;\nM8;\nM9;\nM19;\nM98;\nM64;\nM30;\n");
+        assert_eq!(f.blocks[0].m_codes, vec![MCode::ProgramStop]);
+        assert_eq!(f.blocks[1].m_codes, vec![MCode::OptionalStop]);
+        assert_eq!(f.blocks[2].m_codes, vec![MCode::SpindleCw]);
+        assert_eq!(f.blocks[3].m_codes, vec![MCode::ToolChange]);
+        assert_eq!(f.blocks[4].m_codes, vec![MCode::CoolantFlood]);
+        assert_eq!(f.blocks[5].m_codes, vec![MCode::CoolantOff]);
+        assert_eq!(f.blocks[6].m_codes, vec![MCode::SpindleOrient]);
+        assert_eq!(f.blocks[7].m_codes, vec![MCode::SubCall]);
+        // M64 — builder-specific → generic-ведро (unsupported, SYNTAX).
+        assert!(f.blocks[8].m_codes.is_empty());
+        assert_eq!(f.blocks[8].unsupported_words[0].letter, 'M');
+        assert_eq!(f.blocks[9].m_codes, vec![MCode::ProgramEnd]);
+    }
+
+    #[test]
+    fn bare_s_stored() {
+        let f = parse_file("S5000;\n");
         // Голое S — поглощение (сохранение оборотов; §3 отчёта).
-        assert_eq!(f.blocks[2].word('S').map(|n| n.value), Some(5000.0));
-        assert!(f.blocks[2].unsupported_words.is_empty());
+        assert_eq!(f.blocks[0].word('S').map(|n| n.value), Some(5000.0));
+        assert!(f.blocks[0].unsupported_words.is_empty());
     }
 
     #[test]
@@ -249,5 +347,16 @@ mod tests {
         let f = parse_file("/ G1 X5.;\nG0 X0. Y0.;\n");
         assert_eq!(f.blocks[0].marker, Some(Marker::BlockDelete));
         assert_eq!(f.blocks[1].marker, None);
+    }
+
+    #[test]
+    fn payload_round_trip_single_line() {
+        // ruling 5 golden (лексер-уровень): 2 фрагмента одной строки —
+        // конкатенация payload + терминатор = исходная строка байт-в-байт.
+        let src = "G43 H2; T5;\n";
+        let f = parse_file(src);
+        assert_eq!(f.blocks.len(), 2);
+        let recon: String = f.blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(recon, src);
     }
 }

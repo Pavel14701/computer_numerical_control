@@ -35,6 +35,10 @@ pub enum Tok {
     Slash,
     /// `%` — маркер начала/конца файла (DNC), IGNORED_SAFE (§1.3).
     Percent,
+    /// Macro B — детект `#`-слова / `[ ]`-выражения / letter-run ключевого
+    /// слова (IF/GOTO/THEN/WHILE/DO/END, операторы GT/LT/…). Остаток блока
+    /// потребляется как raw-текст (§4.3; диспозиция — line-level Raw{SYNTAX}).
+    MacroB,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,13 +75,19 @@ pub const MAX_INTEGER_DIGITS: u32 = 9;
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockToks {
     pub toks: Vec<Tok>,
-    /// Текст фрагмента (без `;`; для RAW payload — этап 2).
+    /// Точная байтовая вырезка фрагмента из строки: от конца предыдущего `;`
+    /// до `;` ВКЛЮЧИТЕЛЬНО (последний фрагмент — до конца строки). Для RAW
+    /// payload (ruling 5: конкатенация фрагментов строки + терминатор строки =
+    /// исходная строка байт-в-байт). Не тримируется.
     pub text: String,
 }
 
 /// Разбор одной физической строки на блоки: `G0 X0; G1 X5;` → 2 блока.
 /// `;` внутри `( )`-комментария — текст комментария, НЕ EOB.
 /// `\r` (CRLF) трактуется как whitespace.
+/// Macro B: `#`, `[`, `]`, letter-run (IF/GOTO/THEN/WHILE/DO/END/…) →
+/// `Tok::MacroB`, остаток блока потребляется как raw-текст до `;` — лексика
+/// макро-выражений (`=`, `+`, GT/…) не порождает ошибок разбора (§4.3).
 pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
     let err = |col: u32, kind: LexErrorKind| LexError { line: line_no, col, kind };
     let cs: Vec<char> = line.chars().collect();
@@ -96,20 +106,40 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
     let mut groups: Vec<BlockToks> = Vec::new();
     let mut cur: Vec<Tok> = Vec::new();
     let mut start = 0usize; // начало текста текущего фрагмента
+    let mut raw_mode = false; // Macro B: потребление блока как raw-текста
 
     while i < cs.len() {
         let c = cs[i];
-        if c.is_whitespace() {
+        if raw_mode {
+            // Macro B-остаток: всё до `;` — raw-текст (включая `(`, `=` и пр.).
+            if c == ';' {
+                groups.push(BlockToks {
+                    toks: std::mem::take(&mut cur),
+                    text: cs[start..=i].iter().collect::<String>(),
+                });
+                raw_mode = false;
+                i += 1;
+                start = i;
+            } else {
+                i += 1;
+            }
+        } else if c.is_whitespace() {
             i += 1;
         } else if c == ';' {
             // EOB: закрыть текущий блок (даже пустой — блоки без слов легальны,
-            // канонизатор/parse_file их пропустит без диагностики).
+            // канонизатор/parse_file их пропустит без диагностики). Вырезка —
+            // до `;` включительно (ruling 5, byte-exact реконструкция).
             groups.push(BlockToks {
                 toks: std::mem::take(&mut cur),
-                text: cs[start..i].iter().collect::<String>().trim().to_string(),
+                text: cs[start..=i].iter().collect::<String>(),
             });
             i += 1;
             start = i;
+        } else if c == '#' || c == '[' || c == ']' {
+            // Macro B: переменная/выражение — детект, остаток блока — raw.
+            cur.push(Tok::MacroB);
+            raw_mode = true;
+            i += 1;
         } else if c == '(' {
             let open_col = i as u32 + 1;
             let text_start = i + 1;
@@ -138,10 +168,20 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
         } else if c.is_ascii_alphabetic() {
             let letter = c.to_ascii_uppercase();
             let word_col = i as u32 + 1;
-            i += 1;
-            while i < cs.len() && cs[i].is_whitespace() {
-                i += 1;
+            let mut j = i + 1;
+            while j < cs.len() && cs[j].is_whitespace() {
+                j += 1;
             }
+            if j < cs.len() && (cs[j].is_ascii_alphabetic() || matches!(cs[j], '#' | '[' | ']')) {
+                // Letter-run (`IF`, `GOTO`, `WHILE`, `GT`, …) — Macro B
+                // конструкция; в статическом подмножестве легальных
+                // двухбуквенных слов нет (адресный язык — одна буква + число).
+                cur.push(Tok::MacroB);
+                raw_mode = true;
+                i += 1;
+                continue;
+            }
+            i = j;
             let Some((num, next)) = read_number(&cs, i) else {
                 return Err(err(word_col, LexErrorKind::BadNumber));
             };
@@ -166,8 +206,10 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
             return Err(err(i as u32 + 1, LexErrorKind::UnexpectedChar(c)));
         }
     }
-    // Хвост без завершающего `;` — последний блок (DNC-файлы без trailing EOB).
-    let tail: String = cs[start..].iter().collect::<String>().trim().to_string();
+    // Хвост без завершающего `;` — последний блок (DNC-файлы без trailing
+    // EOB). Хвост из одних whitespace тоже отдаётся (byte-exact: `\r`
+    // CRLF-терминатора доходит до payload последнего блока строки).
+    let tail: String = cs[start..].iter().collect::<String>();
     if !cur.is_empty() || !tail.is_empty() {
         groups.push(BlockToks { toks: cur, text: tail });
     }
@@ -232,7 +274,9 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].toks, vec![word('G', "0", false), word('X', "0", false)]);
         assert_eq!(groups[1].toks, vec![word('G', "1", false), word('X', "5", false)]);
-        assert_eq!(groups[0].text, "G0 X0");
+        // ruling 5: точная вырезка фрагмента, `;` включён, без трима.
+        assert_eq!(groups[0].text, "G0 X0;");
+        assert_eq!(groups[1].text, " G1 X5;");
     }
 
     #[test]
@@ -241,7 +285,7 @@ mod tests {
         // группу (пустые блоки легальны — пропуск без диагностики, §1.3).
         let groups = lex_line("G1 X5.;", 1).unwrap();
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].text, "G1 X5.");
+        assert_eq!(groups[0].text, "G1 X5.;");
         // `;;` — только пустые блоки: группы без слов (parse_file пропустит).
         let groups = lex_line(" ;; ", 2).unwrap();
         assert!(groups.iter().all(|g| g.toks.is_empty()));
@@ -252,7 +296,7 @@ mod tests {
         // DNC-выгрузка: последний блок без `;`.
         let groups = lex_line("G0 X0; G1 X5.", 1).unwrap();
         assert_eq!(groups.len(), 2);
-        assert_eq!(groups[1].text, "G1 X5.");
+        assert_eq!(groups[1].text, " G1 X5.");
     }
 
     #[test]
@@ -276,6 +320,65 @@ mod tests {
         assert_eq!(e.kind, LexErrorKind::NestedComment);
         let e = lex_line("(unclosed G1 X1", 2).unwrap_err();
         assert_eq!(e.kind, LexErrorKind::UnterminatedComment);
+    }
+
+    #[test]
+    fn macro_b_hash_expression_detected() {
+        // `#`-переменная + арифметика: детект MacroB, остаток блока — raw
+        // (`=`, `+` не порождают ошибок лексики, §4.3).
+        let groups = lex_line("#100 = #100 + 1;", 1).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].toks.contains(&Tok::MacroB));
+        assert_eq!(groups[0].text, "#100 = #100 + 1;");
+        // Макро-строка не роняет лексер даже с `(`/`)`-текстом внутри.
+        let groups = lex_line("IF [#1 GT 5] GOTO 10;", 2).unwrap();
+        assert!(groups[0].toks.contains(&Tok::MacroB));
+    }
+
+    #[test]
+    fn macro_b_bracket_and_letter_runs() {
+        // `[ ]`-выражение.
+        assert!(lex_line("X[ #1 + 5 ];", 1).unwrap()[0].toks.contains(&Tok::MacroB));
+        // Letter-runs: IF/GOTO/WHILE/DO/END/THEN/GT/LT (двухбуквенные
+        // последовательности — в статическом подмножестве легальных нет).
+        for line in ["IF #1 GT 5 GOTO 10;", "WHILE #100 LT 10 DO 1;", "END 1;", "GOTO 5;", "X[1] Y2;"] {
+            let groups = lex_line(line, 1).unwrap();
+            assert!(
+                groups[0].toks.contains(&Tok::MacroB),
+                "letter-run/bracket → MacroB: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn macro_b_eob_and_neighbors_still_split() {
+        // `;` внутри macro-строки — всё ещё EOB: соседние блоки живут.
+        let groups = lex_line("#1 = 5; G1 X5. F100.;", 1).unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups[0].toks.contains(&Tok::MacroB));
+        assert_eq!(groups[0].text, "#1 = 5;");
+        assert_eq!(groups[1].text, " G1 X5. F100.;");
+        assert!(groups[1].toks.iter().any(|t| matches!(t, Tok::Word { letter: 'G', .. })));
+    }
+
+    #[test]
+    fn macro_hash_inside_comment_is_annotation() {
+        // `#` внутри ( )-комментария — текст аннотации, НЕ Macro B (SPEC §11).
+        let groups = lex_line("(cut #100 depth) G1 X5.;", 1).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert!(!groups[0].toks.contains(&Tok::MacroB));
+        assert_eq!(
+            groups[0].toks[0],
+            Tok::Comment("cut #100 depth".into())
+        );
+    }
+
+    #[test]
+    fn single_letter_words_not_macro() {
+        // Одиночная буква + число (в т.ч. через whitespace) — обычные слова.
+        let groups = lex_line("G1 X5 D0 H00", 1).unwrap();
+        assert!(!groups[0].toks.contains(&Tok::MacroB));
+        assert_eq!(groups[0].toks.len(), 4);
     }
 
     #[test]
