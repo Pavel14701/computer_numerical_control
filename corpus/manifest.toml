@@ -998,12 +998,12 @@ id = "N11"
 name = "m98_call"
 tier = "A"
 kind = "negative"
-note = "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет"
-notice = false
+note = "M98 P1 L2 — подпрограммы вне грамматики L1 (COVERAGE §3, SPEC §1.1); M98 вне словаря GRBL — источника нет. РЕВИЗИЯ v0.16 (2026-11-22, классификация §9): M98 → line-level Raw{E_UNSUPPORTED_SYNTAX}, parse Ok — вектор пиннит Raw-диспозицию (не молча, не отказ)"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_UNSUPPORTED_SYNTAX"
+expect = "ok"
 
 [[vectors]]
 id = "N12"
@@ -1042,16 +1042,16 @@ id = "N14"
 name = "program_end_missing"
 tier = "A"
 kind = "negative"
-note = "файл без M2/M30 — третий режим нарушения инварианта «ровно один раз и последний» (SPEC §3)"
-notice = false
+note = "файл без M2/M30 — РЕВИЗИЯ v0.16 (2026-11-22, классификация §9): auto-PEND → Ok + notice W_MISSING_PROGRAM_END (18/32 published-файлов реального корпуса заканчиваются без program end; rs274 solo-прогоны независимо подтверждают паттерн); вектор пиннит auto-PEND, не отказ"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n14_program_end_missing/program_end_missing.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_INVALID_INPUT"
+expect = "ok"
 [[vectors.files]]
 path = "tier_a/v0/n14_program_end_missing/program_end_missing.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_INVALID_INPUT"
+expect = "ok"
 
 [[vectors]]
 id = "N15"
