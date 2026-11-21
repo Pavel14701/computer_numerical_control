@@ -1,8 +1,8 @@
-//! Итерация 5 — obligation-покрытие SPEC-EID-L1 v0.15.
-//! Чек-лист «правило → тест» — в шапке crates/eid-core/src/verify.rs
-//! (трассируемость правило↔тест обязательна; имена тестов = имена в чек-листе).
-//! Каждый пункт: позитив (легально, корректный результат) + негатив
-//! (Err с ТОЧНЫМ кодом).
+// Итерация 5 — obligation-покрытие SPEC-EID-L1 v0.15.
+// Чек-лист «правило → тест» — в шапке crates/eid-core/src/verify.rs
+// (трассируемость правило↔тест обязательна; имена тестов = имена в чек-листе).
+// Каждый пункт: позитив (легально, корректный результат) + негатив
+// (Err с ТОЧНЫМ кодом).
 
 use eid_core::ast::*;
 use eid_core::diag::{ErrorCode, Stage};
@@ -541,4 +541,102 @@ fn spec_3_notices_consistent_across_entry_points() {
     assert_eq!(c.kept_ops.len(), 1);
     // suppress-предупреждения о неиспользуемых импортах в пустом месте
     let _ = (ST_G55, ST_MACHINE);
+}
+
+
+// ===========================================================================
+// Итерация 5 (cargo-mutants усиление): границы grammar и wrappers
+// ===========================================================================
+
+/// parser::validate (AST → диагностики) обязан отклонять канон-нарушения —
+/// wrapper не вырождается в Ok (мутант-заглушка ловится напрямую).
+#[test]
+fn mutants_validate_wrapper_rejects_canon_violation() {
+    let text = format!(
+        "{HDR}OP 001 PEND
+OP 002 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {}
+END
+",
+        ST_G54
+    );
+    let raw = parser::parse_raw(&text, "t").unwrap(); // PEND НЕ последний
+    // Порядок PEND — гейт verify; parser::validate ловим пустой программой
+    // ("program has no ops") — заглушка Ok(()) в wrapper'е обнаруживается.
+    assert!(!verify::validate(&raw).is_empty(), "not-last PEND ловит verify");
+    let empty = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: PathMode::ExactPath,
+        frame_preset: None,
+        ops: vec![],
+    };
+    let Err(ds) = parser::validate(&empty) else {
+        panic!("validate-заглушка Ok(()) — wrapper не проверяет канон-форму")
+    };
+    assert!(ds.iter().all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify));
+}
+
+/// 3-значная нумерация опов (grammar: 001..999): OP 999 легален, OP 1000 → Err.
+#[test]
+fn mutants_op_numbering_boundary_999_1000() {
+    let ok_text = format!("{HDR}OP 999 PEND
+END
+");
+    assert!(parser::parse(&ok_text, "t").is_ok(), "OP 999 легален");
+    let over_text = format!("{HDR}OP 1000 PEND
+END
+");
+    let ds = parser::parse(&over_text, "t").unwrap_err();
+    assert!(ds.iter().any(|d| d.message.contains("3 digits")), "{ds:?}");
+}
+
+/// quoted-границы (grammar v0.3: без escape): голая кавычка как всё поле и
+/// кавычка внутри quoted-поля reason → parse Err (мутанты ||→&& в quoted).
+#[test]
+fn mutants_quoted_boundaries_rejected() {
+    // голая кавычка: quoted(`"`) — len < 2
+    let t1 = format!("{HDR}OP 001 RAW reason=\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
+END
+");
+    assert!(parser::parse(&t1, "t").is_err(), "голая кавычка отклоняется");
+    // кавычка внутри quoted: inner содержит `"a"b"` → содержит quote
+    let t2 = format!("{HDR}OP 001 RAW reason=\"a\"b\" payload=00 code=E_UNSUPPORTED_SYNTAX src=0.1-0.0
+END
+");
+    assert!(parser::parse(&t2, "t").is_err(), "кавычка внутри quoted отклоняется");
+}
+
+/// emit_num: verbatim "-0.0000" неканоничен → канонизация из f64 → "0.0000"
+/// (мутант !=→== в verbatim-условии эмитит неканоничный минус-ноль).
+#[test]
+fn mutants_emit_num_minus_zero_canonicalized() {
+    let text_minus0 = "-0.0000";
+    let nm = |t: &str, v: f64| Num { text: t.to_string(), value: v };
+    let prog = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: PathMode::ExactPath,
+        frame_preset: None,
+        ops: vec![Op::Rapid {
+            start: StartPoint::Unknown,
+            end: Point3 {
+                x: nm(text_minus0, -0.0),
+                y: nm("0.0000", 0.0),
+                z: nm("0.0000", 0.0),
+            },
+            state: State {
+                feed: None,
+                spindle: Spindle::Off,
+                coolant: Default::default(),
+                tool: None,
+                frame: Frame::Wcs,
+                wcs: Wcs::G54,
+            },
+            src: SrcSpan { file: "t".into(), line_start: 1, col_start: 1, line_end: 1, col_end: 2 },
+            sub: None,
+        }, Op::ProgramEnd { src: SrcSpan { file: "t".into(), line_start: 9, col_start: 1, line_end: 9, col_end: 2 } }],
+    };
+    let text = eid_core::emitter::emit(&prog).expect("эмиссия Ok");
+    assert!(text.contains("0.0000"), "{text}");
+    assert!(!text.contains("-0.0000"), "минус-ноль канонизуется: {text}");
 }

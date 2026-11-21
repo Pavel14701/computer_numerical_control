@@ -5,16 +5,16 @@ ERR | published | linuxcnc | gcb_ContourHolesOnGrid_90deg.ngc | E_INVALID_INPUT 
 ERR | published | linuxcnc | gcb_ContourRect_G40.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
 ERR | published | linuxcnc | gcb_ContourRect_G41.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
 ERR | published | linuxcnc | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
-OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 0ms
-OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 696 ops | 22ms
-OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 1ms
-OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 1ms
+OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 1ms
+OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 696 ops | 44ms
+OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 2ms
+OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 3ms
 ERR | published | linuxcnc | gcb_contourMillHolesGrid_001.gcode.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
-OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 0ms
+OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 1ms
 ERR | published | linuxcnc | gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
-OK | published | linuxcnc | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | 101 ops | 2ms
-OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 5ms
-OK | published | linuxcnc | gcb_pocketRRect_001a.gcode | 13 ops | 0ms
+OK | published | linuxcnc | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | 101 ops | 4ms
+OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 9ms
+OK | published | linuxcnc | gcb_pocketRRect_001a.gcode | 13 ops | 2ms
 ERR | published | linuxcnc | gcb_spiral.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число)
 ERR | published | grbl | grbljs_Circle_Diamond_Square_Calibration.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 29.0000 vs ρ_end 27.5862 (SPEC §6; CORPUS n5a)
 ERR | published | grbl | grbljs_arc-ijk.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
@@ -25,7 +25,7 @@ ERR | published | grbl | grbljs_circle.gcode | E_INVALID_INPUT | program end mis
 ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
 ERR | published | grbl | grbljs_g2-arc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl | grbljs_helical-thread-milling.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
-OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 17ms
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 38ms
 ERR | published | grbl | grbljs_jsdc.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl | grbljs_sample.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
@@ -46,8 +46,8 @@ ERR | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode
 ERR | published | grbl-подобный | mit_svg2g_shapes.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl-подобный | mit_svg2g_square.gcode | E_INVALID_INPUT | program end missing: no M2/M30 as the last block (CORPUS n14)
 ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
-OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 26ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 20ms
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 42ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 59ms
 ERR | published | linuxcnc | olle_bricka_short_wall.tap | E_INVALID_INPUT | program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)
 ERR | published | linuxcnc | olle_bricka_slots.tap | E_INVALID_INPUT | program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)
 ERR | published | linuxcnc | olle_ivar_engraving_test.tap | E_INVALID_INPUT | program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)
@@ -57,20 +57,20 @@ ERR | published | linuxcnc | vince_BewareOfDog_v10.nc | E_INVALID_INPUT | progra
 ERR | published | linuxcnc | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
 ERR | published | linuxcnc | vince_BewareOfDog_v10_3_T4.nc | E_INVALID_INPUT | program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)
 ERR | published | linuxcnc | vince_BrushRabbitv4.nc | E_INVALID_INPUT | program_end отсутствует — M2/M30 обязателен ровно один раз, последним (SPEC §3; N14)
-OK | published | linuxcnc | vince_tictactoe1.nc | 911 ops | 13ms
+OK | published | linuxcnc | vince_tictactoe1.nc | 911 ops | 39ms
 ERR | published | linuxcnc | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | E_INVALID_INPUT | word `F` без числа
 ERR | published | linuxcnc | vis_hse1p.tap | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
-OK | published | linuxcnc | vis_knight.tap | 10651 ops | 99ms
+OK | published | linuxcnc | vis_knight.tap | 10651 ops | 226ms
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change_g43.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
 ERR | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 16ms
+OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 1ms
+OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 32ms
 OK | local-dev | linuxcnc | lcnc_nc_files_b-index.ngc | 11 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 3ms
-OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_comp.ngc | 54 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 8ms
+OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 1ms
+OK | local-dev | linuxcnc | lcnc_nc_files_comp.ngc | 54 ops | 1ms
 ERR | local-dev | linuxcnc | lcnc_nc_files_comp311.ngc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
 OK | local-dev | linuxcnc | lcnc_nc_files_comp311_2.ngc | 26 ops | 0ms
 ERR | local-dev | linuxcnc | lcnc_nc_files_cone.ngc | E_UNSUPPORTED_SYNTAX | O-code (подпрограммы/макро) — вне грамматики L1 (SPEC §1.1, Q10)
