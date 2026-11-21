@@ -55,3 +55,37 @@ fn planimetric_radius_tolerance_boundary() {
         "out-tolerance центр обязан дивергировать: {d_out:?}"
     );
 }
+
+#[test]
+fn planimetric_radius_self_consistency_boundary() {
+    // Собственная консистентность дуги: ρ_end = |(end−center)| на границе
+    // радиусного допуска (max(ε_pos, k_R·R) = 0.001 при R=5):
+    // сдвиг конца 0.0009 — в допуске (эквивалентны), 0.002 — дивергенция.
+    // Ловит ±-мутанты planimetric_radius напрямую (без center-компенсации).
+    let a = arc_prog(0.0);
+    let mk = |ex: f64| {
+        let mut p = arc_prog(0.0);
+        if let Op::Arc { end, .. } = &mut p.ops[0] {
+            end.x = n(ex);
+        }
+        p
+    };
+    let b_in = mk(5.0009);
+    let d_in = semantic_diff(&a, &b_in, &DiffConfig::default());
+    assert!(d_in.is_empty(), "радиус в допуске: {d_in:?}");
+    let b_out = mk(5.002);
+    let d_out = semantic_diff(&a, &b_out, &DiffConfig::default());
+    assert!(!d_out.is_empty(), "радиус вне допуска обязан дивергировать: {d_out:?}");
+}
+
+#[test]
+fn asts_equal_direct_true_and_false() {
+    // Прямой контракт asts_equal: идентичные AST → true; сдвиг feed → false.
+    let a = arc_prog(0.0);
+    let mut b = arc_prog(0.0);
+    if let Op::Arc { state, .. } = &mut b.ops[0] {
+        state.feed = Some(n(150.0));
+    }
+    assert!(eid_harness::diff::asts_equal(&a, &a.clone(), &DiffConfig::default()));
+    assert!(!eid_harness::diff::asts_equal(&a, &b, &DiffConfig::default()));
+}
