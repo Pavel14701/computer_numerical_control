@@ -238,15 +238,113 @@ FluidNC (NOASSERTION), grblHAL (no license), gnea/grbl (NOASSERTION) —
 
 ---
 
+## Источник 4 (итерация 5, diversity batch 2): 29 файлов, 4 под-источника (26 MIT + 3 Apache-2.0)
+
+Дата: 2026-11-21. Сборщик: Агент D (автоматический, GitHub API +
+raw.githubusercontent.com); provenance-маппинг, license-ревью и внесение
+в manifest.toml — оркестратор. Diversity-чек-лист (CORPUS §7): закрыты
+«pocketing с Z-проходами», «3D-контуры/Z-уровни», «радиусные контуры»,
+«drill-grid A/B-паттерны»; 2D-skew первой партии снят.
+
+Лицензии проверены GitHub API `/repos/<repo>/license` (2026-11-21):
+**MIT** — mrRobot62/gcodebuilder, ollema/gcode, vincedovy/CNC-files;
+**Apache-2.0** — Jackhammer88/Visu. Байт-верификация маппинга: 8/29
+скачаны повторно (raw.githubusercontent, HEAD) — sha256 совпал с
+локальным; остальные 21 — точное имя+размер в дереве репо + совпадение
+с черновиками сбора (`_diversity_cands3.txt`).
+
+Диалект-разметка (по содержимому, приёмка manifest): **linuxcnc** —
+`gcb_*` (G64+M6 в контенте), `olle_*` (G91.1 + `;`-комментарии);
+**grbl-1.1** — `vince_*` (FreeCAD-пост «grbl_post»), `vis_*` (M7,
+T-предвыбор). Отброшено при сборе: FluidNC/grblHAL/gnea-grbl
+(NOASSERTION/no license), `pocketRRect_#13_001.gcode` (`#` в имени),
+файлы >600KB.
+
+### mrRobot62/gcodebuilder — MIT (16 файлов)
+
+- URL базы: https://github.com/mrRobot62/gcodebuilder (app/gcode)
+- Дата: 2026-11-21; лицензия: MIT (GitHub API — проверена).
+- Диалект: linuxcnc (CAM-пост: G64/G40/G41/G42, M6).
+- Примечание: 3 файла (90deg, ContourRect_G40/G41) — имена нормализованы
+  сборщиком, маппинг байт-верифицирован.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `gcb_ContourHolesOnGrid_4x2y_A30_B20_22.5deg.ngc` | `app/gcode/ContourHolesOnGrid_4x2y_A30_B20_22.5deg.ngc` | 2404 | `b715091094d7` |
+| `gcb_ContourHolesOnGrid_90deg.ngc` | `app/gcode/ContourHolesOnGrid_4x2y_A30_B20_90deg.ngc` | 2404 | `031d63dea4a9` |
+| `gcb_ContourRect_G40.ngc` | `app/gcode/ContourRect_TD3.0_A20_B30_D-2.5_G40.ngc` | 2160 | `1b0507a75714` |
+| `gcb_ContourRect_G41.ngc` | `app/gcode/ContourRect_TD3.0_A20_B30_D-2.5_G41.ngc` | 2165 | `2379c0d55520` |
+| `gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode` | `app/gcode/ContourRoundRect_A70B100_G42_TD-8.75.gcode` | 8939 | `2d9538d0ed2a` |
+| `gcb_TEST_DrillHolesGrid_45deg_T4.ngc` | `app/gcode/TEST_DrillHolesGrid_45deg_T4.ngc` | 1999 | `74e0b43bd152` |
+| `gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc` | `app/gcode/TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc` | 54217 | `ff7f65cad36f` |
+| `gcb_TEST_MillPocketCircle_SO30.ngc` | `app/gcode/TEST_MillPocketCircle_SO30.ngc` | 3148 | `b53a6d955a9a` |
+| `gcb_TEST_MillPocketCircle_SO50.ngc` | `app/gcode/TEST_MillPocketCircle_SO50.ngc` | 3892 | `2e5d55a8a04a` |
+| `gcb_contourMillHolesGrid_001.gcode.ngc` | `app/gcode/contourMillHolesGrid_001.gcode.ngc` | 11704 | `ddcfa55ea7b6` |
+| `gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode` | `app/gcode/drillHolesGrid_A10B10_3x3_tD6_45.gcode` | 2278 | `25b8dca1821d` |
+| `gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode` | `app/gcode/drillHoles_R100_nH4_tD-2.5_0.00deg.gcode` | 3070 | `0758cf1dd2a5` |
+| `gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode` | `app/gcode/pocketCircle_oR30_iR0_T6_tD-2.5.gcode` | 6220 | `ef23fd720f5b` |
+| `gcb_pocketRRect_001_02.gcode` | `app/gcode/pocketRRect_001_02.gcode` | 13280 | `ab6a91e5af8d` |
+| `gcb_pocketRRect_001a.gcode` | `app/gcode/pocketRRect_001a.gcode` | 748 | `ea8557c6f391` |
+| `gcb_spiral.gcode` | `app/gcode/spiral.gcode` | 9175 | `15d575e33811` |
+
+### ollema/gcode — MIT (5 файлов)
+
+- URL базы: https://github.com/ollema/gcode
+- Дата: 2026-11-21; лицензия: MIT (GitHub API — проверена).
+- Диалект: linuxcnc (G91.1, `;`-комментарии, G54).
+- Примечание: .tap CNC-программы ( bricka/ivar/top — 3D-контур с Z-проходами).
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `olle_bricka_short_wall.tap` | `bricka short wall.tap` | 7943 | `dd3ffe536b5d` |
+| `olle_bricka_slots.tap` | `bricka slots.tap` | 222 | `88c1618c2e7c` |
+| `olle_ivar_engraving_test.tap` | `ivar engraving test.tap` | 31281 | `5e27fd811164` |
+| `olle_top_cont.tap` | `top cont.tap` | 6112 | `900df1ec5893` |
+| `olle_top_trace_finish.tap` | `top trace finish.tap` | 2832 | `fd793092b590` |
+
+### vincedovy/CNC-files — MIT (5 файлов)
+
+- URL базы: https://github.com/vincedovy/CNC-files
+- Дата: 2026-11-21; лицензия: MIT (GitHub API — проверена).
+- Диалект: grbl-1.1 (FreeCAD-пост «grbl_post»).
+- Примечание: 740KB/196KB варианты BewareOfDog (v10_1_T7) и BrushRabbit
+  (_1_/_2_/_3_Engrave) отброшены размерным cap; cead-mile-failte.nc (227KB)
+  — резерв.
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `vince_BewareOfDog_v10.nc` | `BewareOfDog v10.nc` | 379 | `d7fbe5360fad` |
+| `vince_BewareOfDog_v10_2_T2.nc` | `BewareOfDog v10_2_T2.nc` | 9513 | `ab6bc8bbcbda` |
+| `vince_BewareOfDog_v10_3_T4.nc` | `BewareOfDog v10_3_T4.nc` | 181782 | `9b924c36b899` |
+| `vince_BrushRabbitv4.nc` | `BrushRabbitv4.nc` | 307 | `9e4eaddab0f4` |
+| `vince_tictactoe1.nc` | `tictactoe1.nc` | 33437 | `8428014cc354` |
+
+### Jackhammer88/Visu — Apache-2.0 (3 файла)
+
+- URL базы: https://github.com/Jackhammer88/Visu (Visu/GcodeExamples)
+- Дата: 2026-11-21; лицензия: Apache-2.0 (GitHub API — проверена).
+- Диалект: grbl-1.1 (GRBL-визуализатор; M7, T-предвыбор).
+- Примечание: SmilinJack relief 3.5MB — крупный 3D-рельеф (Z-уровни).
+
+| Файл в inbox | Путь в репо | Байт | sha256 (12) |
+|---|---|---|---|
+| `vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap` | `Visu/GcodeExamples/SmilinJack - ThreeAxisFlatMachine Relief.tap` | 3540057 | `dcefe47a28c2` |
+| `vis_hse1p.tap` | `Visu/GcodeExamples/hse1p.tap` | 13011 | `9a14a964bee2` |
+| `vis_knight.tap` | `Visu/GcodeExamples/knight.tap` | 142599 | `88abd1eaa71b` |
+
+---
+
 ## Сводка
 
-- **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **32 файла** (все
-  MIT); local-dev (tier_b/local) = **60 файлов** (GPL-2.0/неясные, не публикуются).
-- Диалект-разбивка inbox: grbl-предположение ~29 (cncjs 12 + tball 3 +
-  svg2gcode 3 + PyCNC 3 + shapeoko 3 + cncwebsim 2 + ddprint 3 вне-словарные);
-  linuxcnc-предположение 3 (hilbert + 2 прочих); marlin-3dp 3 (ddprint,
-  E-слова — robustness-диагностика).
-- published: все MIT — чистые; local-dev: GPL-2.0/per-file неизвестно.
+- **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **61 файл**
+  (58 MIT + 3 Apache-2.0); local-dev (tier_b/local) = **60 файлов**
+  (GPL-2.0/неясные, не публикуются). Итого manifest: **121**.
+- Диалект-разбивка inbox: grbl-предположение 37 (cncjs 15 + svg2gcode 3 +
+  PyCNC 3 + shapeoko 3 + cncwebsim 2 + ddprint 3 вне-словарные + vince 5 +
+  vis 3); linuxcnc-предположение 21 (hilbert + 2 прочих + gcb 16 + olle 5);
+  marlin-3dp 3 (ddprint, E-слова — robustness-диагностика).
+- published: MIT 58 + Apache-2.0 3 — чистые; local-dev: GPL-2.0/per-file
+  неизвестно.
 - Контент-профили для приёмки: LinuxCNC — вендор-примеры + тесты
   интерпретатора (tests/interp содержит параметрику/OWord — часть файлов
   ожидаемо даст E_UNSUPPORTED_SYNTAX/RUNTIME_STATE — штатный parse-or-

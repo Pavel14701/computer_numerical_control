@@ -12,7 +12,7 @@ fn root() -> PathBuf {
 }
 
 fn dialect_of(fname: &str) -> (&'static str, bool) {
-    // (диалект-предположение, grbl-адаптер?)
+    // (диалект-предположение, grbl-адаптер?) — синхронно с manifest.toml
     if fname.starts_with("grbljs_") {
         ("grbl", true)
     } else if fname.starts_with("mit_svg2g") || fname.starts_with("mit_pycnc") || fname.starts_with("mit_cws")
@@ -21,6 +21,12 @@ fn dialect_of(fname: &str) -> (&'static str, bool) {
         ("grbl-подобный", true)
     } else if fname.starts_with("mit_hilbert") {
         ("linuxcnc-универсальный", false)
+    } else if fname.starts_with("vince_") || fname.starts_with("vis_") {
+        // vince: FreeCAD «grbl_post»; vis: GRBL-визуализатор (PROVENANCE б.4)
+        ("grbl-подобный", true)
+    } else if fname.starts_with("gcb_") || fname.starts_with("olle_") {
+        // gcb: CAM-пост с G64+M6; olle: G91.1 + `;`-комментарии
+        ("linuxcnc", false)
     } else {
         ("linuxcnc", false)
     }
