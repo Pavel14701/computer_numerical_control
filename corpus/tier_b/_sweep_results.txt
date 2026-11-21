@@ -5,8 +5,8 @@ ERR | published | linuxcnc | gcb_ContourHolesOnGrid_90deg.ngc | E_INVALID_INPUT 
 ERR | published | linuxcnc | gcb_ContourRect_G40.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRect_G41.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 1ms
-OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 39ms
+OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 0ms
+OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 28ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 1ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 1ms
 ERR | published | linuxcnc | gcb_contourMillHolesGrid_001.gcode.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
@@ -29,9 +29,9 @@ OK | published | grbl | grbljs_circle.gcode | 8 ops | 0ms
 ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
 OK | published | grbl | grbljs_g2-arc.gcode | 10 ops | 0ms
 OK | published | grbl | grbljs_helical-thread-milling.gcode | 14 ops | 0ms
-OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 18ms
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 26ms
 OK | published | grbl | grbljs_jsdc.gcode | 2378 ops | 26ms
-OK | published | grbl | grbljs_sample.gcode | 19142 ops | 193ms
+ERR | published | grbl | grbljs_sample.gcode | E_UNSUPPORTED_SEMANTICS | G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)
 ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
 ERR | published | grbl-подобный | mit_cws_torno.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
 OK | published | grbl-подобный | mit_ddp_buchse.gcode | 43 ops | 0ms
@@ -44,14 +44,14 @@ ERR | published | linuxcnc-универсальный | mit_hilbert_test.ngc | E
 ERR | published | grbl-подобный | mit_pycnc_circles.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
 OK | published | grbl-подобный | mit_pycnc_rects.gcode | 29 ops | 0ms
 ERR | published | grbl-подобный | mit_pycnc_test_parser.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
-OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 16ms
+OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 23ms
 ERR | published | grbl-подобный | mit_shpk_ncdrill1.tap | E_INVALID_INPUT | naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)
-OK | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | 80 ops | 0ms
-OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 7ms
+OK | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | 80 ops | 1ms
+OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 12ms
 OK | published | grbl-подобный | mit_svg2g_square.gcode | 51 ops | 0ms
 ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
-OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 25ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 20ms
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 38ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 31ms
 ERR | published | fanuc-подобный | mpe_g65_macro_centerline_probe.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 ERR | published | fanuc-подобный | mpe_g65_macro_deep_drill.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 ERR | published | fanuc-подобный | mpe_g65_macro_material_verify.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
@@ -65,8 +65,8 @@ OK | published | grbl-подобный | vince_BewareOfDog_v10.nc | 1 ops | 0ms
 ERR | published | grbl-подобный | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
 ERR | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
 OK | published | grbl-подобный | vince_BrushRabbitv4.nc | 1 ops | 0ms
-OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 8ms
-OK | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | 118562 ops | 947ms
+OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 13ms
+OK | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | 118562 ops | 1476ms
 ERR | published | grbl-подобный | vis_hse1p.tap | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.1291 vs ρ_end 0.1302 (SPEC §6; CORPUS n5a)
 ERR | published | grbl-подобный | vis_knight.tap | E_INVALID_INPUT | program end is not the last block (CORPUS n12)
 OK | local-dev | linuxcnc | cncsim_g154_g43_haas_vf2.nc | 47 ops | 0ms
@@ -144,7 +144,7 @@ ERR | local-dev | linuxcnc | ncm_g434_rtcp_5x_milling.nc | E_INVALID_INPUT | г�
 ERR | local-dev | linuxcnc | ncm_g43_g69_3d5x_milling.nc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
 ERR | local-dev | linuxcnc | ncm_g87_g88_g121_turn1.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
 ERR | local-dev | linuxcnc | ncm_haas_g76_g15_eob_turn.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
-# SUM: ok=65 err=79
+# SUM: ok=64 err=80
 # ERR-CLASS E_INVALID_INPUT: 48
+# ERR-CLASS E_UNSUPPORTED_SEMANTICS: 4
 # ERR-CLASS E_RUNTIME_STATE: 28
-# ERR-CLASS E_UNSUPPORTED_SEMANTICS: 3

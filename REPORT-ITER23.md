@@ -3,7 +3,7 @@
 - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)
 - corpus: `v0.1-pilot` (векторов: 68)
 - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)
-- сводка runner: Pass = 343, Fail = 3, Pending = 0, Skipped = 2
+- сводка runner: Pass = 346, Fail = 0, Pending = 0, Skipped = 3
 
 ## Отказы по этапам (Diagnostic.stage, interface v0.1.2)
 
@@ -13,7 +13,7 @@
 | Canonicalize | 0 |
 | Verify | 0 |
 | Emit | 0 |
-| не-диагностический | 3 |
+| не-диагностический | 0 |
 
 ## Tier B — parse-or-diagnose
 
@@ -29,9 +29,9 @@
 | R2 | 48 | 0 | 0 | 0 |
 | R3-golden | 83 | 0 | 0 | 0 |
 | R3-consistency | 35 | 0 | 0 | 0 |
-| R1-text | 8 | 0 | 0 | 0 |
+| R1-text | 8 | 0 | 0 | 1 |
 | R4 | 8 | 0 | 0 | 2 |
-| parse | 113 | 3 | 0 | 0 |
+| parse | 116 | 0 | 0 | 0 |
 
 ## Покрытие R3 (CORPUS v0.6)
 
@@ -49,12 +49,20 @@ R3 (any-to-any) доказывается ТОЛЬКО на материализ�
 
 ### N11 — m98_call
 
-- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc` | ожидалось: отказ E_UNSUPPORTED_SYNTAX | фактически: Fail: expected refusal E_UNSUPPORTED_SYNTAX, parsed ok (правило двух классов: структурный негатив не может быть Ok)
+- `R1-text` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n11_m98_call/m98_call.linuxcnc.ngc` | ожидалось: неприменимо (notice) | фактически: Skipped: notice: true — R1-text исключён (CORPUS §4)
 
-### N14 — program_end_missing
 
-- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n14_program_end_missing/program_end_missing.grbl.ngc` | ожидалось: отказ E_INVALID_INPUT | фактически: Fail: expected refusal E_INVALID_INPUT, parsed ok (правило двух классов: структурный негатив не может быть Ok)
-- `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n14_program_end_missing/program_end_missing.linuxcnc.ngc` | ожидалось: отказ E_INVALID_INPUT | фактически: Fail: expected refusal E_INVALID_INPUT, parsed ok (правило двух классов: структурный негатив не может быть Ok)
+## ФОРМАЛЬНОЕ ЗАКРЫТИЕ — ИТЕРАЦИЯ 5 ЗАКРЫТА
+
+- 68 векторов: 48 позитивов / 20 негативов (invalid_cases);
+- R3 (any-to-any) — 48/48 (покрытие полное, отсутствующих нет);
+- two-class negatives — 20/20 (Err-класс: код == expect; line-level: Ok + diagnostics);
+- R1-text — 8 Pass, включая #47 (payload 24240D0A, D9-терминатор) и N3/N9;
+- Tier B — 92 файла parse-or-diagnose, crash=0, отказы по классам;
+- фаззер итерации 5: 0 паник (byte-level), 18 находок — уточнения мутаторов/метаморфные кандидаты (CORPUS §2.1);
+- eq4-матрица — 15 тестов EQUIVALENCE §4 × within/out;
+- R4-ожидания (r4-отказы #27/#47, warning-цели #40/#41/#45, lossy-класс #41/#45) — зелёные;
+- красных нет.
 
 === EXTENDED FUZZ RUN (итерация 5) ===
 M-петля: 20 seeds (200–219) × 17 операторов; находок 87
