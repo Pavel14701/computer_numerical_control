@@ -181,7 +181,8 @@ pub enum GrblEmissionCondition {
     ProgramEndMissing,
     /// `program_end_duplicate` — структура (CORPUS n13).
     ProgramEndDuplicate,
-    /// `program_end_not_last` — структура (CORPUS n12).
+    /// `program_end_not_last` — НЕ-Raw оп после program_end (CORPUS n12;
+    /// SPEC §5.2 v0.20: Raw-хвост после PEND легален — grbl исполняет).
     ProgramEndNotLast,
 }
 
@@ -272,7 +273,34 @@ pub fn emit_with_warnings(
     warnings: &mut Vec<String>,
 ) -> Result<String, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
-    eid_core::parser::validate(program)?;
+    // SPEC §5.2 v0.20: Raw-хвост после program_end легален (grbl-стрим
+    // исполняет блоки после M2/M30 — protocol.c:74-105), program_end не
+    // forced-last. Замороженный core-инвариант «program_end must be the
+    // last op» (eid-core verify.rs — вне зоны адаптера, SPEC §3 как
+    // написано) к Raw-хвосту НЕ применяется: диагностика отбрасывается,
+    // только когда ВСЕ опы после последнего PEND — Raw (иначе канон-форма
+    // нарушена по-настоящему). Строка-фильтр — из замороженного core;
+    // если core сменит текст, фильтр перестанет срабатывать →
+    // v020_tail_emit_same_dialect_honest_bytes упадёт громко (сигнал к
+    // синхронизации с интерфейсом).
+    if let Err(mut ds) = eid_core::parser::validate(program) {
+        let tail_all_raw = program
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, Op::ProgramEnd { .. }))
+            .map(|i| {
+                program.ops[i + 1..]
+                    .iter()
+                    .all(|op| matches!(op, Op::Raw { .. }))
+            })
+            .unwrap_or(true);
+        if tail_all_raw {
+            ds.retain(|d| !d.message.contains("program_end must be the last op"));
+        }
+        if !ds.is_empty() {
+            return Err(ds);
+        }
+    }
     // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
     if program.eid_version != "EID/L1 v0.3" {
         return Err(vec![err(
@@ -345,11 +373,11 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
     let code = |cond: GrblEmissionCondition| cond.code();
     let mut v = Vec::new();
     let mut ends = 0usize;
-    let mut last_is_end = false;
-    for op in &program.ops {
-        last_is_end = matches!(op, Op::ProgramEnd { .. });
-        if last_is_end {
+    let mut end_idx: Option<usize> = None;
+    for (i, op) in program.ops.iter().enumerate() {
+        if matches!(op, Op::ProgramEnd { .. }) {
             ends += 1;
+            end_idx = Some(i);
         }
         match op {
             Op::ToolChange { src, .. } => v.push(err(
@@ -424,12 +452,22 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
             "duplicate program_end (CORPUS n13)",
             None,
         ));
-    } else if !last_is_end {
-        v.push(err(
-            code(GrblEmissionCondition::ProgramEndNotLast),
-            "program_end must be the last op (CORPUS n12)",
-            None,
-        ));
+    } else {
+        // SPEC §5.2 v0.20: блоки после M2/M30 — Raw-хвост (grbl-стрим
+        // исполняет: protocol.c:74-105), program_end НЕ forced-last.
+        // Same-dialect эмиссия хранит байты честно (payload verbatim) —
+        // хвост из Raw-опов легален. НЕ-Raw оп после PEND — нарушение
+        // канон-формы (никакой канонизатор его не строит) → отказ n12.
+        let tail_raw = end_idx
+            .and_then(|i| program.ops.get(i + 1..))
+            .is_none_or(|tail| tail.iter().all(|op| matches!(op, Op::Raw { .. })));
+        if !tail_raw {
+            v.push(err(
+                code(GrblEmissionCondition::ProgramEndNotLast),
+                "non-raw op after program_end — canonical form violation (CORPUS n12; SPEC §5.2 v0.20: raw tail is legal)",
+                None,
+            ));
+        }
     }
     v
 }

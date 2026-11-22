@@ -1,8 +1,13 @@
 //! eid-grbl — канонизатор и эмиттер GRBL 1.1 (Агент C, IMPLEMENTATION-PLAN §2-C).
 //! Интерфейс заморожен. quirks — ИСПРАВЛЕННЫЙ список (COVERAGE §5/§6.11):
 //! I/J/K literal X/Y/Z, эмиссия in-plane пар (G17: I+J, G18: I+K, G19: J+K);
-//! tool_change → E_UNSUPPORTED_SYNTAX; G10 L20 → узел wcs_set_here (в словаре GRBL);
+//! tool_change → E_UNSUPPORTED_SYNTAX (при эмиссии; на parse bare-T → ABSORB
+//! selected_tool, SPEC §5.2 v0.20); G10 L20 → узел wcs_set_here (в словаре GRBL);
 //! G61.1/path_mode → warning (Q3), не отказ; G43 H → E_REQUIRES_MACHINE_TABLE.
+//! SPEC v0.20 (зонд-сверка target/probe/g92): bare-T → ABSORB; G92-mid →
+//! chaining + Raw-носитель (грамматика v0.3 не имеет mid-preset опа);
+//! G92.1 → Raw{E_REQUIRES_MACHINE_TABLE}; блоки после M2/M30 → Raw-хвост
+//! + notice диалект-расхождения (grbl исполняет — protocol.c:74-105).
 #![allow(dead_code)]
 
 use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
@@ -61,7 +66,7 @@ impl GrblAdapter {
                 (C::RawPayloadNotHex, INVAL),      // grammar D9 v0.3
                 (C::ProgramEndMissing, INVAL),     // структура (CORPUS n14)
                 (C::ProgramEndDuplicate, INVAL),   // n13
-                (C::ProgramEndNotLast, INVAL),     // n12
+                (C::ProgramEndNotLast, INVAL), // n12: НЕ-Raw оп после PEND (SPEC §5.2 v0.20 — Raw-хвост легален)
             ],
             warnings: vec![
                 // Q3 (COVERAGE §6.1/§5): PATH_MODE не выражается в GRBL-шапке.
@@ -94,6 +99,12 @@ impl From<canonicalize::Notice> for Notice {
                 canonicalize::NoticeKind::NearDegenerateRArc => NoticeKind::NearDegenerateRArc,
                 canonicalize::NoticeKind::MissingProgramEnd => NoticeKind::MissingProgramEnd,
                 canonicalize::NoticeKind::ModalOnRaw => NoticeKind::ModalOnRaw,
+                // SPEC §5.2 v0.20: core NoticeKind-супермножество v0.2 заморожен
+                // (9 вариантов, eid-core вне зоны агента) — диалект-расхождение
+                // хвоста после PEND маппится в ближайшую семью «поведенческая
+                // заметка при Raw-опах»; РЕАЛЬНАЯ семантика — в message
+                // («executed in grbl-stream semantics, ignored in rs274-file»).
+                canonicalize::NoticeKind::DialectDivergence => NoticeKind::ModalOnRaw,
             },
             message: n.message,
             op_index: n.op_index,

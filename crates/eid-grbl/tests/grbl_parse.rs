@@ -22,9 +22,13 @@
 //!   G86-P являются константами D-канонизатора циклов, у grbl поверхности
 //!   нет; эмиссионное зеркало — F-кадр sub=1 в grbl_emit).
 //! FRAME/WCS §5.3: G10L2/L20→g10_l20_and_l2+pilot_36, L20-mid→n15,
-//!   double-preset→n17, G92-mid→n2, G92-partial→spec_cov_frame_g92_partial,
-//!   G92.1→spec_cov_frame_g92_1_raw, G53-conditions→#37+n1+n16,
+//!   double-preset→n17 (v0.20: Ok, per-axis merge), G92-mid→v020_g92_mid_*
+//!   (v0.20: Ok + chaining, Raw-носитель), G92-partial→spec_cov_frame_g92_partial,
+//!   G92.1→spec_cov_frame_g92_1_raw (v0.20: Raw{TABLE}), G53-conditions→#37+n1+n16,
 //!   G53-without-motion→spec_cov_frame_g53_no_motion, wcs-solo→spec_cov_frame_wcs_solo.
+//! v0.20 SPEC §5.2 (зонд-сверка target/probe/g92): bare-T ABSORB→
+//!   v020_bare_t_absorb_selected_tool, tail-after-PEND→v020_n12_13_*+
+//!   v020_tail_* (Raw-хвост + notice диалект-расхождения).
 //! STATE-EMIT: coolant-переходы→coolant_29(#29)+grbl_emit spec_cov_emit_coolant,
 //!   spindle→grbl_emit spec_cov_emit_spindle, feed-переживает-G0→pilot_03,
 //!   partial-end-default-0→unit_partial_end_at_start.
@@ -308,11 +312,37 @@ fn center_val(op: &Op) -> (f64, f64) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn negative_n2_mid_g92_is_semantics() {
-    assert_eq!(
-        err_code(parse(&corpus("n2_mid_G92"))),
-        ErrorCode::UnsupportedSemantics
+fn v020_n2_mid_g92_chained_with_raw_carrier() {
+    // SPEC §3 v0.20 (зонды 1–3; коммит c76ed9a): mid-program G92 — валидный
+    // frame_preset: ограничение «только startup» снято (бывший Err SEMANTICS
+    // N2). AST-носитель — Raw: grammar/AST v0.3 не имеют mid-program
+    // frame_preset-опa (eid-core Op заморожен); chaining чтения — в
+    // каноническом состоянии. n2-вектор: G0/G1/G92/M2 — Raw-оп после linear.
+    let p = parse(&corpus("n2_mid_G92")).expect("n2: Ok (v0.20)");
+    assert!(
+        p.frame_preset.is_none(),
+        "header — только СТАРТОВАЯ пресетка"
     );
+    let raw_g92 = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Raw { .. }))
+        .expect("G92-mid несётся Raw-опом (lossless)");
+    match raw_g92 {
+        Op::Raw { reason, code, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(
+                reason.contains("frame_preset"),
+                "reason называет конструкцию frame_preset: {reason}"
+            );
+        }
+        _ => unreachable!(),
+    }
+    // ProgramEnd — последний оп (M2 после G92 не в хвосте).
+    assert!(matches!(
+        &p.ops.last().expect("non-empty"),
+        Op::ProgramEnd { .. }
+    ));
 }
 
 #[test]
@@ -352,16 +382,34 @@ fn negative_n7_unit_switch_semantics() {
 }
 
 #[test]
-fn negative_n12_13_program_end_structure() {
-    // Дубль/не-последний — структурные → Err INVALID (SPEC §3).
-    assert_eq!(
-        err_code(parse(&corpus("n12_program_end_not_last"))),
-        ErrorCode::InvalidInput
-    );
-    assert_eq!(
-        err_code(parse(&corpus("n13_program_end_duplicate"))),
-        ErrorCode::InvalidInput
-    );
+fn v020_n12_13_tail_after_program_end_raw() {
+    // SPEC §5.2 v0.20 (source protocol.c:74-105 — главный цикл БЕЗ проверки
+    // program_flow; зонд 5): grbl-стрим ИСПОЛНЯЕТ блоки после M2/M30 —
+    // бывшие Err «not the last» (N12) и «duplicate» (N13) сняты; каждый
+    // хвостовой блок — lossless Raw-оп, program_end остаётся опом в
+    // последовательности (не forced-last); notice диалект-расхождения.
+    for rel in ["n12_program_end_not_last", "n13_program_end_duplicate"] {
+        let out = canonicalize_with_notices(&corpus(rel), "n12_13.ngc").expect("{rel}: Ok (v0.20)");
+        let mut pend_seen = false;
+        let mut raw_tail = 0;
+        for op in &out.program.ops {
+            match op {
+                Op::ProgramEnd { .. } => pend_seen = true,
+                Op::Raw { .. } if pend_seen => raw_tail += 1,
+                _ => {}
+            }
+        }
+        assert!(pend_seen, "{rel}: program_end — оп в последовательности");
+        assert!(raw_tail >= 1, "{rel}: хвост после PEND — Raw-опы");
+        assert!(
+            out.notices.iter().any(|n| {
+                n.message.contains("executed in grbl-stream semantics")
+                    && n.message.contains("ignored in rs274-file semantics")
+            }),
+            "{rel}: notice диалект-расхождения: {:?}",
+            out.notices.iter().map(|n| &n.message).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]
@@ -386,11 +434,8 @@ fn spec_v016_auto_pend_missing_program_end() {
         eid_grbl::canonicalize::NoticeKind::MissingProgramEnd
     );
     assert!(out.notices[0].message.contains("W_MISSING_PROGRAM_END"));
-    // Негатив: дубль M2 по-прежнему Err (структура ≠ отсутствие конца).
-    assert_eq!(
-        err_code(parse(&corpus("n13_program_end_duplicate"))),
-        ErrorCode::InvalidInput
-    );
+    // v0.20: дубль M2 больше не Err — второй M2 = Raw-хвост после PEND
+    // (grbl-стрим исполняет: protocol.c:74-105; см. v020_n12_13_*).
 }
 
 #[test]
@@ -403,10 +448,13 @@ fn negative_n15_n16_n17_frames() {
         err_code(parse(&corpus("n16_g53_after_preset"))),
         ErrorCode::RuntimeState
     );
-    assert_eq!(
-        err_code(parse(&corpus("n17_multiple_preset_at_start"))),
-        ErrorCode::UnsupportedSemantics
-    );
+    // N17 (SPEC §3 v0.20, Q5 ЗАКРЫТ): несколько G92 легальны — до ходов
+    // per-axis merge в СТАРТОВУЮ пресетку header-поля (зонд 2: replace-по-
+    // пересчёту; зонд 3: неуказанные оси чтение не меняют → merge от
+    // (0,0,5): X=10 задан, Y=0 Z=5 сохранены).
+    let p = parse(&corpus("n17_multiple_preset_at_start")).expect("n17: Ok (v0.20)");
+    let fp = p.frame_preset.as_ref().expect("стартовая пресетка");
+    assert_pt(&fp.values, 10.0, 0.0, 5.0);
 }
 
 #[test]
@@ -818,12 +866,17 @@ fn audit33_g92_preset_absorbed_on_raw_line() {
         }
         other => panic!("{other:?}"),
     }
-    // Структурные инварианты G92 работают и на raw-кадре: второй пресет → Err.
+    // v0.20 (Q5 закрыт): вторая G92 в стартовой зоне на raw-кадре — per-axis
+    // merge пресетки (зонд 3: заданные оси заменяются, остальные хранятся),
+    // не Err. Смешанная L20+G92 остаётся Err (см. spec_cov_frame_l20_*).
     let dup = "G21 G90 G94 G17\nG92 X0.0 Y0.0 Z5.0 G28\nG92 X1.0 Y1.0 Z1.0 G28\nM2\n";
-    assert_eq!(
-        err_code(canonicalize(dup, "a33g92b.ngc")),
-        ErrorCode::UnsupportedSemantics
-    );
+    let dup_out = canonicalize_with_notices(dup, "a33g92b.ngc").expect("n17-класс Ok (v0.20)");
+    let fp = dup_out
+        .program
+        .frame_preset
+        .as_ref()
+        .expect("merge двух стартовых G92 на raw-кадре");
+    assert_pt(&fp.values, 1.0, 1.0, 1.0);
 }
 
 #[test]
@@ -1220,13 +1273,15 @@ fn spec_cov_frame_g92_partial_and_g92_1() {
         err_code(parse("G21 G90 G94 G17\nG92 X0.0 Y0.0\nG0 X1 Y1 Z1\nM2\n")),
         ErrorCode::RuntimeState
     );
-    // G92.1 → Raw{SEMANTICS} (COVERAGE §2.3, Q4).
+    // G92.1 → Raw{E_REQUIRES_MACHINE_TABLE} (SPEC §3 v0.20 / Q4-частично:
+    // зонд 4 — reset возвращает чтения в прежнюю СК, требует абсолютной
+    // машинной позиции, которой в AST нет; код сменён с SEMANTICS).
     let out = canonicalize_with_notices("G21 G90 G94 G17\nG92.1\nG0 X1 Y1 Z1\nM2\n", "g.ngc")
         .expect("Ok");
     assert!(matches!(
         &out.program.ops[0],
         Op::Raw {
-            code: ErrorCode::UnsupportedSemantics,
+            code: ErrorCode::RequiresMachineTable,
             ..
         }
     ));
@@ -1604,10 +1659,15 @@ fn unit_modal_motion_continuation() {
 
 #[test]
 fn unit_t_word_and_modal_violation_invalid() {
-    assert_eq!(
-        err_code(parse("G21 G90 G17\nT1\nM2\n")),
-        ErrorCode::InvalidInput
+    // SPEC §5.2 v0.20 (зонд 6b + source gcode.c:315-316/:936): bare-T →
+    // ABSORB в state.selected_tool, НЕ Err (бывший Err «bare T word» снят);
+    // в AST tool_change НЕ строится — реальный grbl смену не исполняет.
+    let p = parse("G21 G90 G17\nT1\nM2\n").expect("bare T absorbed, no Err");
+    assert!(
+        p.ops.iter().all(|o| !matches!(o, Op::ToolChange { .. })),
+        "T без M6 не строит ToolChange (gcode.c:939 «[6. Change tool]: NOT SUPPORTED»)"
     );
+    // Модальный конфликт остаётся Err (структура кадра, не T-слово).
     assert_eq!(
         err_code(parse("G21 G90 G17\nG0 G1 X5.0\nM2\n")),
         ErrorCode::InvalidInput
@@ -1656,4 +1716,215 @@ fn unit_g53_machine_frame_and_limits() {
     }
     // (d): start = M_after − O_wcs = (0,0,−5) − (0,0,0).
     assert_eq!(known(&p.ops[3]), [0.0, 0.0, -5.0]);
+}
+
+// ---------------------------------------------------------------------------
+// SPEC v0.20 (коммит c76ed9a; ground truth target/probe/g92/PROBE_REPORT.md):
+// bare-T ABSORB / G92-mid chaining / Raw-хвост после program_end
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v020_bare_t_absorb_selected_tool() {
+    // Пункт 1 (зонд 6b + source gcode.c:315-316/:936 «NOT SUPPORTED, only
+    // tracks tool value»): `T4` без M6 → НЕ Err, ABSORB в state
+    // (selected_tool); в AST tool_change НЕ строится (реальный grbl смену
+    // не исполняет; M6 вне словаря GRBL — gcode.c:939).
+    let p = parse("G21 G90 G94 G17\nT4\nG0 X1.0\nM2\n").expect("bare T → Ok (нет Err «bare T»)");
+    assert!(p.ops.iter().all(|o| !matches!(o, Op::ToolChange { .. })));
+    // T-строка опа не строит (аналог F/S-абсорбции): только ход + PEND.
+    assert_eq!(p.ops.len(), 2, "ops: Rapid, ProgramEnd");
+    // Повторное T обновляет state (`gc_state.tool = t` на каждом блоке,
+    // gcode.c:936) — по-прежнему Ok, без опов и без отказов.
+    parse("G21 G90 G94 G17\nT4\nT7\nG0 X1.0\nM2\n").expect("повторное T → Ok");
+    // Регресс «T с M6»: M6 вне словаря GRBL — строка Raw{SYNTAX} как прежде,
+    // ToolChange не строится ни при какой форме.
+    let out =
+        canonicalize_with_notices("G21 G90 G94 G17\nT4 M6\nG0 X1.0\nM2\n", "t6.ngc").expect("Ok");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
+    assert!(out
+        .program
+        .ops
+        .iter()
+        .all(|o| !matches!(o, Op::ToolChange { .. })));
+    // Диапазон-чеки зеркальны источнику: только non-negative (gcode.c:315)
+    // и max (gcode.c:316, MAX_TOOL_NUMBER 255).
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17\nT256\nM2\n")),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse("G21 G90 G94 G17\nT-1\nM2\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn v020_g92_mid_golden_chain_new_reading() {
+    // Пункт 2, golden из рулинга: `G0 X10 Y10 / G92 X0 Y0 / G1 X5` →
+    // frame_preset-семантика mid-program (зонд 1: сдвиг последующих
+    // координат) + linear с НОВЫМ чтением (start = (0,0,0) — позиция
+    // перечитана в системе G92). AST-носитель блока — Raw (см. process_g92):
+    // grammar v0.3 не имеет mid-program frame_preset-опa, chaining — в
+    // каноническом состоянии (v0.20 §3).
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y10.0\nG92 X0 Y0\nG1 X5.0 F100.0\nM2\n")
+        .expect("G92-mid → Ok (v0.20)");
+    assert!(
+        p.frame_preset.is_none(),
+        "header — только стартовая пресетка"
+    );
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw { reason, code, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("frame_preset"), "{reason}");
+        }
+        other => panic!("op1 не Raw-носитель G92: {other:?}"),
+    }
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 0.0, 0.0); // новое чтение после G92 X0 Y0
+            assert_pt(end, 5.0, 0.0, 0.0);
+        }
+        other => panic!("op2 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_twice_replace_by_recompute() {
+    // Зонд 2: повторная G92 ЗАМЕНЯЕТ регистр по пересчёту от текущей
+    // машины (не аккумуляция). Без промежуточного хода: machine (10,0,0);
+    // G92 X0 → чтение 0; G92 X5 → чтение 5 (replace, не 0−5); G1 X8 —
+    // start = 5 (новое чтение той же точки).
+    let p = parse("G21 G90 G94 G17\nG0 X10.0\nG92 X0\nG92 X5\nG1 X8.0 F100.0\nM2\n")
+        .expect("два G92 подряд → Ok (Q5 закрыт)");
+    let raws = p.ops.iter().filter(|o| matches!(o, Op::Raw { .. })).count();
+    assert_eq!(raws, 2, "несколько G92 = несколько опов-носителей");
+    match &p.ops[3] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 5.0, 0.0, 0.0);
+            assert_pt(end, 8.0, 0.0, 0.0);
+        }
+        other => panic!("op3 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_per_axis_y_reading_unchanged() {
+    // Зонд 3: per-axis assignment — `G92 X0` меняет чтение ТОЛЬКО X;
+    // Y-чтение не меняется (старт linear.Y = 10 — прежняя система).
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y10.0\nG92 X0\nG1 X5.0 Y5.0 F100.0\nM2\n")
+        .expect("per-axis G92 → Ok");
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 10.0, 0.0);
+            assert_pt(end, 5.0, 5.0, 0.0);
+        }
+        other => panic!("op2 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_tail_after_program_end_golden() {
+    // Пункт 3 golden: `G0 X10 / M2 / G0 X20` → Ok; хвост Raw (lossless);
+    // program_end остаётся опом в последовательности (НЕ forced-last —
+    // последний оп Raw); notice диалект-расхождения (ровно один).
+    let out = canonicalize_with_notices("G21 G90 G94 G17\nG0 X10.0\nM2\nG0 X20.0\n", "tail.ngc")
+        .expect("tail → Ok (v0.20; бывший Err N12 снят)");
+    let kinds: Vec<&str> = out
+        .program
+        .ops
+        .iter()
+        .map(|o| match o {
+            Op::Rapid { .. } => "rapid",
+            Op::ProgramEnd { .. } => "pend",
+            Op::Raw { .. } => "raw",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, vec!["rapid", "pend", "raw"], "{kinds:?}");
+    assert_eq!(out.notices.len(), 1, "один notice на программу");
+    let msg = &out.notices[0].message;
+    assert!(
+        msg.contains("tail after program end")
+            && msg.contains("executed in grbl-stream semantics")
+            && msg.contains("ignored in rs274-file semantics")
+            && msg.contains("dialect-divergent"),
+        "текст расхождения: {msg}"
+    );
+    // Хвост из НЕСКОЛЬКИХ блоков: notice один, все блоки Raw.
+    let out2 = canonicalize_with_notices(
+        "G21 G90 G94 G17\nG0 X10.0\nM2\nG0 X20.0\n%\nG4 P1.0\n",
+        "t2.ngc",
+    )
+    .expect("Ok");
+    assert!(matches!(&out2.program.ops[2], Op::Raw { .. }));
+    assert!(matches!(&out2.program.ops[3], Op::Raw { .. }));
+    assert!(matches!(&out2.program.ops[4], Op::Raw { .. }));
+    assert_eq!(out2.notices.len(), 1, "notice диалект-расхождения — один");
+    // Хвост после M30 (BewareOfDog-форма) — та же диспозиция.
+    let out3 = canonicalize_with_notices("G21 G90 G94 G17\nG0 X10.0\nM30\nG0 X20.0\n", "t3.ngc")
+        .expect("M30 + хвост → Ok");
+    assert!(matches!(&out3.program.ops[2], Op::Raw { .. }));
+}
+
+#[test]
+fn v020_tail_emit_same_dialect_honest_bytes() {
+    // SPEC §5.2 v0.20: «same-dialect хранит байты честно» — эмиссия
+    // программы с Raw-хвостом легальна (ex-ProgramEndNotLast n12-гейт:
+    // отказ только на НЕ-Raw оп после PEND), tail-байт verbatim.
+    let out = canonicalize_with_notices("G21 G90 G94 G17\nG0 X10.0\nM2\nG0 X20.0\n", "te.ngc")
+        .expect("parse Ok");
+    let ad = eid_grbl::GrblAdapter::new();
+    let text = eid_core::adapter::Adapter::emit(&ad, &out.program)
+        .expect("emit с Raw-хвостом легален (SPEC §5.2 v0.20)")
+        .text;
+    assert!(text.contains("G0 X20.0"), "хвост verbatim: {text:?}");
+    assert!(text.contains("M2"));
+    // НЕ-Raw оп после PEND — по-прежнему нарушение канон-формы (emit-гейт).
+    let mut bad = out.program.clone();
+    bad.ops.insert(
+        2,
+        Op::Dwell {
+            seconds: eid_core::ast::Num::new("1.0".into(), 1.0),
+            state: eid_core::ast::State {
+                feed: None,
+                spindle: eid_core::ast::Spindle::Off,
+                coolant: eid_core::ast::Coolant::default(),
+                tool: None,
+                frame: eid_core::ast::Frame::Wcs,
+                wcs: Wcs::G54,
+                feed_restated: false,
+            },
+            src: eid_core::ast::SrcSpan {
+                file: std::sync::Arc::from("x"),
+                line_start: 1,
+                col_start: 1,
+                line_end: 1,
+                col_end: 1,
+            },
+            sub: None,
+        },
+    );
+    assert!(
+        eid_core::adapter::Adapter::emit(&ad, &bad).is_err(),
+        "не-Raw оп после PEND → отказ n12"
+    );
 }
