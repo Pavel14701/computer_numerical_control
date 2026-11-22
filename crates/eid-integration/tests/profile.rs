@@ -158,7 +158,8 @@ fn empty_file_is_err() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Переопределение профилем: нестандартные лимиты и R-эмиссия читаются.
+// 4. Переопределение профилем: нестандартные лимиты читаются (R-эмиссия
+//    true вне fanuc/haas гейтится — см. stage8_r_arcs_true_... ниже).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -170,7 +171,7 @@ fn profile_overrides_parse() {
     assert_eq!(p.limits.max_unroll_iterations, 100);
     assert_eq!(p.limits.max_source_lines, 20_000);
     assert_eq!(p.limits.max_word_chars, 8);
-    assert!(p.emit_r_arcs);
+    assert!(!p.emit_r_arcs);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +512,9 @@ const UNKNOWN_DIALECT_TOML: &str = concat!(
 const OVERRIDE_TOML: &str = concat!(
     "name = \"grblHAL bench\"\n",
     "dialect = \"grbl-hal\"\n",
-    "emit-r-arcs = true\n",
+    // emit_r_arcs = true вне fanuc/haas гейтится validate() (реестр §7.1 —
+    // опции в grbl-адаптеры не пробрасываются); валидное значение — false.
+    "emit-r-arcs = false\n",
     "\n",
     "[limits]\n",
     "max-ops-per-program = 5000\n",
@@ -609,14 +612,72 @@ fn stage8_m02_on_non_fanuc_haas_dialect_is_err() {
     );
     let path = write_temp("stage8_m02_grbl.toml", toml_text);
     let err = MachineProfile::load(&path).expect_err("M02 на grbl отвергается");
+    // Честная формулировка (реестр §7.1: старый текст «в словаре … флага
+    // program_end нет» был фактической ошибкой — M02/M30 ЕСТЬ в словарях
+    // обеих целей, COVERAGE §3 «различие вне L1»; отказ — из-за механики:
+    // стиль program-end не выбирается профилем, дефолт эмиссии = M2/M30).
     assert!(
-        err.contains("program_end_style") && err.contains("fanuc/haas"),
+        err.contains("program_end_style")
+            && err.contains("неприменим на цели")
+            && err.contains("L1-эквивалентны")
+            && !err.contains("в словаре"),
         "{err}"
     );
     // Явный дефолт M30 на любом диалекте валиден (no-op).
     let ok = toml_text.replace("program-end-style = \"M02\"", "program-end-style = \"M30\"");
     let path = write_temp("stage8_m30_grbl.toml", &ok);
     MachineProfile::load(&path).expect("M30 на grbl валиден (дефолт)");
+}
+
+#[test]
+fn stage8_r_arcs_true_on_non_fanuc_haas_dialect_is_err() {
+    // Гейт emit_r_arcs (реестр §7.1/§7.3): единственный из трёх
+    // emission-флагов этапа 8 без диалект-гейта — true на grbl/linuxcnc
+    // проходил validate и ТИХО игнорировался (опции эмиссии пробрасываются
+    // только в fanuc/haas-обёртки registry). Теперь — отказ загрузки
+    // (тихое игнорирование запрещено); false валиден на любом диалекте,
+    // true — на fanuc/haas.
+    let mk = |dialect: &str, flag: &str| {
+        format!(
+            concat!(
+                "name = \"R gate\"\n",
+                "dialect = \"{d}\"\n",
+                "emit-r-arcs = {f}\n",
+                "\n",
+                "[limits]\n",
+                "max-ops-per-program = 200000\n",
+                "max-unroll-iterations = 10000\n",
+                "max-source-lines = 1000000\n",
+                "max-word-chars = 32\n",
+            ),
+            d = dialect,
+            f = flag
+        )
+    };
+    for dialect in ["grbl-1.1", "grbl-hal", "fluidnc", "linuxcnc"] {
+        let name = format!("stage8_r_true_{}.toml", dialect.replace('-', "_"));
+        let path = write_temp(&name, &mk(dialect, "true"));
+        let err =
+            MachineProfile::load(&path).expect_err("emit_r_arcs=true вне fanuc/haas отвергается");
+        assert!(
+            err.contains("emit_r_arcs") && err.contains("неприменим"),
+            "{err}"
+        );
+    }
+    // false валиден на любом диалекте (дефолт no-op).
+    for dialect in ["grbl-1.1", "linuxcnc"] {
+        let name = format!("stage8_r_false_{}.toml", dialect.replace('-', "_"));
+        let path = write_temp(&name, &mk(dialect, "false"));
+        let p = MachineProfile::load(&path).expect("false валиден везде");
+        assert!(!p.emit_r_arcs);
+    }
+    // true на fanuc/haas валиден (опции пробрасываются в адаптер).
+    for dialect in ["fanuc", "haas"] {
+        let name = format!("stage8_r_true_{dialect}.toml");
+        let path = write_temp(&name, &mk(dialect, "true"));
+        let p = MachineProfile::load(&path).expect("true на fanuc/haas валиден");
+        assert!(p.emit_r_arcs);
+    }
 }
 
 #[test]
