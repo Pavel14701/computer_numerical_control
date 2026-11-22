@@ -1156,3 +1156,85 @@ fn e2e_stage8_profile_dialect_guard() {
     translate_text_with_profile("linuxcnc", "haas", src, "guard.lnx.ngc", Some(&def))
         .expect("дефолтный профиль не несёт флагов — guard молчит");
 }
+
+// ---------------------------------------------------------------------------
+// SPEC v0.20: knight-подобный verify-кейс — M2 mid-file + ходы после (Raw-хвост)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_v020_knight_tail_after_program_end_verify_ok() {
+    // SPEC v0.20 §5.2 (коммит c76ed9a): блоки после program_end — Raw-хвост,
+    // LEGAL (lossless; rs274 молча игнорирует хвост — зонд 5 exit 0; grbl-стрим
+    // исполняет — protocol.c:74-105; диалект-расхождение → кросс-диалект
+    // отказывает по правилу Raw §8.2). Реальный корпусный кейс —
+    // corpus/tier_b/inbox/vis_knight.tap (M2-mid + ходы): до v0.20 validate-шаг
+    // CLI verify давал exit 1 на легальной программе. Здесь — полный
+    // verify-конвейер eid-cli::cmd_verify: parse → validate → mock-sim.
+    let src = "G21 G90 G94 G17\n\
+               G0 X0.992 Y1.008 Z0.15\n\
+               G1 Z-0.068 F2\n\
+               M2\n\
+               G0 X20.0\n\
+               G1 X25.0 F4\n";
+    let a = AnyAdapter::for_name("grbl-1.1").expect("адаптер grbl");
+    // 1. parse: Ok; PEND на месте M2, ходы после — Raw-опы
+    let out = a.parse(src, "knight_like.ngc").expect("parse OK (v0.20)");
+    let program = out.program;
+    let pend_pos = program
+        .ops
+        .iter()
+        .position(|op| matches!(op, Op::ProgramEnd { .. }))
+        .expect("PEND на месте M2");
+    assert!(
+        program.ops[pend_pos + 1..]
+            .iter()
+            .all(|op| matches!(op, Op::Raw { .. })),
+        "ходы после M2 = Raw-хвост: {:?}",
+        &program.ops[pend_pos + 1..]
+    );
+
+    // 2. validate (eid_core::parser::validate — тот же вызов, что CLI verify;
+    // до v0.20 здесь был отказ «program_end must be the last op»)
+    eid_integration::sim::validate_program(&program)
+        .expect("validate: Raw-хвост после PEND легален (SPEC v0.20)");
+
+    // 3. mock-sim structural (тот же вызов, что CLI verify)
+    let profile = MachineProfile::grbl_default();
+    let report = check_program(&profile, &program);
+    assert!(report.is_ok(), "mock-sim: {:?}", report.errors);
+
+    // Регрессия правила: не-Raw оп после PEND — verify по-прежнему отказывает
+    // с прежним текстом «program_end must be the last op» (строка дословно —
+    // контракт emit-фильтров адаптеров).
+    let mut bad = program.clone();
+    bad.ops.insert(
+        pend_pos + 1,
+        Op::Dwell {
+            seconds: eid_core::ast::Num::new("1.0".into(), 1.0),
+            state: eid_core::ast::State {
+                feed: None,
+                spindle: eid_core::ast::Spindle::Off,
+                coolant: eid_core::ast::Coolant::default(),
+                tool: None,
+                frame: eid_core::ast::Frame::Wcs,
+                wcs: eid_core::ast::Wcs::G54,
+                feed_restated: false,
+            },
+            src: eid_core::ast::SrcSpan {
+                file: std::sync::Arc::from("knight_like.ngc"),
+                line_start: 4,
+                col_start: 1,
+                line_end: 4,
+                col_end: 1,
+            },
+            sub: None,
+        },
+    );
+    let err = eid_integration::sim::validate_program(&bad)
+        .expect_err("не-Raw оп после PEND → отказ (SPEC §3)");
+    assert!(
+        err.iter()
+            .any(|d| d.message.contains("program_end must be the last op")),
+        "{err:?}"
+    );
+}

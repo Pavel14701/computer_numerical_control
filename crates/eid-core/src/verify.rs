@@ -34,11 +34,13 @@
 //!     частичный end (дефолт-0 в (a) / наследует неизвестное в (b)-(d) /
 //!         machine — только полные) — N/A-core: end в EID AST — полный vec3,
 //!         правило канонизатора диалекта (агенты C/D)
-//!   §3:
-//!     program_end ровно один / последний / единственный в минимальной —
+//!   §3 (инвариант program_end — ревизия SPEC v0.20, коммит c76ed9a §5.2:
+//!     «PEND последний» снято → «после PEND только Raw-опы»; не-Raw после
+//!     PEND / второй PEND-оп → прежний отказ «program_end must be the last
+//!     op» — текст дословно, контракт emit-фильтров адаптеров) —
 //!          → spec_3_pend_invariants_three_modes (×3 режима: parse / validate /
-//!            validate_with_notices), minimal_program_valid,
-//!            verify_broken_ast_exact_codes [#1-3]
+//!            validate_with_notices), spec_3_pend_tail_raw_only_v020,
+//!            minimal_program_valid, verify_broken_ast_exact_codes [#1-3]
 //!     linear/arc в итоговом AST требуют feed ≠ none (после отбрасывания!) —
 //!          → spec_3_feed_final_ast, roundtrip::linear_feed_none_rejected,
 //!            zero_length_linear_feed_none_dropped_not_error
@@ -327,8 +329,22 @@ struct OpVerify {
     zero: Option<(NoticeKind, String)>,
 }
 
-/// Program-level pre: §3 program_end — ровно один, последний; в минимальной
-/// программе — единственный; опов после него нет.
+/// Program-level pre: §3 program_end — ровно один; после него — только Raw-опы
+/// (SPEC §5.2, ревизия v0.20: блоки после program_end — Raw-хвост, LEGAL —
+/// lossless; rs274 молча игнорирует хвост (зонд 5, exit 0), grbl-стрим
+/// исполняет (protocol.c:74-105) — конструкция диалект-расходится, кросс-
+/// диалект отказывает по правилу Raw §8.2). В минимальной программе PEND —
+/// единственный.
+///
+/// Правило v0.20 (замена «PEND обязан быть последним»):
+///  * не-Raw оп после PEND → прежний отказ с текстом «program_end must be
+///    the last op» — строка ДОСЛОВНО сохранена: emit-фильтры адаптеров
+///    (eid-grbl/eid-fanuc/eid-haas) завязаны на неё (`message.contains`);
+///  * второй ProgramEnd-оп в AST → тот же отказ. Это НЕ «блоки после M2»
+///    (реальный парсер v0.20 строит только первый PEND, хвост → Raw —
+///    зеркала сняли N13 механически), а hand-built AST с двумя PEND-опами:
+///    валидатор канон-формы вправе отказать (два PEND-опа — не Raw-хвост);
+///    задокументировано тестом spec_3_pend_tail_raw_only_v020.
 fn verify_program_end(ops: &[Op], errors: &mut Vec<Diagnostic>) {
     if ops.is_empty() {
         errors.push(diag(
@@ -348,21 +364,15 @@ fn verify_program_end(ops: &[Op], errors: &mut Vec<Diagnostic>) {
             None,
         ));
     }
-    if end_count > 1 {
-        for o in ops.iter().filter(|o| matches!(o, Op::ProgramEnd { .. })) {
-            errors.push(diag(
-                ErrorCode::InvalidInput,
-                "duplicate program_end (SPEC §3: ровно один PEND)",
-                op_src(o),
-            ));
-        }
-    }
-    if let Some(last) = ops.last() {
-        if !matches!(last, Op::ProgramEnd { .. }) {
+    // v0.20: после первого PEND допустимы ТОЛЬКО Raw-опы. Не-Raw оп (включая
+    // второй PEND — см. doc) → отказ «program_end must be the last op»
+    // (текст прежний, дословно — контракт emit-фильтров адаптеров).
+    if let Some(pend) = ops.iter().position(|o| matches!(o, Op::ProgramEnd { .. })) {
+        if let Some(offender) = ops[pend + 1..].iter().find(|o| !matches!(o, Op::Raw { .. })) {
             errors.push(diag(
                 ErrorCode::InvalidInput,
                 "program_end must be the last op (SPEC §3)",
-                op_src(last),
+                op_src(offender),
             ));
         }
     }

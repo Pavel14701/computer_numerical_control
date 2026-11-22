@@ -166,6 +166,154 @@ fn spec_3_pend_invariants_three_modes() {
     assert!(rep.diagnostics.is_empty() && rep.notices.is_empty());
 }
 
+/// SPEC v0.20 (§5.2, ревизия инварианта program_end, коммит c76ed9a): правило
+/// «PEND обязан быть последним опом» заменено на «после PEND допустимы ТОЛЬКО
+/// Raw-опы». Raw-хвост LEGAL (lossless; rs274 молча игнорирует хвост — зонд 5
+/// exit 0; grbl-стрим исполняет — protocol.c:74-105; конструкция
+/// диалект-расходится → кросс-диалект отказывает по правилу Raw §8.2).
+/// Не-Raw оп после PEND → прежний отказ с текстом «program_end must be the
+/// last op» — строка ДОСЛОВНО (emit-фильтры eid-grbl/eid-fanuc/eid-haas
+/// завязаны на неё через message.contains). Второй ProgramEnd-оп в AST → тот
+/// же отказ: реальный парсер v0.20 строит только первый PEND (хвост = Raw,
+/// N13 в зеркалах снят), hand-built AST с двумя PEND-опами — это не «блоки
+/// после M2», валидатор канон-формы вправе отказать.
+#[test]
+fn spec_3_pend_tail_raw_only_v020() {
+    // --- позитив: RAPID, PEND, RAW — Raw-хвост легален во всех 3 режимах -----
+    let ok_text = format!(
+        "{HDR}OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\n\
+         OP 002 PEND\n\
+         OP 003 RAW reason=\"tail after program end\" code=E_UNSUPPORTED_SEMANTICS src=3.1-3.0 payload=0D0A\nEND\n"
+    );
+    let p = parser::parse(&ok_text, "t")
+        .expect("Raw-хвост после PEND легален (SPEC v0.20; бывший N12-отказ снят)");
+    assert!(matches!(p.ops[2], Op::Raw { .. }), "хвост = Raw-оп");
+    // режим 1b: parse_raw + validate (путь эмиссии) — тоже чисто
+    let raw = parser::parse_raw(&ok_text, "t").unwrap();
+    let ds = verify::validate(&raw);
+    assert!(ds.is_empty(), "validate на Raw-хвосте: {ds:#?}");
+    // режим 3: validate_with_notices — без диагностик и без notices (хвост не
+    // zero-length, отбрасывать нечего)
+    let rep = verify::validate_with_notices(&raw);
+    assert!(
+        rep.diagnostics.is_empty() && rep.notices.is_empty(),
+        "{:#?} / {:#?}",
+        rep.diagnostics,
+        rep.notices
+    );
+
+    // --- позитив (AST-режим): hand-built RAPID, PEND, RAW --------------------
+    let p = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+        Op::Raw {
+            payload_hex: "0D0A".into(),
+            reason: "tail after program end".into(),
+            code: ErrorCode::UnsupportedSemantics,
+            src: src(),
+        },
+    ]);
+    let ds = verify::validate(&p);
+    assert!(ds.is_empty(), "hand-built Raw-хвост: {ds:#?}");
+
+    // --- негатив: не-Raw оп после PEND → прежний отказ (строка дословно) ----
+    // Текст «program_end must be the last op» — контракт emit-фильтров
+    // адаптеров (eid-grbl/src/emit.rs и др.: message.contains) — не менять.
+    let bad = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+        rapid(
+            StartPoint::Unknown,
+            p3(2.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ]);
+    // (rapid после PEND; завершающий PEND — ещё один не-Raw после первого,
+    // отчёт по ПЕРВОМУ нарушителю)
+    let ds = verify::validate(&bad);
+    assert!(
+        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        "не-Raw после PEND: {ds:#?}"
+    );
+    assert!(ds
+        .iter()
+        .all(|d| d.code == ErrorCode::InvalidInput && d.stage == Stage::Verify));
+    // точка диагностики — ПЕРВЫЙ нарушитель после PEND (rapid, не хвостовой PEND)
+    let offender = ds
+        .iter()
+        .find(|d| d.message.contains("program_end must be the last op"))
+        .and_then(|d| d.src.as_ref())
+        .expect("диагностика с src нарушителя");
+    assert_eq!(offender.file.as_ref(), "t");
+
+    // текст-режим: RAPID, PEND, RAPID → отказ и на parse
+    let bad_text = format!(
+        "{HDR}OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\n\
+         OP 002 PEND\n\
+         OP 003 RAPID start=unknown end=2.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\nEND\n"
+    );
+    let ds = parser::parse(&bad_text, "t").unwrap_err();
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("program_end must be the last op")),
+        "{ds:#?}"
+    );
+
+    // --- негатив: второй PEND-оп в AST → тот же отказ ------------------------
+    // (не «блоки после M2»: парсер строит только первый PEND, хвост = Raw;
+    // hand-built AST с двумя PEND — валидатор отказывает, текст прежний)
+    let two_pends = program(vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+        pend(),
+    ]);
+    let ds = verify::validate(&two_pends);
+    assert!(
+        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        "второй PEND-оп: {ds:#?}"
+    );
+    // и текст-режим с двумя PEND — по-прежнему отказ
+    let two_pends_text = format!(
+        "{HDR}OP 001 RAPID start=unknown end=1.0000,0.0000,0.0000 src=0.1-0.0 {ST_G54}\n\
+         OP 002 PEND\nOP 003 PEND\nEND\n"
+    );
+    assert!(parser::parse(&two_pends_text, "t").is_err());
+
+    // --- негатив: не-Raw оп ПЕРЕД Raw-хвостом → отказ (хвост не спасает) -----
+    let bad_mid = program(vec![
+        pend(),
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 0.0, 0.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        Op::Raw {
+            payload_hex: "00".into(),
+            reason: "tail".into(),
+            code: ErrorCode::UnsupportedSemantics,
+            src: src(),
+        },
+    ]);
+    let ds = verify::validate(&bad_mid);
+    assert!(
+        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        "не-Raw перед Raw-хвостом: {ds:#?}"
+    );
+}
+
 // ===========================================================================
 // §3: feed в итоговом AST
 // ===========================================================================

@@ -4,8 +4,9 @@
 //!  (a) **mock-sim** — обязателен для MVP-acceptance (критерий #8 «или mock
 //!      с пометкой»): обратный parse эмитированного текста адаптером диалекта
 //!      профиля (parse(emit(parse(f))) — R1-машина) + structural-проверки:
-//!      program_end presence (ровно один, последний — SPEC §3), zero-length
-//!      flood (эмиссия не должна реанимировать отброшенное), ходы в пределах
+//!      program_end presence (ровно один; после него только Raw-опы —
+//!      SPEC §3, ревизия v0.20), zero-length flood (эмиссия не должна
+//!      реанимировать отброшенное), ходы в пределах
 //!      `MachineProfile::axis_limits` (если заданы).
 //!  (б) **real LinuxCNC sim** (rs274ngc) — детекция наличия в системе через
 //!      [`real_sim_available`]; запуск/контейнер — решение после MVP. Если
@@ -86,9 +87,11 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
         String::new()
     };
 
-    // --- program_end: ровно один и последний (SPEC §3 v0.16: auto-PEND —
-    // отсутствующий end canonicalizer вставляет сам; ветка defensive для
-    // hand-built/нормализованных AST, через parse недостижима) ---------------
+    // --- program_end: ровно один; после него — только Raw-опы (SPEC §3,
+    // ревизия v0.20 §5.2: правило «PEND последний» снято — блоки после
+    // program_end суть Raw-хвост, LEGAL; auto-PEND — отсутствующий end
+    // canonicalizer вставляет сам; ветка defensive для hand-built/
+    // нормализованных AST, через parse недостижима) --------------------------
     // Ошибки structural-проверок тегируются этапом verify (MLIR-урок,
     // interface v0.1.2: диагностика с привязкой к этапам).
     let end_count = program
@@ -99,12 +102,25 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
     match end_count {
         0 => report
             .errors
-            .push("[verify] program_end отсутствует (SPEC §3: ровно один, последний)".to_string()),
+            .push("[verify] program_end отсутствует (SPEC §3: ровно один, после него — только Raw)".to_string()),
         1 => {
-            if !matches!(program.ops.last(), Some(Op::ProgramEnd { .. })) {
-                report
-                    .errors
-                    .push("[verify] program_end не последний оп (SPEC §3)".to_string());
+            // v0.20: не-Raw оп после PEND (включая второй PEND — hand-built
+            // AST, через parse недостижимо) → отказ; Raw-хвост легален.
+            let tail_not_raw = match program
+                .ops
+                .iter()
+                .position(|op| matches!(op, Op::ProgramEnd { .. }))
+            {
+                Some(pend) => program.ops[pend + 1..]
+                    .iter()
+                    .any(|op| !matches!(op, Op::Raw { .. })),
+                None => true,
+            };
+            if tail_not_raw {
+                report.errors.push(
+                    "[verify] program_end не последний оп (SPEC §3 v0.20: после program_end допустимы только Raw-опы)"
+                        .to_string(),
+                );
             }
         }
         n => report.errors.push(format!(
