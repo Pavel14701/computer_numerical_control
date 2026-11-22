@@ -16,7 +16,7 @@
 
 Каждый адаптер: парсер с канонизацией (modal state → resolved-state AST), детерминированный эмиттер с legality-таблицей, **развёртывание canned cycles по §7.7** (4 поверхности развёртки на единых v0.18-константах, rs274-референс 0 divergences), RAW двух классов (same-dialect verbatim / кросс-диалект отказ), verify-проход со stage-атрибуцией, semantic_diff по допускам EQUIVALENCE §4; runner R1–R4; Tier A 68 векторов + Tier B 157 файлов; CLI (translate/verify, живой режим); профили с emission-опциями; **sim real (LinuxCNC 2.9 rs274 в Docker) + sim mock**.
 
-**Числа:** **1115 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.19 (16+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
+**Числа:** **1161 тест passed / 0 failed** · 100+ коммитов · SPEC v0.19 (16+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
 
 **Временная формулировка (честная):** финальный push — итерации 7–10 за 4 дня; проект — от пустой директории до 1115 тестов через 16+ ревизий спеки, 4 СТОП-протокола (агент→оркестратор, все корректные) и 10 формально закрытых итераций — быстро, но не за счёт пропущенных шагов.
 
@@ -189,7 +189,7 @@ Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUs
 2. **NaN-swallow классифицирован**: известное ограничение, не блокер (§4: лексер физически не производит NaN, арифметика ограничена; is_finite-гейт — кандидат v0.3.x).
 3. **Формулировки**: §1 N+2 эмпирический claim + честная временная формулировка; **§6.71 закрыт** (129e639) + emission-гейт emit_r_arcs (200e53c, находка D); **корпус-аудит 157** (9391b85): 131 чисто 3-осевых (83.4%), 26 именованных скрытых классов; named evidence переписан в три раздельных claim'а с новыми пробами (bricka 49-Z fixed-point, shpk кросс байт-идентичен).
 
-**Workspace: 1123/0.** COVERAGE v0.10/v0.9.6-линейка, SPEC v0.19.
+**Workspace: 1161/0.** COVERAGE v0.11, SPEC v0.20.
 
 ## 12. Дальше (этап 12 L2 + отложенное)
 
