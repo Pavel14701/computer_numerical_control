@@ -137,10 +137,14 @@ fn emit_ops(ops: &[Op]) -> String {
     // (SET_XY_ROTATION/SET_FEED_RATE) — сверено с corpus flowsnake.
     // Поэтому нативные программы в этом файле тоже обёрнуты в %, а
     // sub-определения перенесены В ГОЛОВУ (corpus-стиль).
-    out.insert_str(0, "%
-");
-    out.push_str("%
-");
+    out.insert_str(
+        0, "%
+",
+    );
+    out.push_str(
+        "%
+",
+    );
     out
 }
 
@@ -184,7 +188,9 @@ fn parse_canonical(text: &str) -> Vec<CanonLine> {
         };
         let call = line[npos + "N.....".len()..].trim();
         let Some(open) = call.find('(') else { continue };
-        let Some(close_r) = call.rfind(')') else { continue };
+        let Some(close_r) = call.rfind(')') else {
+            continue;
+        };
         if close_r < open {
             continue;
         }
@@ -244,7 +250,15 @@ fn run_rs274(ngc_path: &Path) -> Result<String, String> {
     let out_vm = format!("/work/{out_name}");
     let output = std::process::Command::new("docker")
         .args([
-            "run", "--rm", "-v", &mount, "eid-linuxcnc-sim", "rs274", "-g", &in_vm, &out_vm,
+            "run",
+            "--rm",
+            "-v",
+            &mount,
+            "eid-linuxcnc-sim",
+            "rs274",
+            "-g",
+            &in_vm,
+            &out_vm,
         ])
         .output()
         .map_err(|e| format!("docker run failed: {e}"))?;
@@ -417,10 +431,7 @@ fn lower_strict(name: &str, program: &L2Program) -> Vec<Op> {
     assert!(
         res.raw_tail.is_empty(),
         "{name}: unexpected RAW carriers (trace must fully lower): {:?}",
-        res.raw_tail
-            .iter()
-            .map(|c| c.marker)
-            .collect::<Vec<_>>()
+        res.raw_tail.iter().map(|c| c.marker).collect::<Vec<_>>()
     );
     res.l1_ops
 }
@@ -821,7 +832,10 @@ fn trace_null_arg_default_g65_vs_oword() {
         ),
     ];
     let program = L2Program::new(
-        vec![call_o(9010, vec![]), call_o(9010, vec![arg(b'X', num(5.0))])],
+        vec![
+            call_o(9010, vec![]),
+            call_o(9010, vec![arg(b'X', num(5.0))]),
+        ],
         vec![sub_o(9010, sub)],
     );
     let ops = lower_strict("null_default", &program);
@@ -849,7 +863,10 @@ o9010 call [5]
 ";
     let (div, n) = trace_equivalence("null_default", &ops, native, 1e-3)
         .unwrap_or_else(|e| panic!("null_default trace run failed: {e}"));
-    eprintln!("[null_default] canon lines: {n}, divergences: {}", div.len());
+    eprintln!(
+        "[null_default] canon lines: {n}, divergences: {}",
+        div.len()
+    );
     assert!(
         div.is_empty(),
         "null_default trace-equivalence FAILED: {div:?}"

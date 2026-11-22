@@ -103,8 +103,8 @@
 //! Не коммитить (по заданию).
 
 use crate::ast::{
-    Axis, BinaryOp, Expr, ExprPose, L2Program, L2Stmt, L2Sub, MoveKind, SubTarget, SysVar,
-    UnaryOp, UnaryOp::Exists, VarRef,
+    Axis, BinaryOp, Expr, ExprPose, L2Program, L2Stmt, L2Sub, MoveKind, SubTarget, SysVar, UnaryOp,
+    UnaryOp::Exists, VarRef,
 };
 use crate::eval::L2Error;
 use eid_core::ast::{Dir, Num, Op, SrcSpan, State};
@@ -306,8 +306,11 @@ impl<'a> Parser<'a> {
 
     /// Носитель `Op::Raw`: байты verbatim (решения 3/5, рулинги 4/5/6).
     fn raw_carrier(&self, ln: u32, payload: &str, reason: &str) -> L2Stmt {
-        let payload_hex: String =
-            payload.as_bytes().iter().map(|b| format!("{b:02X}")).collect();
+        let payload_hex: String = payload
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect();
         L2Stmt::L1Op(Op::Raw {
             payload_hex,
             reason: reason.to_string(),
@@ -347,12 +350,7 @@ impl<'a> Parser<'a> {
 
     /// Разобрать ОДНУ логическую строку: remarks, присваивания, O-control,
     /// слова ходов.
-    fn parse_line(
-        &mut self,
-        sink: &mut Vec<L2Stmt>,
-        in_while: bool,
-        stops: &[Ctrl],
-    ) -> LineOut {
+    fn parse_line(&mut self, sink: &mut Vec<L2Stmt>, in_while: bool, stops: &[Ctrl]) -> LineOut {
         let ln = self.line;
         let mut words: Vec<Word> = Vec::new();
         loop {
@@ -499,9 +497,7 @@ impl<'a> Parser<'a> {
         let raw = match self.peek() {
             // знак перед числом: уходит в verbatim-текст Num
             // (`z-3.05` → Const("-3.05"); parse_number съедает знак сам)
-            Some(b'-') | Some(b'+')
-                if matches!(self.peek_at(1), Some(c) if c.is_ascii_digit() || c == b'.') =>
-            {
+            Some(b'-') | Some(b'+') if matches!(self.peek_at(1), Some(c) if c.is_ascii_digit() || c == b'.') => {
                 self.parse_number(ln)?
             }
             // знак перед переменной/скобкой — унарный (`Y-[#<w>]`)
@@ -1092,7 +1088,11 @@ impl<'a> Parser<'a> {
         let mut out = Vec::new();
         let (then_body, hit) = self.parse_block(false, &[Ctrl::Elseif, Ctrl::Else, Ctrl::Endif]);
         // then-ветка: AND(negs…, head_cond)
-        let cond_then = and_all(negs.iter().cloned().chain(std::iter::once(head_cond.clone())));
+        let cond_then = and_all(
+            negs.iter()
+                .cloned()
+                .chain(std::iter::once(head_cond.clone())),
+        );
         for s in then_body {
             let src = s
                 .src()
@@ -1123,8 +1123,11 @@ impl<'a> Parser<'a> {
             }) => {
                 self.check_tag(&tag, t2.as_ref(), l2, "if/else");
                 let (else_body, hit2) = self.parse_block(false, &[Ctrl::Endif]);
-                let cond_else =
-                    and_all(negs.iter().cloned().chain(std::iter::once(not_head.clone())));
+                let cond_else = and_all(
+                    negs.iter()
+                        .cloned()
+                        .chain(std::iter::once(not_head.clone())),
+                );
                 for s in else_body {
                     let src = s
                         .src()
@@ -1162,8 +1165,7 @@ impl<'a> Parser<'a> {
                 out
             }
             Some(Hit {
-                ctrl: Ctrl::Elseif,
-                ..
+                ctrl: Ctrl::Elseif, ..
             }) => out, // отсутствующий cond уже отловлен при создании Hit
             None => {
                 self.err(open_ln, "unterminated `if` — no matching `endif`");
@@ -1485,8 +1487,16 @@ fn const_int(e: &Expr) -> Option<u32> {
 fn logical_not(c: &Expr) -> Expr {
     Expr::Binary(
         BinaryOp::And,
-        Box::new(Expr::Binary(BinaryOp::Ge, Box::new(c.clone()), Box::new(Expr::num(0.0)))),
-        Box::new(Expr::Binary(BinaryOp::Le, Box::new(c.clone()), Box::new(Expr::num(0.0)))),
+        Box::new(Expr::Binary(
+            BinaryOp::Ge,
+            Box::new(c.clone()),
+            Box::new(Expr::num(0.0)),
+        )),
+        Box::new(Expr::Binary(
+            BinaryOp::Le,
+            Box::new(c.clone()),
+            Box::new(Expr::num(0.0)),
+        )),
     )
 }
 
@@ -1520,7 +1530,9 @@ fn number_var(idx: u32) -> VarRef {
     }
     match idx {
         1..=33 | 100..=599 => VarRef::Direct(idx),
-        5021..=5026 => VarRef::Sys(SysVar::AbsMachinePos(axis_of(idx - 5021).unwrap_or(Axis::X))),
+        5021..=5026 => VarRef::Sys(SysVar::AbsMachinePos(
+            axis_of(idx - 5021).unwrap_or(Axis::X),
+        )),
         5041..=5046 => VarRef::Sys(SysVar::WorkPos(axis_of(idx - 5041).unwrap_or(Axis::X))),
         5061..=5066 => VarRef::Sys(SysVar::SkipPos(axis_of(idx - 5061).unwrap_or(Axis::X))),
         5420..=5426 => VarRef::Sys(SysVar::WorkPos(axis_of(idx - 5420).unwrap_or(Axis::X))),
@@ -1727,7 +1739,8 @@ m2
             },
         );
         let mut e = L2Evaluator::new(L2Config::default());
-        e.run(&prog).expect("recursion must terminate without error");
+        e.run(&prog)
+            .expect("recursion must terminate without error");
         assert_eq!(e.env().frame_depth(), 1, "frames must unwind");
     }
 
@@ -1800,7 +1813,10 @@ o<gosper> endsub
         let p = expect_ok(src);
         let d = dump(&p);
         // ATAN[y]/[x] → BinaryOp::Atan2
-        assert!(d.contains("Atan2"), "ATAN[y]/[x] must become BinaryOp::Atan2");
+        assert!(
+            d.contains("Atan2"),
+            "ATAN[y]/[x] must become BinaryOp::Atan2"
+        );
         // именованная с двоеточием #<_move:x>
         assert!(d.contains("move:x"));
         // s#<rpm> M3 → носитель (параметрический M)
@@ -1833,7 +1849,10 @@ o<arc2> endsub
         // 20 позиционных аргументов → буквы A..T (1..=20)
         let mut args = None;
         for s in &p.subs[0].body {
-            if let L2Stmt::CallSub { args: a, target, .. } = s {
+            if let L2Stmt::CallSub {
+                args: a, target, ..
+            } = s
+            {
                 assert_eq!(target, &SubTarget::Named("arc1".into()));
                 args = Some(a.clone());
             }
@@ -1876,10 +1895,7 @@ o<arc1> endsub
         // while: ход с параметрическим g# → носитель
         assert!(d.contains("parametric G/M word"));
         // модальная дуга g3 i/k — Ccw, I+K без J
-        assert!(p.subs[0]
-            .body
-            .iter()
-            .any(|s| matches!(s, L2Stmt::Move {
+        assert!(p.subs[0].body.iter().any(|s| matches!(s, L2Stmt::Move {
                 kind: MoveKind::Arc { ijk, dir: eid_core::ast::Dir::Ccw, r },
                 ..
             } if ijk[0].is_some() && ijk[2].is_some() && ijk[1].is_none() && r.is_none())));
@@ -1959,7 +1975,11 @@ m2
 ";
         let p = expect_ok(src);
         let d = dump(&p);
-        assert_eq!(d.matches("Exists").count(), 2, "EXISTS[..] → UnaryOp::Exists");
+        assert_eq!(
+            d.matches("Exists").count(),
+            2,
+            "EXISTS[..] → UnaryOp::Exists"
+        );
         let (.., carriers, _) = counts(&p);
         // debug×3 + endsub[1]-retval + m2 = 5
         assert_eq!(carriers, 5);
@@ -2036,7 +2056,7 @@ M2
         let inner = find_while(&p.stmts, 2).expect("nested while do_id=2");
         assert!(matches!(&inner[0], L2Stmt::IfThen { .. }));
         assert!(matches!(&inner[1], L2Stmt::IfThen { .. })); // else-ветка G0X
-        // G38.2 — носитель; fix[] распознан
+                                                             // G38.2 — носитель; fix[] распознан
         assert!(matches!(&inner[2], L2Stmt::L1Op(_)));
         assert!(dump(&p).contains("Fix"));
     }
@@ -2058,10 +2078,14 @@ m2
         // body[0] — debug-носитель ДО if; if-тело: return-носитель +
         // Return-узел в IfThen-обёртках (body[1]/body[2])
         assert!(matches!(&p.subs[0].body[0], L2Stmt::L1Op(_)));
-        assert!(matches!(&p.subs[0].body[1], L2Stmt::IfThen { then_stmt, .. }
-            if matches!(**then_stmt, L2Stmt::L1Op(_))));
-        assert!(matches!(&p.subs[0].body[2], L2Stmt::IfThen { then_stmt, .. }
-            if matches!(**then_stmt, L2Stmt::Return { .. })));
+        assert!(
+            matches!(&p.subs[0].body[1], L2Stmt::IfThen { then_stmt, .. }
+            if matches!(**then_stmt, L2Stmt::L1Op(_)))
+        );
+        assert!(
+            matches!(&p.subs[0].body[2], L2Stmt::IfThen { then_stmt, .. }
+            if matches!(**then_stmt, L2Stmt::Return { .. }))
+        );
         let (.., carriers, _) = counts(&p);
         // debug + retval[-1] + endsub-retval + m2 = 4
         assert_eq!(carriers, 4);
@@ -2202,7 +2226,7 @@ m2
         assert_eq!(p.subs.len(), 2);
         let (_, _, _, _, calls, carriers, _) = counts(&p);
         assert_eq!(calls, 4); // 1 в imperialsub + 3 в main
-        // g20, DEBUG, g21, M70, M72, m2 = 6
+                              // g20, DEBUG, g21, M70, M72, m2 = 6
         assert_eq!(carriers, 6);
     }
 
@@ -2524,7 +2548,7 @@ M2
         let (moves, _, _, _, _, carriers, _) = counts(&p);
         assert_eq!(moves, 3); // G0Z + G1Z + N120 (модальная G1)
         assert_eq!(carriers, 5); // G21, G90, T#var+M6, S#var+M3, M2
-        // N120 без G — модальная Linear; feed от N100 модальный
+                                 // N120 без G — модальная Linear; feed от N100 модальный
         let last_move = p
             .stmts
             .iter()
@@ -2557,7 +2581,7 @@ M2
         let (moves, _, _, _, _, carriers, _) = counts(&p);
         // `G90 G0 X2 Y0` — G90 в кадре → носитель строки целиком (решение 5)
         assert_eq!(moves, 1); // только `G0 X2.5 Y0`
-        // G20G90, G81, ^120, ^240, G90@1^33, G91G81@…, G90G0X2Y0, M2 = 8
+                              // G20G90, G81, ^120, ^240, G90@1^33, G91G81@…, G90G0X2Y0, M2 = 8
         assert_eq!(carriers, 8);
         assert!(p
             .stmts
@@ -2673,7 +2697,9 @@ o1 endwhile
         assert!(errs.iter().any(|e| e.message().contains("do-while")));
         // stray endif
         let errs = parse_program("o1 endif\n").unwrap_err();
-        assert!(errs.iter().any(|e| e.message().contains("without matching")));
+        assert!(errs
+            .iter()
+            .any(|e| e.message().contains("without matching")));
         // незакрытый while
         let errs = parse_program("o1 while [#1 GT 0]\n#2=1\n").unwrap_err();
         assert!(errs
@@ -2710,8 +2736,8 @@ o1 endwhile
 
     #[test]
     fn t32_corpus_linuxcnc_34_parse_stats() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../corpus/tier_b/local");
+        let root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_b/local");
         if !root.exists() {
             // корпус отсутствует (тонкий checkout) — тест пропускается
             return;
@@ -2787,10 +2813,7 @@ o1 endwhile
                 .iter()
                 .map(|(f, es)| (
                     f,
-                    es.iter()
-                        .take(3)
-                        .map(|e| e.message())
-                        .collect::<Vec<_>>()
+                    es.iter().take(3).map(|e| e.message()).collect::<Vec<_>>()
                 ))
                 .collect::<Vec<_>>()
         );

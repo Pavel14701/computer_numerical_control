@@ -123,11 +123,7 @@ impl Affine3 {
     /// Тождественное.
     pub fn identity() -> Self {
         Self {
-            m: [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             t: [0.0; 3],
         }
     }
@@ -205,12 +201,11 @@ impl Affine3 {
     pub fn scale_uniform(center: [f64; 3], factor: f64) -> Affine3 {
         let mut a = Affine3::identity();
         // Диагональ m + трансляция t; r — индекс строки (итератор по строкам).
-        for (r, ((m_row, t_cell), c)) in a
-            .m
-            .iter_mut()
-            .zip(a.t.iter_mut())
-            .zip(center.iter())
-            .enumerate()
+        for (r, ((m_row, t_cell), c)) in
+            a.m.iter_mut()
+                .zip(a.t.iter_mut())
+                .zip(center.iter())
+                .enumerate()
         {
             m_row[r] = factor;
             *t_cell = c - factor * c;
@@ -342,10 +337,7 @@ pub fn arc_from_r(
     let tol_r = 0.001f64.max(1e-6 * radius.abs());
     let h2 = 4.0 * radius * radius - chord * chord;
     if h2 < -tol_r * 4.0 * radius.abs().max(1.0) {
-        return Err(ArcGeomError::ChordTooLarge {
-            chord,
-            r: radius,
-        });
+        return Err(ArcGeomError::ChordTooLarge { chord, r: radius });
     }
     let mut sgn = if dir == Dir::Cw { -1.0 } else { 1.0 };
     if radius < 0.0 {
@@ -469,7 +461,7 @@ mod tests {
         assert!(approx(p[0], 7.07106781, 1e-7));
         assert!(approx(p[1], 7.07106781, 1e-7));
         assert!(approx(p[2], 5.0, 1e-12)); // внеплоскостная ось не тронута
-        // CCW-отрицательный: −90° вокруг (0,0): (0,10) → (10,0).
+                                           // CCW-отрицательный: −90° вокруг (0,0): (0,10) → (10,0).
         let rm = Affine3::rotate_plane(Plane::XY, [0.0, 0.0], -90.0);
         let p2 = rm.apply_point([0.0, 10.0, 0.0]);
         assert!(approx(p2[0], 10.0, 1e-9));
@@ -488,8 +480,8 @@ mod tests {
         assert!(approx(p[0], 0.0, 1e-9)); // x' = p1' ≈ 0
         assert!(approx(p[1], 7.0, 1e-12)); // Y не в плоскости
         assert!(approx(p[2], -1.0, 1e-9)); // z' = p0' = −1
-        // И симметрично: точка на Z (z=1, x=0) → ось X (CCW: первая ось
-        // пары поворачивается ко второй): p0' = c·1 = 0, p1' = s·1 = 1.
+                                           // И симметрично: точка на Z (z=1, x=0) → ось X (CCW: первая ось
+                                           // пары поворачивается ко второй): p0' = c·1 = 0, p1' = s·1 = 1.
         let p2 = r.apply_point([0.0, 0.0, 1.0]);
         assert!(approx(p2[0], 1.0, 1e-9));
         assert!(approx(p2[2], 0.0, 1e-9));

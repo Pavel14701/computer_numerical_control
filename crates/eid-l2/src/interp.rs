@@ -388,7 +388,11 @@ fn mk_num4(v: f64) -> Num {
 /// Наследование трёх осей: слово Some → значение; None → текущая позиция
 /// (модальная ось); позиция тоже неизвестна → None.
 fn inherit_axes(words: [Option<f64>; 3], cur: Option<[f64; 3]>) -> Option<[f64; 3]> {
-    match (words[0].or(cur.map(|p| p[0])), words[1].or(cur.map(|p| p[1])), words[2].or(cur.map(|p| p[2]))) {
+    match (
+        words[0].or(cur.map(|p| p[0])),
+        words[1].or(cur.map(|p| p[1])),
+        words[2].or(cur.map(|p| p[2])),
+    ) {
         (Some(x), Some(y), Some(z)) => Some([x, y, z]),
         _ => None,
     }
@@ -717,10 +721,7 @@ impl L2Evaluator {
                 }
             }
             L2Stmt::While {
-                cond,
-                do_id,
-                body,
-                ..
+                cond, do_id, body, ..
             } => {
                 // DO/END-парность — на парсере; do_id 1..3 проверяется и здесь.
                 if !(1..=3).contains(do_id) {
@@ -755,9 +756,9 @@ impl L2Evaluator {
             L2Stmt::CallSub { .. } => self.exec_call_sub(program, stmt),
 
             // ---------- §3: носители/трансформации ----------
-            L2Stmt::WithTransform { transform, body, .. } => {
-                self.exec_with_transform(program, transform, body, stmt)
-            }
+            L2Stmt::WithTransform {
+                transform, body, ..
+            } => self.exec_with_transform(program, transform, body, stmt),
             L2Stmt::RtcpMode {
                 enabled,
                 tool_length_h,
@@ -967,10 +968,7 @@ impl L2Evaluator {
                 //    отсутствующее слово → носитель (E_RUNTIME_STATE —
                 //    зависит от состояния станка).
                 let cur = self.pos_prog;
-                let end_prog = inherit_axes(
-                    [rp.x, rp.y, rp.z],
-                    cur,
-                );
+                let end_prog = inherit_axes([rp.x, rp.y, rp.z], cur);
                 if let Some(ep) = end_prog {
                     // 4) D0-полный: константный И параметрический ход lowered
                     //    (§3 строка 1); координаты — базовая СК (G68/G51).
@@ -999,11 +997,10 @@ impl L2Evaluator {
                     };
                     self.out.l1_ops.push(op);
                     self.pos_prog = Some(ep);
-                    self.modals
-                        .set_motion(match kind {
-                            MoveKind::Rapid => 0,
-                            _ => 1,
-                        });
+                    self.modals.set_motion(match kind {
+                        MoveKind::Rapid => 0,
+                        _ => 1,
+                    });
                     // G66-каркас: триггер модального вызова ПОСЛЕ motion.
                     self.trigger_modal_call(program)?;
                 } else {
@@ -1023,7 +1020,9 @@ impl L2Evaluator {
                 }
                 Ok(Flow::Normal)
             }
-            MoveKind::Arc { ijk, r, dir } => self.exec_arc(program, stmt, ijk, r, *dir, &rp, feed_v),
+            MoveKind::Arc { ijk, r, dir } => {
+                self.exec_arc(program, stmt, ijk, r, *dir, &rp, feed_v)
+            }
         }
     }
 
@@ -1104,7 +1103,13 @@ impl L2Evaluator {
             arc_from_r(start_base, end_base, rv * s, plane, dir_eff)
         } else if has_in_plane {
             // Смещения — ВЕКТОРЫ: поворот/масштаб/зеркало без переноса.
-            arc_from_ijk(start_base, end_base, self.xform.apply_vec(offs), plane, dir_eff)
+            arc_from_ijk(
+                start_base,
+                end_base,
+                self.xform.apply_vec(offs),
+                plane,
+                dir_eff,
+            )
         } else {
             Err(ArcGeomError::NoGeometry)
         };
@@ -1360,7 +1365,10 @@ fn sys_var_display(sv: &SysVar) -> String {
 
 /// D2: рекурсивное предвычисление per-body таблиц меток (узлы Label).
 fn precompute_labels(stmts: &[L2Stmt], map: &mut HashMap<usize, BTreeMap<u32, usize>>) {
-    map.insert(stmts.as_ptr() as usize, crate::lowering::collect_labels(stmts));
+    map.insert(
+        stmts.as_ptr() as usize,
+        crate::lowering::collect_labels(stmts),
+    );
     for stmt in stmts {
         match stmt {
             L2Stmt::While { body, .. } | L2Stmt::WithTransform { body, .. } => {
@@ -1568,7 +1576,10 @@ mod tests {
                     ..
                 },
             ) => {
-                assert_eq!((end.x.value(), end.y.value(), end.z.value()), (15.0, 2.0, 3.0));
+                assert_eq!(
+                    (end.x.value(), end.y.value(), end.z.value()),
+                    (15.0, 2.0, 3.0)
+                );
                 assert_eq!((e2.x.value(), e2.y.value(), e2.z.value()), (20.0, 0.0, 5.0));
                 assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(120.0));
                 // Трекинг позиции: первый ход Unknown (позиция неизвестна),
@@ -1623,7 +1634,10 @@ mod tests {
         assert_eq!(res.l1_ops.len(), 2);
         assert!(res.raw_tail.is_empty());
         if let Op::Rapid { end, start, .. } = &res.l1_ops[1] {
-            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (10.0, 0.0, 0.0));
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (10.0, 0.0, 0.0)
+            );
             // start Known = конец предыдущего хода (точка разрыва (a) закрыта).
             match start {
                 StartPoint::Known(p) => assert_eq!((p.x.value(), p.y.value()), (5.0, 0.0)),
@@ -1659,7 +1673,10 @@ mod tests {
         let res = L2Evaluator::new(cfg).run(&program).unwrap();
         assert_eq!(res.l1_ops.len(), 1);
         if let Op::Rapid { end, .. } = &res.l1_ops[0] {
-            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (0.0, 0.0, 1.0));
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (0.0, 0.0, 1.0)
+            );
         }
     }
 
@@ -1770,7 +1787,10 @@ mod tests {
             Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::UnsupportedSemantics),
             _ => panic!("carrier must be Raw"),
         }
-        assert_eq!(decode_payload(&res.raw_tail[0].op), "G0 X15.0000 A15.0000\n");
+        assert_eq!(
+            decode_payload(&res.raw_tail[0].op),
+            "G0 X15.0000 A15.0000\n"
+        );
         // Диагностика носителя со спаном оператора (§2.4).
         assert_eq!(res.diagnostics.len(), 1);
         assert!(res.diagnostics[0].src.is_some());
@@ -1819,7 +1839,10 @@ mod tests {
         );
         // Третий ход: X наследуется 20 (обновлено RAW-ходом), Y=5, Z → 0.
         if let Op::Rapid { end, .. } = &res.l1_ops[1] {
-            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (20.0, 5.0, 0.0));
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (20.0, 5.0, 0.0)
+            );
         }
     }
 
@@ -1838,7 +1861,11 @@ mod tests {
                 body: vec![
                     assign(
                         100,
-                        Expr::Binary(BinaryOp::Add, Box::new(Expr::var(1)), Box::new(Expr::var(2))),
+                        Expr::Binary(
+                            BinaryOp::Add,
+                            Box::new(Expr::var(1)),
+                            Box::new(Expr::var(2)),
+                        ),
                     ),
                     assign(1, Expr::num(0.0)), // запись в локальную — свой кадр
                 ],
@@ -1880,7 +1907,11 @@ mod tests {
         let sub_body = vec![
             assign(
                 500,
-                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::var(500)),
+                    Box::new(Expr::num(1.0)),
+                ),
             ),
             call(SubTarget::ONumber(900), vec![]),
         ];
@@ -1923,14 +1954,22 @@ mod tests {
         let program = mk(vec![
             assign(
                 100,
-                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(1.0))),
+                Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::var(100)),
+                    Box::new(Expr::num(1.0)),
+                ),
             ),
             L2Stmt::Return {
                 src: placeholder_span(),
             },
             assign(
                 100,
-                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(10.0))),
+                Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::var(100)),
+                    Box::new(Expr::num(10.0)),
+                ),
             ),
         ]);
         let mut e = ev();
@@ -1940,7 +1979,11 @@ mod tests {
         // Неявный return.
         let program = mk(vec![assign(
             100,
-            Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(100.0))),
+            Expr::Binary(
+                BinaryOp::Add,
+                Box::new(Expr::var(100)),
+                Box::new(Expr::num(100.0)),
+            ),
         )]);
         let mut e = ev();
         e.run(&program).unwrap();
@@ -1987,14 +2030,12 @@ mod tests {
     #[test]
     fn d1_repeat_l_unroll() {
         // repeat = L2: подпрограмма O200 дважды инкрементит глобальную #500.
-        let mk_call = |r: Option<Expr>| {
-            L2Stmt::CallSub {
-                target: SubTarget::ONumber(200),
-                repeat: r,
-                args: vec![],
-                modal: false,
-                src: placeholder_span(),
-            }
+        let mk_call = |r: Option<Expr>| L2Stmt::CallSub {
+            target: SubTarget::ONumber(200),
+            repeat: r,
+            args: vec![],
+            modal: false,
+            src: placeholder_span(),
         };
         let program = L2Program::new(
             vec![mk_call(Some(Expr::num(2.0)))],
@@ -2002,7 +2043,11 @@ mod tests {
                 target: SubTarget::ONumber(200),
                 body: vec![assign(
                     500,
-                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                    Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::var(500)),
+                        Box::new(Expr::num(1.0)),
+                    ),
                 )],
             }],
         );
@@ -2036,7 +2081,11 @@ mod tests {
                 target: SubTarget::ONumber(300),
                 body: vec![assign(
                     500,
-                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                    Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::var(500)),
+                        Box::new(Expr::num(1.0)),
+                    ),
                 )],
             }],
         );
@@ -2057,7 +2106,11 @@ mod tests {
                 label(1),
                 assign(
                     500,
-                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                    Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::var(500)),
+                        Box::new(Expr::num(1.0)),
+                    ),
                 ),
                 goto(
                     1,
@@ -2083,7 +2136,11 @@ mod tests {
             vec![
                 goto(
                     20,
-                    Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(1.0))),
+                    Expr::Binary(
+                        BinaryOp::Eq,
+                        Box::new(Expr::num(1.0)),
+                        Box::new(Expr::num(1.0)),
+                    ),
                 ),
                 assign(500, Expr::num(666.0)), // мёртвый код
                 label(20),
@@ -2137,7 +2194,10 @@ mod tests {
             body: vec![label(5), assign(500, Expr::num(1.0))],
         }];
         let with_goto_main = L2Program {
-            stmts: vec![goto(5, Expr::num(1.0)), call(SubTarget::ONumber(100), vec![])],
+            stmts: vec![
+                goto(5, Expr::num(1.0)),
+                call(SubTarget::ONumber(100), vec![]),
+            ],
             subs,
             labels: BTreeMap::new(),
         };
@@ -2300,7 +2360,11 @@ mod tests {
                     do_id: 1,
                     body: vec![assign(
                         1,
-                        Expr::Binary(BinaryOp::Sub, Box::new(Expr::var(1)), Box::new(Expr::num(1.0))),
+                        Expr::Binary(
+                            BinaryOp::Sub,
+                            Box::new(Expr::var(1)),
+                            Box::new(Expr::num(1.0)),
+                        ),
                     )],
                     src: placeholder_span(),
                 },
@@ -2333,7 +2397,11 @@ mod tests {
         // IF [1 EQ 2] THEN <Sys-ход> — ветка мертва: без останова.
         let program = L2Program::new(
             vec![L2Stmt::IfThen {
-                cond: Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(2.0))),
+                cond: Expr::Binary(
+                    BinaryOp::Eq,
+                    Box::new(Expr::num(1.0)),
+                    Box::new(Expr::num(2.0)),
+                ),
                 then_stmt: Box::new(dead_move.clone()),
                 src: placeholder_span(),
             }],
@@ -2344,7 +2412,11 @@ mod tests {
         // IF [#500 GT 0] c #500 = Null (→0.0) — тоже мертва.
         let program = L2Program::new(
             vec![L2Stmt::IfThen {
-                cond: Expr::Binary(BinaryOp::Gt, Box::new(Expr::var(500)), Box::new(Expr::num(0.0))),
+                cond: Expr::Binary(
+                    BinaryOp::Gt,
+                    Box::new(Expr::var(500)),
+                    Box::new(Expr::num(0.0)),
+                ),
                 then_stmt: Box::new(dead_move),
                 src: placeholder_span(),
             }],
@@ -2355,7 +2427,11 @@ mod tests {
         // Контраст: ЖИВАЯ ветка с Sys-чтением → останов E_RUNTIME_STATE.
         let live = L2Program::new(
             vec![L2Stmt::IfThen {
-                cond: Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(1.0))),
+                cond: Expr::Binary(
+                    BinaryOp::Eq,
+                    Box::new(Expr::num(1.0)),
+                    Box::new(Expr::num(1.0)),
+                ),
                 then_stmt: Box::new(move_stmt(
                     MoveKind::Linear,
                     ExprPose {
@@ -2445,7 +2521,7 @@ mod tests {
         assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(1.0)); // G1
         assert_eq!(e.env().read_direct(501).unwrap(), Val::Num(1.0));
         assert_eq!(e.env().read_direct(502).unwrap(), Val::Num(2.0)); // G2
-        // Плоскость: power-on G17.
+                                                                      // Плоскость: power-on G17.
         let m = Modals::new();
         assert_eq!(m.plane(), Plane::XY);
         assert_eq!(m.value(1), Some(0));
@@ -2478,7 +2554,12 @@ mod tests {
         // остаётся в L2 (Err; результата lowering нет).
         let mk = |v: Expr| {
             L2Program::new(
-                vec![linear(v, Expr::num(0.0), Expr::num(0.0), Some(Expr::num(10.0)))],
+                vec![linear(
+                    v,
+                    Expr::num(0.0),
+                    Expr::num(0.0),
+                    Some(Expr::num(10.0)),
+                )],
                 Vec::new(),
             )
         };
@@ -2504,7 +2585,11 @@ mod tests {
                     angle_deg: Expr::num(90.0),
                     plane: Plane::XY,
                 },
-                body: vec![move_stmt(MoveKind::Rapid, target_const(15.0, 10.0, 0.0), None)],
+                body: vec![move_stmt(
+                    MoveKind::Rapid,
+                    target_const(15.0, 10.0, 0.0),
+                    None,
+                )],
                 src: placeholder_span(),
             }],
             Vec::new(),
@@ -2529,7 +2614,11 @@ mod tests {
                         angle_deg: Expr::num(45.0),
                         plane: Plane::XY,
                     },
-                    body: vec![move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None)],
+                    body: vec![move_stmt(
+                        MoveKind::Rapid,
+                        target_const(10.0, 0.0, 0.0),
+                        None,
+                    )],
                     src: placeholder_span(),
                 },
                 move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
@@ -2608,7 +2697,10 @@ mod tests {
             panic!("expected Arc");
         }
         if let Op::Rapid { end, .. } = &res.l1_ops[2] {
-            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (6.0, 8.0, 10.0));
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (6.0, 8.0, 10.0)
+            );
         }
     }
 
@@ -2629,7 +2721,11 @@ mod tests {
                         center: [Expr::num(0.0), Expr::num(0.0), Expr::num(0.0)],
                         factor: Expr::num(2.0),
                     },
-                    body: vec![move_stmt(MoveKind::Rapid, target_const(1.0, 0.0, 0.0), None)],
+                    body: vec![move_stmt(
+                        MoveKind::Rapid,
+                        target_const(1.0, 0.0, 0.0),
+                        None,
+                    )],
                     src: placeholder_span(),
                 }],
                 src: placeholder_span(),
@@ -2704,7 +2800,11 @@ mod tests {
                     axis: Axis::X,
                     pivot: Expr::num(0.0),
                 },
-                body: vec![move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None)],
+                body: vec![move_stmt(
+                    MoveKind::Rapid,
+                    target_const(5.0, 0.0, 0.0),
+                    None,
+                )],
                 src: placeholder_span(),
             }],
             Vec::new(),
@@ -2754,7 +2854,10 @@ mod tests {
         let res = e.run(&program).unwrap();
         assert_eq!(res.l1_ops.len(), 3);
         // Notice.
-        assert!(res.diagnostics.iter().any(|d| d.message.contains("mirror baked")));
+        assert!(res
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("mirror baked")));
         // Дуга ПЕРВОЙ в теле: зеркальный старт (−10,0), I зеркалится
         // (−5 → 5) → центр (−5,0); конец (0,5) → (0,5); dir Cw→Ccw;
         // углы: старт 180°, конец 45° → CCW sweep 225° (величина свипа
@@ -2793,7 +2896,11 @@ mod tests {
                     origin: [Expr::num(1.0), Expr::num(2.0), Expr::num(3.0)],
                     euler: [Expr::num(10.0), Expr::num(20.0), Expr::num(30.0)],
                 },
-                body: vec![move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None)],
+                body: vec![move_stmt(
+                    MoveKind::Rapid,
+                    target_const(5.0, 0.0, 0.0),
+                    None,
+                )],
                 src: placeholder_span(),
             }],
             Vec::new(),
@@ -2921,7 +3028,9 @@ mod tests {
         );
         let res = ev().run(&r_prog).unwrap();
         match &res.l1_ops[1] {
-            Op::Arc { center, sweep_deg, .. } => {
+            Op::Arc {
+                center, sweep_deg, ..
+            } => {
                 assert!((center.x.value() - 5.0).abs() < 1e-6);
                 assert!((sweep_deg.value() - 180.0).abs() < 1e-6);
             }
@@ -2945,7 +3054,11 @@ mod tests {
         // K-смещение центра ≠ 0 → носитель InvalidInput.
         let bad = mk(
             MoveKind::Arc {
-                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), Some(Expr::num(2.0))],
+                ijk: [
+                    Some(Expr::num(-5.0)),
+                    Some(Expr::num(0.0)),
+                    Some(Expr::num(2.0)),
+                ],
                 r: None,
                 dir: Dir::Ccw,
             },
@@ -2971,7 +3084,9 @@ mod tests {
         );
         let res = ev().run(&none).unwrap();
         assert_eq!(res.raw_tail.len(), 1);
-        assert!(res.diagnostics[0].message.contains("without in-plane IJK/R"));
+        assert!(res.diagnostics[0]
+            .message
+            .contains("without in-plane IJK/R"));
         // Старт неизвестен → носитель RuntimeState.
         let nostart = L2Program::new(
             vec![L2Stmt::Move {
@@ -3070,7 +3185,11 @@ mod tests {
                 target: SubTarget::Named("square".to_string()),
                 body: vec![assign(
                     100,
-                    Expr::Binary(BinaryOp::Mul, Box::new(Expr::var(1)), Box::new(Expr::var(1))),
+                    Expr::Binary(
+                        BinaryOp::Mul,
+                        Box::new(Expr::var(1)),
+                        Box::new(Expr::var(1)),
+                    ),
                 )],
             }],
         );

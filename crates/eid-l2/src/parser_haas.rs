@@ -127,10 +127,7 @@ mod tests {
         for rel in files {
             let src = corpus(rel);
             match parse_program(&src) {
-                Ok(prog) => assert!(
-                    !prog.stmts.is_empty(),
-                    "{rel}: parsed but empty"
-                ),
+                Ok(prog) => assert!(!prog.stmts.is_empty(), "{rel}: parsed but empty"),
                 Err(e) => panic!("{rel}: parse errors: {e:?}"),
             }
         }
@@ -160,7 +157,11 @@ mod tests {
             *repeat,
             Some(bin(
                 BinaryOp::Add,
-                bin(BinaryOp::Mul, Expr::Unary(UnaryOp::Abs, Box::new(v(26))), v(5)),
+                bin(
+                    BinaryOp::Mul,
+                    Expr::Unary(UnaryOp::Abs, Box::new(v(26))),
+                    v(5)
+                ),
                 Expr::num(1.0)
             ))
         );
@@ -173,10 +174,13 @@ mod tests {
             .expect("M97 sub body carved");
         assert!(matches!(&sub.body[0], L2Stmt::Label { n: 301, .. }));
         assert!(sub.body.len() >= 12, "quad-loop body: {}", sub.body.len());
-        assert!(sub
-            .body
-            .iter()
-            .any(|s| matches!(s, L2Stmt::Move { kind: MoveKind::Arc { dir: Dir::Ccw, .. }, .. })));
+        assert!(sub.body.iter().any(|s| matches!(
+            s,
+            L2Stmt::Move {
+                kind: MoveKind::Arc { dir: Dir::Ccw, .. },
+                ..
+            }
+        )));
         // В main поток сохранён (lossless): 8 ходов четырёх квадрантов.
         let main_moves = prog
             .stmts
@@ -253,12 +257,14 @@ mod tests {
         });
         assert!(neg_word);
         // `G03 G91 I [ #2 / 2 ] X#2 F#9` — дуга с I-выражением.
-        let arc = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::Move { kind: MoveKind::Arc { ijk, dir: Dir::Ccw, r: None }, .. }
-            if matches!(&ijk[0], Some(Expr::Binary(BinaryOp::Div, a, b))
-                if **a == v(2) && **b == Expr::num(2.0))
-        ));
+        let arc = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::Move { kind: MoveKind::Arc { ijk, dir: Dir::Ccw, r: None }, .. }
+                if matches!(&ijk[0], Some(Expr::Binary(BinaryOp::Div, a, b))
+                    if **a == v(2) && **b == Expr::num(2.0))
+            )
+        });
         assert!(arc);
     }
 
@@ -271,10 +277,12 @@ mod tests {
         // `G0 G90 G154 P#5 X#3 Y#4` — G154 с переменной в P-слове (ценз:
         // «G154 P#5 — ПЕРЕМЕННАЯ в P-слове WCS») → носитель целиком
         // (правило 5: не парсить в L2Stmt).
-        let g154 = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G154")
-        ));
+        let g154 = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G154")
+            )
+        });
         assert!(g154);
         // `G10 L20 P#5 G90 X#10585 …` — G10 → носитель.
         assert!(prog.stmts.iter().any(|s| matches!(
@@ -285,10 +293,16 @@ mod tests {
         let gotos = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::IfGoto { cond: Expr::Const(_), target_label: 100, .. }
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::IfGoto {
+                        cond: Expr::Const(_),
+                        target_label: 100,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(gotos, 2);
         // M59 P2 / M96 P10 Q17 — vendor → носители.
@@ -308,7 +322,10 @@ mod tests {
         // #3000=100 (Tool Has Pulled Out) → Assign на VendorSpecific(3000).
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(3000)), .. }
+            L2Stmt::Assign {
+                target: VarRef::Sys(SysVar::VendorSpecific(3000)),
+                ..
+            }
         )));
     }
 
@@ -322,10 +339,12 @@ mod tests {
         let g31 = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G31")
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G31")
+                )
+            })
             .count();
         assert_eq!(g31, 2, "two G31 lines");
         // #27= #5021 - #5041 — AbsMachinePos/WorkPos (Haas — Fanuc-совместно).
@@ -345,20 +364,24 @@ mod tests {
         let s800 = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("bare-IF")
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("bare-IF")
+                )
+            })
             .count();
         assert_eq!(s800, 4, "four bare-IF S800 M04 carriers");
         // G103 P1 ×несколько → носители.
         let g103 = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G103")
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G103")
+                )
+            })
             .count();
         assert!(g103 >= 5, "G103 carriers: {g103}");
         // G43 H#3026 → носитель.
@@ -395,10 +418,10 @@ mod tests {
             L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G154")
         )));
         // T42 M06 → ToolChange{42}.
-        assert!(prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::L1Op(Op::ToolChange { tool: 42, .. })
-        )));
+        assert!(prog
+            .stmts
+            .iter()
+            .any(|s| matches!(s, L2Stmt::L1Op(Op::ToolChange { tool: 42, .. }))));
     }
 
     #[test]
@@ -409,13 +432,15 @@ mod tests {
         let canned = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::L1Op(Op::Raw { reason, .. })
-                    if reason.contains("G81")
-                        || reason.contains("canned")
-                        || reason.contains("G80")
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::L1Op(Op::Raw { reason, .. })
+                        if reason.contains("G81")
+                            || reason.contains("canned")
+                            || reason.contains("G80")
+                )
+            })
             .count();
         assert!(canned >= 4, "canned carriers: {canned}");
         // G154 P10 → носитель.
@@ -465,11 +490,13 @@ mod tests {
         let src = corpus("local/coyo_tram_b_probe_o09817.nc");
         let prog = parse_program(&src).unwrap();
         // `G00 B#10189` — B-слово с vendor-переменной #10189 → Move с Sys.
-        let b_move = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::Move { kind: MoveKind::Rapid, target: ExprPose { b: Some(e), .. }, .. }
-            if *e == vs(10189)
-        ));
+        let b_move = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::Move { kind: MoveKind::Rapid, target: ExprPose { b: Some(e), .. }, .. }
+                if *e == vs(10189)
+            )
+        });
         assert!(b_move, "G00 B#10189 expected");
         // G65 P9832/P9810/P9817/P9833 — Renishaw-цепочка.
         for onum in [9832u32, 9810, 9817, 9833] {
@@ -490,12 +517,21 @@ mod tests {
         // M00 → ProgramStop.
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::L1Op(Op::ProgramStop { optional: false, .. })
+            L2Stmt::L1Op(Op::ProgramStop {
+                optional: false,
+                ..
+            })
         )));
         // `G00 B0` — константная B-ось.
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Move { target: ExprPose { b: Some(Expr::Const(_)), .. }, .. }
+            L2Stmt::Move {
+                target: ExprPose {
+                    b: Some(Expr::Const(_)),
+                    ..
+                },
+                ..
+            }
         )));
     }
 
@@ -518,15 +554,21 @@ mod tests {
         assert_eq!(*cond, bin(BinaryOp::Le, v(1), Expr::num(199.0)));
         assert!(body.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Indirect(_), value: Expr::Null, .. }
+            L2Stmt::Assign {
+                target: VarRef::Indirect(_),
+                value: Expr::Null,
+                ..
+            }
         )));
         // `#[ 3006 - [ [ #170 AND 8 ] / 8 * 6 ] ]= 1` — косвенная цель
         // с AND (цензор: косвенная адресация #[#161+2]).
-        let ind = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::Assign { target: VarRef::Indirect(inner), value: Expr::Const(_), .. }
-            if matches!(**inner, Expr::Binary(BinaryOp::Sub, _, _))
-        ));
+        let ind = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::Assign { target: VarRef::Indirect(inner), value: Expr::Const(_), .. }
+                if matches!(**inner, Expr::Binary(BinaryOp::Sub, _, _))
+            )
+        });
         assert!(ind, "indirect target with AND expected");
         // `IF [ #170 AND 4 EQ 4 ] GOTO13` — AND-приоритет.
         assert!(prog.stmts.iter().any(|s| matches!(
@@ -539,10 +581,12 @@ mod tests {
         let g31 = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G31")
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G31")
+                )
+            })
             .count();
         assert!(g31 >= 1);
         // `G65 P9730 H#11 M#13 S#19 T#20 W#23 X#24 Y#25 Z#26` — 8 аргументов.
@@ -611,17 +655,21 @@ mod tests {
         let prog = parse_program(&src).unwrap();
         // `IF [ #[ #161 ] EQ #0 ] GOTO91` — косвенный cond против Null
         // (#0-семантика ценза) РЯДОМ с `EQ 0` (число) — оба в файле.
-        let vs_null = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Eq, a, b), target_label: 91, .. }
-            if matches!(**a, Expr::Var(VarRef::Indirect(_))) && matches!(**b, Expr::Null)
-        ));
-        let vs_zero = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Eq, a, b), target_label: 91, .. }
-            if matches!(**a, Expr::Var(VarRef::Indirect(_)))
-                && matches!(**b, Expr::Const(ref n) if n.value() == 0.0)
-        ));
+        let vs_null = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Eq, a, b), target_label: 91, .. }
+                if matches!(**a, Expr::Var(VarRef::Indirect(_))) && matches!(**b, Expr::Null)
+            )
+        });
+        let vs_zero = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Eq, a, b), target_label: 91, .. }
+                if matches!(**a, Expr::Var(VarRef::Indirect(_)))
+                    && matches!(**b, Expr::Const(ref n) if n.value() == 0.0)
+            )
+        });
         assert!(vs_null, "EQ #0 expected");
         assert!(vs_zero, "EQ 0 expected");
         // `G65 P9814 D#7 R#18 Q#17` — D→#7, R→#18, Q→#17.
@@ -635,7 +683,10 @@ mod tests {
         // `N91 #3000= 11` — метка + alarm-assign.
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(3000)), .. }
+            L2Stmt::Assign {
+                target: VarRef::Sys(SysVar::VendorSpecific(3000)),
+                ..
+            }
         )));
     }
 
@@ -663,7 +714,11 @@ mod tests {
         // `IF [ #30057.25 ] GOTO70` — битовый суффикс → кодирование n*100+b.
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::IfGoto { cond: Expr::Var(VarRef::Sys(SysVar::VendorSpecific(3005725))), target_label: 70, .. }
+            L2Stmt::IfGoto {
+                cond: Expr::Var(VarRef::Sys(SysVar::VendorSpecific(3005725))),
+                target_label: 70,
+                ..
+            }
         )));
         // `IF [ #4011 EQ 50 ]` — ModalGroup(11).
         assert!(prog.stmts.iter().any(|s| matches!(
@@ -693,7 +748,11 @@ mod tests {
         // #540 = 551 → VendorSpecific(540) (рулинг: #500–#699 → VendorSpecific).
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(540)), value: Expr::Const(_), .. }
+            L2Stmt::Assign {
+                target: VarRef::Sys(SysVar::VendorSpecific(540)),
+                value: Expr::Const(_),
+                ..
+            }
         )));
         // #[#540] = #3001 — косвенная цель (ценз: #[#540]).
         assert!(prog.stmts.iter().any(|s| matches!(
@@ -710,7 +769,10 @@ mod tests {
                 && matches!(**b, Expr::Const(ref n) if n.value() == 1000.0)
         )));
         // M30 в конце.
-        assert!(prog.stmts.iter().any(|s| matches!(s, L2Stmt::L1Op(Op::ProgramEnd { .. }))));
+        assert!(prog
+            .stmts
+            .iter()
+            .any(|s| matches!(s, L2Stmt::L1Op(Op::ProgramEnd { .. }))));
     }
 
     // ---------- vultr_g152 (задание оркестратора, вне 12-ценза) ----------
@@ -721,18 +783,31 @@ mod tests {
         let prog = parse_program(&src).unwrap();
         // `G152 I2.81 J8 Z-.8 E50. F40. D22)` — висячая `)` отброшена,
         // G152 → носитель (lossless-пейлоад хранит байты строки целиком).
-        let g152 = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G152")
-        ));
+        let g152 = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("G152")
+            )
+        });
         assert!(g152, "G152 carrier expected");
         // Обычные ходы парсятся: G0 G54 X2. Y2. → Move Rapid.
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Move { kind: MoveKind::Rapid, target: ExprPose { x: Some(Expr::Const(_)), y: Some(Expr::Const(_)), .. }, .. }
+            L2Stmt::Move {
+                kind: MoveKind::Rapid,
+                target: ExprPose {
+                    x: Some(Expr::Const(_)),
+                    y: Some(Expr::Const(_)),
+                    ..
+                },
+                ..
+            }
         )));
         // `G53 Y0. M30` — носитель + ProgramEnd (оба stmt).
-        assert!(prog.stmts.iter().any(|s| matches!(s, L2Stmt::L1Op(Op::ProgramEnd { .. }))));
+        assert!(prog
+            .stmts
+            .iter()
+            .any(|s| matches!(s, L2Stmt::L1Op(Op::ProgramEnd { .. }))));
     }
 
     // ---------- Haas-диалектные unit-тесты ----------
@@ -820,9 +895,7 @@ mod tests {
     fn haas_m98_slip_like_fanuc() {
         let prog = p("M98 P52000\n");
         match &prog.stmts[0] {
-            L2Stmt::CallSub {
-                target, repeat, ..
-            } => {
+            L2Stmt::CallSub { target, repeat, .. } => {
                 assert_eq!(*target, SubTarget::ONumber(2000));
                 assert_eq!(*repeat, Some(Expr::num(5.0)));
             }
@@ -881,7 +954,10 @@ mod tests {
                 assert_eq!(**b, Expr::num(0.0));
                 assert!(matches!(
                     &**then_stmt,
-                    L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(3000)), .. }
+                    L2Stmt::Assign {
+                        target: VarRef::Sys(SysVar::VendorSpecific(3000)),
+                        ..
+                    }
                 ));
             }
             _ => panic!("ifthen expected"),
@@ -935,7 +1011,11 @@ mod tests {
         let prog = p("M98 P9854 (DELAY)\n");
         match &prog.stmts[0] {
             L2Stmt::CallSub {
-                target, repeat, modal, args, ..
+                target,
+                repeat,
+                modal,
+                args,
+                ..
             } => {
                 assert_eq!(*target, SubTarget::ONumber(9854));
                 assert!(repeat.is_none());

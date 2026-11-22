@@ -387,7 +387,9 @@ fn starts_word(c: &Cursor, w: &str) -> bool {
         return false;
     }
     c.b[c.i..c.i + wb.len()].eq_ignore_ascii_case(wb)
-        && !c.peek_at(wb.len()).is_some_and(|ch| ch.is_ascii_alphabetic())
+        && !c
+            .peek_at(wb.len())
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
 }
 
 /// Уровень 1 (высший): унарный ±, функции, скобки, числа, #var.
@@ -596,8 +598,8 @@ enum ModalMotion {
 /// представление хода; WCS G54–G59 и единицы G20/G21 абсорбируются молча —
 /// в ExprPose/Move слота нет; см. стоп-отчёт «G54-G59/units»).
 const ABSORB_G: &[f64] = &[
-    20.0, 21.0, 17.0, 18.0, 19.0, 40.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0, 61.0, 64.0,
-    90.0, 91.0, 94.0, 95.0, 98.0, 99.0,
+    20.0, 21.0, 17.0, 18.0, 19.0, 40.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0, 61.0, 64.0, 90.0,
+    91.0, 94.0, 95.0, 98.0, 99.0,
 ];
 
 /// Буквы, допустимые в Move-кадре (остальные → L1Op-носитель всей строки;
@@ -935,8 +937,10 @@ impl<'a> Builder<'a> {
                 // (состояние станка — вне §2.4; в L2 AST слота нет).
                 3.0 | 4.0 | 5.0 | 8.0 | 9.0 => {}
                 _ => {
-                    carrier_reason =
-                        Some(format!("vendor M-code M{} outside §2.4 (Raw carrier)", m as i64));
+                    carrier_reason = Some(format!(
+                        "vendor M-code M{} outside §2.4 (Raw carrier)",
+                        m as i64
+                    ));
                 }
             }
         }
@@ -948,7 +952,10 @@ impl<'a> Builder<'a> {
                     expr: Expr::Const(n),
                     verbatim,
                     ..
-                }) => Some(Num::new(verbatim.trim_start_matches('+').to_string(), n.value())),
+                }) => Some(Num::new(
+                    verbatim.trim_start_matches('+').to_string(),
+                    n.value(),
+                )),
                 _ => None,
             });
             match dwell {
@@ -998,11 +1005,10 @@ impl<'a> Builder<'a> {
         // --- 7. Неабсорбируемый G-код → носитель всей строки ---
         if carrier_reason.is_none() {
             for &g in &fr.gs {
-                let handled = matches!(g, 0.0 | 1.0 | 2.0 | 3.0 | 4.0 | 101.0)
-                    || ABSORB_G.contains(&g);
+                let handled =
+                    matches!(g, 0.0 | 1.0 | 2.0 | 3.0 | 4.0 | 101.0) || ABSORB_G.contains(&g);
                 if !handled {
-                    carrier_reason =
-                        Some(format!("non-Macro-B G{g} outside §2.4 (Raw carrier)"));
+                    carrier_reason = Some(format!("non-Macro-B G{g} outside §2.4 (Raw carrier)"));
                     break;
                 }
             }
@@ -1020,9 +1026,7 @@ impl<'a> Builder<'a> {
             carrier_reason = Some(if bad_letters.is_empty() {
                 "junk characters in frame (e.g. comma-words), Raw carrier".to_string()
             } else {
-                format!(
-                    "frame words outside §2.4 pose set ({bad_letters}), Raw carrier"
-                )
+                format!("frame words outside §2.4 pose set ({bad_letters}), Raw carrier")
             });
         }
 
@@ -1042,9 +1046,10 @@ impl<'a> Builder<'a> {
                 self.push_extra(extra, m99_flag, text);
                 return;
             }
-            let gs_modal_only = fr.gs.iter().all(|g| {
-                ABSORB_G.contains(g) || matches!(g, 0.0 | 1.0 | 2.0 | 3.0)
-            });
+            let gs_modal_only = fr
+                .gs
+                .iter()
+                .all(|g| ABSORB_G.contains(g) || matches!(g, 0.0 | 1.0 | 2.0 | 3.0));
             if gs_modal_only && fr.ms.is_empty() && fr.words.is_empty() && !fr.junk {
                 return; // чистая модаль (G90/G54/G0-продолжение…)
             }
@@ -1361,12 +1366,12 @@ pub fn parse_macro_b(cfg: &DialectCfg, src: &str) -> Result<L2Program, Vec<L2Err
                     }
                 }
                 Ok(VarParse::Null) => {
-                    b.err(format!("line {}: assignment to #0 is forbidden", b.cur_line));
+                    b.err(format!(
+                        "line {}: assignment to #0 is forbidden",
+                        b.cur_line
+                    ));
                 }
-                Err(e) => b.err(format!(
-                    "line {}: bad variable reference: {e}",
-                    b.cur_line
-                )),
+                Err(e) => b.err(format!("line {}: bad variable reference: {e}", b.cur_line)),
             }
             continue;
         }
@@ -1824,12 +1829,22 @@ mod tests {
         use crate::eval::{eval_expr, L2Env};
         let mut env = L2Env::new();
         env.write_named("defined", crate::ast::Val::Num(1.0));
-        let ex_def =
-            Expr::Unary(UnaryOp::Exists, Box::new(Expr::Var(VarRef::Named("defined".into()))));
-        let ex_undef =
-            Expr::Unary(UnaryOp::Exists, Box::new(Expr::Var(VarRef::Named("nope".into()))));
-        assert_eq!(eval_expr(&ex_def, &mut env).unwrap(), crate::ast::Val::Num(1.0));
-        assert_eq!(eval_expr(&ex_undef, &mut env).unwrap(), crate::ast::Val::Num(0.0));
+        let ex_def = Expr::Unary(
+            UnaryOp::Exists,
+            Box::new(Expr::Var(VarRef::Named("defined".into()))),
+        );
+        let ex_undef = Expr::Unary(
+            UnaryOp::Exists,
+            Box::new(Expr::Var(VarRef::Named("nope".into()))),
+        );
+        assert_eq!(
+            eval_expr(&ex_def, &mut env).unwrap(),
+            crate::ast::Val::Num(1.0)
+        );
+        assert_eq!(
+            eval_expr(&ex_undef, &mut env).unwrap(),
+            crate::ast::Val::Num(0.0)
+        );
         // EXISTS[#5303] → Num(1.0/0.0): 5303 вне диапазонов чтения → 0.0.
         let ex = Expr::Unary(UnaryOp::Exists, Box::new(v(5303)));
         assert_eq!(eval_expr(&ex, &mut env).unwrap(), crate::ast::Val::Num(0.0));
@@ -2003,7 +2018,9 @@ mod tests {
     #[test]
     fn if_without_goto_then_is_fanuc_error() {
         let err = parse_macro_b(&cfg(), "IF [#1 GT 0] #1=1\n").unwrap_err();
-        assert!(err.iter().any(|e| e.message().contains("without GOTO/THEN")));
+        assert!(err
+            .iter()
+            .any(|e| e.message().contains("without GOTO/THEN")));
     }
 
     #[test]
@@ -2091,7 +2108,9 @@ mod tests {
                 assert_eq!(args[0].0, b'X');
                 assert_eq!(const_of(&args[0].1), Some(2.5));
                 assert_eq!(args[1].0, b'Y');
-                assert!(matches!(&args[1].1, Expr::Unary(UnaryOp::Neg, inner) if const_of(inner) == Some(1.0)));
+                assert!(
+                    matches!(&args[1].1, Expr::Unary(UnaryOp::Neg, inner) if const_of(inner) == Some(1.0))
+                );
                 assert_eq!(args[2].0, b'U');
                 assert_eq!(const_of(&args[2].1), Some(0.3));
                 assert_eq!(args[3].0, b'M');
@@ -2131,9 +2150,7 @@ mod tests {
         // P52000 = 5×O2000 (задание: M98-слип).
         let p = parse_macro_b(&cfg(), "M98 P52000\n").unwrap();
         match &p.stmts[0] {
-            L2Stmt::CallSub {
-                target, repeat, ..
-            } => {
+            L2Stmt::CallSub { target, repeat, .. } => {
                 assert_eq!(*target, SubTarget::ONumber(2000));
                 assert_eq!(*repeat, Some(Expr::num(5.0)));
             }
@@ -2142,9 +2159,7 @@ mod tests {
         // Обычный формат: P2102 → O2102, repeat нет (cncsim_morsas).
         let p = parse_macro_b(&cfg(), "M98 P2102\n").unwrap();
         match &p.stmts[0] {
-            L2Stmt::CallSub {
-                target, repeat, ..
-            } => {
+            L2Stmt::CallSub { target, repeat, .. } => {
                 assert_eq!(*target, SubTarget::ONumber(2102));
                 assert!(repeat.is_none());
             }
@@ -2291,10 +2306,7 @@ mod tests {
         assert!(matches!(&p.stmts[3], L2Stmt::Label { n: 110, .. }));
         assert!(matches!(
             &p.stmts[4],
-            L2Stmt::RtcpMode {
-                enabled: false,
-                ..
-            }
+            L2Stmt::RtcpMode { enabled: false, .. }
         ));
     }
 
@@ -2365,10 +2377,7 @@ mod tests {
         }
         assert!(matches!(
             &p.stmts[4],
-            L2Stmt::L1Op(Op::ProgramStop {
-                optional: true,
-                ..
-            })
+            L2Stmt::L1Op(Op::ProgramStop { optional: true, .. })
         ));
         assert!(matches!(
             &p.stmts[5],

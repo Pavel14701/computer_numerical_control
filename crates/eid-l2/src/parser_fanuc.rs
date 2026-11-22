@@ -139,11 +139,13 @@ mod tests {
         });
         assert!(nested, "G65 P9810 X[#24 + [-#21]] expected");
         // IF[#148 NE 0] GOTO911 (PATH OBSTRUCTION) ×несколько.
-        let ne_gotos = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Ne, a, b), target_label: 911, .. }
-            if **a == v(148) && matches!(**b, Expr::Const(ref n) if n.value() == 0.0)
-        ));
+        let ne_gotos = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::IfGoto { cond: Expr::Binary(BinaryOp::Ne, a, b), target_label: 911, .. }
+                if **a == v(148) && matches!(**b, Expr::Const(ref n) if n.value() == 0.0)
+            )
+        });
         assert!(ne_gotos);
     }
 
@@ -155,18 +157,28 @@ mod tests {
         let uncond = prog
             .stmts
             .iter()
-            .filter(|s| matches!(s, L2Stmt::IfGoto { cond: Expr::Const(_), .. }))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::IfGoto {
+                        cond: Expr::Const(_),
+                        ..
+                    }
+                )
+            })
             .count();
         assert!(uncond >= 4, "unconditional GOTO: {uncond}");
         // G65 P9812 X#24 Z[#26 + #18] S#19 — 4 аргумента.
-        let with_s = prog.stmts.iter().any(|s| matches!(
-            s,
-            L2Stmt::CallSub { target: SubTarget::ONumber(9812), args, .. }
-            if args.len() == 3
-                && args[0] == (b'X', v(24))
-                && args[1] == (b'Z', bin(BinaryOp::Add, v(26), v(18)))
-                && args[2] == (b'S', v(19))
-        ));
+        let with_s = prog.stmts.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::CallSub { target: SubTarget::ONumber(9812), args, .. }
+                if args.len() == 3
+                    && args[0] == (b'X', v(24))
+                    && args[1] == (b'Z', bin(BinaryOp::Add, v(26), v(18)))
+                    && args[2] == (b'S', v(19))
+            )
+        });
         assert!(with_s, "G65 P9812 … S#19 expected");
     }
 
@@ -212,10 +224,19 @@ mod tests {
             .collect();
         assert!(moves.len() >= 20, "moves: {}", moves.len());
         // R-дуги: G3X92.3035Z-1.407R10.5.
-        let arc = moves.iter().any(|s| matches!(
-            s,
-            L2Stmt::Move { kind: MoveKind::Arc { r: Some(_), dir: Dir::Ccw, .. }, .. }
-        ));
+        let arc = moves.iter().any(|s| {
+            matches!(
+                s,
+                L2Stmt::Move {
+                    kind: MoveKind::Arc {
+                        r: Some(_),
+                        dir: Dir::Ccw,
+                        ..
+                    },
+                    ..
+                }
+            )
+        });
         assert!(arc, "R-arc expected");
         // B-ось как слово позы: G0B-405.7 → target.b.
         let b_move = moves.iter().any(|s| match s {
@@ -236,7 +257,10 @@ mod tests {
         // #1133=80 → VendorSpecific (вне канонических диапазонов Fanuc).
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(1133)), .. }
+            L2Stmt::Assign {
+                target: VarRef::Sys(SysVar::VendorSpecific(1133)),
+                ..
+            }
         )));
         // `#100=10.0` + `X[69+#100]` — выражение в слове X.
         let x_expr = moves.iter().any(|s| match s {
@@ -263,10 +287,17 @@ mod tests {
         let calls = prog
             .stmts
             .iter()
-            .filter(|s| matches!(
-                s,
-                L2Stmt::CallSub { target: SubTarget::ONumber(2102), repeat: None, modal: false, .. }
-            ))
+            .filter(|s| {
+                matches!(
+                    s,
+                    L2Stmt::CallSub {
+                        target: SubTarget::ONumber(2102),
+                        repeat: None,
+                        modal: false,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(calls, 2);
         // O2102/O2103 → subs.
@@ -277,7 +308,9 @@ mod tests {
         let raws = prog.subs[0]
             .body
             .iter()
-            .filter(|s| matches!(s, L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("junk")))
+            .filter(
+                |s| matches!(s, L2Stmt::L1Op(Op::Raw { reason, .. }) if reason.contains("junk")),
+            )
             .count();
         assert_eq!(raws, 3, ",R-comma words in O2102");
     }
@@ -393,7 +426,10 @@ mod tests {
         let prog = p("G65 P9832\nG65 P9810 Z2. M1.\n");
         match &prog.stmts[0] {
             L2Stmt::CallSub {
-                target, args, repeat, ..
+                target,
+                args,
+                repeat,
+                ..
             } => {
                 assert_eq!(*target, SubTarget::ONumber(9832));
                 assert!(args.is_empty());
@@ -419,7 +455,11 @@ mod tests {
         let prog = p(src);
         assert!(prog.stmts.iter().any(|s| matches!(
             s,
-            L2Stmt::Assign { target: VarRef::Sys(SysVar::VendorSpecific(3000)), value: Expr::Const(_), .. }
+            L2Stmt::Assign {
+                target: VarRef::Sys(SysVar::VendorSpecific(3000)),
+                value: Expr::Const(_),
+                ..
+            }
         )));
     }
 
@@ -428,10 +468,13 @@ mod tests {
         // Один O-заголовок → главное тело (подпрограмм нет).
         let prog = p("%\nO7981(DEEP DRILL V2)\n#100=300\nM99\n%\n");
         assert!(prog.subs.is_empty());
-        assert!(prog
-            .stmts
-            .iter()
-            .any(|s| matches!(s, L2Stmt::Assign { target: VarRef::Direct(100), .. })));
+        assert!(prog.stmts.iter().any(|s| matches!(
+            s,
+            L2Stmt::Assign {
+                target: VarRef::Direct(100),
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -590,7 +633,7 @@ mod tests {
                 assert_eq!(*target, SubTarget::ONumber(7981));
                 assert_eq!(args.len(), 4);
                 assert_eq!(args[0].0, b'Z');
-                assert!(matches!(&args[0].1, Expr::Unary(UnaryOp::Neg, _) ));
+                assert!(matches!(&args[0].1, Expr::Unary(UnaryOp::Neg, _)));
                 assert_eq!(args[1].0, b'D');
                 assert!(matches!(&args[1].1, Expr::Unary(UnaryOp::Neg, _)));
                 assert_eq!(args[2].0, b'S');
@@ -630,7 +673,10 @@ mod tests {
         let prog = p("if [#1 eq #0] goto10\nwhile [#2 lt 5] do1\nend1\n");
         assert!(matches!(
             &prog.stmts[0],
-            L2Stmt::IfGoto { target_label: 10, .. }
+            L2Stmt::IfGoto {
+                target_label: 10,
+                ..
+            }
         ));
         assert!(matches!(&prog.stmts[1], L2Stmt::While { do_id: 1, .. }));
     }
@@ -640,7 +686,10 @@ mod tests {
         // v0.20.1: M99 → Return; M30 → L1Op(ProgramEnd).
         let prog = p("M99\nM30\n");
         assert!(matches!(&prog.stmts[0], L2Stmt::Return { .. }));
-        assert!(matches!(&prog.stmts[1], L2Stmt::L1Op(Op::ProgramEnd { .. })));
+        assert!(matches!(
+            &prog.stmts[1],
+            L2Stmt::L1Op(Op::ProgramEnd { .. })
+        ));
     }
 
     #[test]

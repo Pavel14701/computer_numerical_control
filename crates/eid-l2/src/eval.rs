@@ -422,11 +422,9 @@ fn eval_exists(expr: &Expr, env: &mut L2Env) -> Result<Val, L2Error> {
     let exists = match expr {
         Expr::Var(VarRef::Named(name)) => env.named_exists(name),
         Expr::Var(VarRef::Direct(idx)) => env.read_direct(*idx).is_ok(),
-        Expr::Var(VarRef::Indirect(idx_expr)) => {
-            resolve_var_index(idx_expr, env)
-                .and_then(|i| env.read_direct(i))
-                .is_ok()
-        }
+        Expr::Var(VarRef::Indirect(idx_expr)) => resolve_var_index(idx_expr, env)
+            .and_then(|i| env.read_direct(i))
+            .is_ok(),
         Expr::Var(VarRef::Sys(_)) => true,
         _ => true,
     };
