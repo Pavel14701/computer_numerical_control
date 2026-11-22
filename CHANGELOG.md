@@ -8,6 +8,30 @@
 
 ## README
 
+### v0.2 — 2026-11-22 (актуализация до 5-диалектного состояния)
+
+README переписан под фактическое состояние после итераций 6–7. Добавлены:
+статус-таблица диалектов (5 live — grbl-1.1/linuxcnc/fanuc/haas/eid-l1 + 2
+pending — grblHAL/FluidNC, с колонкой «что уже покрыто до адаптера»:
+COVERAGE-матрица есть у всех семи); примеры CLI (`translate --from grbl
+--to fanuc`, `verify --dialect` — оба с опциональным `--profile`, дефолты
+встроены); архитектурная схема (5 адаптеров ↔ EID/L1 ↔ эмиссии,
+rs274-референс-оракул); лицензионная заметка корпуса (published MIT /
+local-dev GPL — два контура, manifest sha256+license); ссылки на
+CONSTRUCT-REGISTRY и INTERFACE-V0.2-DESIGN. Структура крейтов обновлена
+(eid-fanuc, eid-haas — std-only; симуляция mock+real).
+
+**Trust-claim переформулирован честно по факту:** std-only — все пять машин
+трансляции (eid-core + четыре адаптера; новые eid-fanuc/eid-haas —
+path-deps на eid-core), поэтому claim «ноль внешних зависимостей на пути,
+который генерирует G-код» держится и расширен с 2 до 5 машин; вне
+трансляционного пути — сервисные контуры serde+toml (профили
+eid-integration с дефолтами include_str!, QA-инфраструктура eid-harness —
+manifest/генератор/фаззер; у адаптеров — dev-dependencies). serde_yaml
+удалён (R-1 закрыт) — прежняя формулировка «используют serde/serde_yaml»
+устарела. Циклы: §7.7 на v0.18-константах, 4 поверхности, semantic_diff=0;
+rs274 e2e 48/48 — 0 divergences. Тесты: 982/0 (fanuc 217, haas 176).
+
 ### v0.1 — 2026-11-20
 
 Первичный README с честной trust-формулировкой: **«ноль внешних зависимостей
