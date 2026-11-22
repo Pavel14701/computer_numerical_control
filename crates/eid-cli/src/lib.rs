@@ -11,7 +11,7 @@ use eid_integration::translate::{
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1, fanuc; без адаптера (pending): grbl-hal, fluidnc, fanuc";
+const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1, fanuc; без адаптера (pending): grbl-hal, fluidnc";
 
 const TRANSLATE_FLAGS: &[&str] = &["--from", "--to", "--profile", "--input", "--output"];
 const VERIFY_FLAGS: &[&str] = &["--profile", "--dialect", "--input"];
@@ -366,8 +366,9 @@ fn wants_help(args: &[String]) -> bool {
 }
 
 /// Канонические имена диалектов; `grbl` — алиас `grbl-1.1`
-/// (короткая форма из IMPLEMENTATION-PLAN §5, критерий #9). "fanuc" — имя
-/// валидно (#25), адаптер pending → exit 1 с честным pending-сообщением,
+/// (короткая форма из IMPLEMENTATION-PLAN §5, критерий #9). "fanuc" — live
+/// (#25 закрыт: адаптер eid-fanuc в registry). grbl-hal/fluidnc остаются
+/// pending: имя валидно, адаптера нет → exit 1 с честным pending-сообщением,
 /// не usage.
 fn parse_dialect(s: &str, flag: &str) -> CliResult<String> {
     const KNOWN: &[&str] = &[
@@ -524,12 +525,14 @@ eid — транслятор G-кода через канонический фо
   --input <file>      Входной файл G-кода
   --output <file>     Выходной файл (translate)
 
-СТАТУС (итерация 6, Агент E):
-  translate: live для grbl-1.1, linuxcnc, eid-l1 (реальные адаптеры C/D/A).
-  grbl-hal/fluidnc — pending (Агент C); fanuc — pending (#25: парсер этапы 2-3,
-  эмиссия — этап 3; CLI честно отвечает pending). verify: parse + validate +
-  mock-sim (structural-проверки: program_end, zero-length, axis_limits профиля
-  с приведением единиц mm/in — #27; лимиты профиля применяются конвейером — #2).
+СТАТУС (регистрация fanuc, Агент E):
+  translate: live для grbl-1.1, linuxcnc, fanuc, eid-l1 (реальные адаптеры
+  C/D/eid-fanuc/A). grbl-hal/fluidnc — pending (Агент C, семейство GRBL).
+  RAW-правило (SPEC §8.2): программа с Raw-опами не переводится кросс-диалектно
+  (E_RAW_UNTRANSLATABLE, exit 1); same-dialect — verbatim. verify: parse +
+  validate + mock-sim (structural-проверки: program_end, zero-length,
+  axis_limits профиля с приведением единиц mm/in — #27; лимиты профиля
+  применяются конвейером — #2).
   real sim (rs274ngc): если не обнаружен в системе — mock-only MVP (REPORT).
 
 КОДЫ ВЫХОДА:
@@ -567,10 +570,11 @@ max_word_chars — до parse, max_ops_per_program / max_unroll_iterations — �
   eid translate --from grbl --to linuxcnc --profile crates/eid-integration/profiles/grbl_default.toml --input corpus/tier_a/v0/01_linear_box/linear_box.grbl.ngc --output pocket.ngc
   eid translate --from grbl --to linuxcnc --input in.ngc --output out.ngc   # дефолт-профиль
 
-СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/eid-l1 через registry
+СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/fanuc/eid-l1 через registry
 (eid-integration::translate). Отказы parse/emit — диагностики в stderr
 ([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
-emit-warnings (Q3) печатаются отдельно (notice/warning, не отказ).
+emit-warnings (Q3, напр. path_mode ExactPath → G61 у fanuc) печатаются
+отдельно (notice/warning, не отказ).
 
 КОДЫ ВЫХОДА: 0 — перевод выполнен; 1 — профиль/файлы/отказ трансляции; 2 — usage.
 "

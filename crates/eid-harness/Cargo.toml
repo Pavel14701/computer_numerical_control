@@ -11,3 +11,4 @@ toml = "0.8"
 [dev-dependencies]
 eid-grbl = { path = "../eid-grbl" }
 eid-linuxcnc = { path = "../eid-linuxcnc" }
+eid-fanuc = { path = "../eid-fanuc" }

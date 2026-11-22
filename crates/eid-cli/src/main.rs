@@ -9,7 +9,7 @@
 //!               --profile не задан → дефолт-профиль по --to / --dialect / linuxcnc
 //!   fail → 1:   bad profile TOML (в т.ч. пост-валидация семантики #26) |
 //!               missing input file | output == input | output dir missing |
-//!               adapter pending (grbl-hal/fluidnc/fanuc) |
+//!               adapter pending (grbl-hal/fluidnc) |
 //!               translate parse/emit отказ (диагностики [stage] в stderr) |
 //!               лимиты профиля превышены (E_LIMIT_EXCEEDED, #2) |
 //!               verify parse/validate/mock-sim отказ
@@ -18,7 +18,10 @@
 //! (eid-integration::translate); verify = parse + validate + mock-sim;
 //! диагностики с привязкой к этапу ([stage] code: message @ src).
 //! Итерация 6 (аудит): --profile опционален (#10), профиль в конвейере (#2),
-//! emit_preamble (#11), fanuc pending (#25).
+//! emit_preamble (#11), fanuc pending (#25 — закрыт, см. ниже).
+//! Регистрация fanuc (Агент E): live-адаптер eid-fanuc в registry —
+//! translate --from/--to fanuc обрабатывается реально; grbl-hal/fluidnc
+//! остаются pending.
 
 use eid_cli::run;
 use std::process::ExitCode;

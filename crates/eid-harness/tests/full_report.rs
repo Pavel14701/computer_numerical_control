@@ -4,10 +4,12 @@
 //! протоколу CORPUS §9 — не здесь). Запускается как обычный тест.
 //!
 //! Адаптеры: eid-l1 = EidTextAdapter, grbl-1.1 = GrblAdapter,
-//! linuxcnc = LinuxCncAdapter. R4 — через translate_checked /
-//! translate_checked_golden (CORPUS v0.5.3). R3 — раздельно:
-//! R3-golden (parse_X(f) ≡ golden) и R3-consistency (parse_grbl(f_grbl) ≡
-//! parse_linuxcnc(f_linuxcnc)).
+//! linuxcnc = LinuxCncAdapter, fanuc = eid_fanuc::FanucAdapter под явным
+//! ключом "fanuc" (канон крейта — "fanuc-mill"; манифест tier_b и CLI-словарь
+//! — "fanuc"; register_as — расширение реестра, не trait v0.1.2).
+//! R4 — через translate_checked / translate_checked_golden (CORPUS v0.5.3).
+//! R3 — раздельно: R3-golden (parse_X(f) ≡ golden) и R3-consistency
+//! (parse_grbl(f_grbl) ≡ parse_linuxcnc(f_linuxcnc)).
 
 use eid_core::adapter::EidTextAdapter;
 use eid_grbl::GrblAdapter;
@@ -205,16 +207,29 @@ fn stage_fail_count(rep: &eid_harness::runner::Report, stage: eid_core::diag::St
         .count()
 }
 
-#[test]
-fn full_run_generates_report_iter23() {
-    let manifest_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/manifest.toml");
-    let manifest = manifest::load(&manifest_path).expect("manifest.toml loads");
+fn corpus_manifest() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/manifest.toml")
+}
 
+/// Полный registry итерации 23+: 4 адаптера (eid-l1, grbl-1.1, linuxcnc,
+/// fanuc — под явным ключом манифеста).
+fn full_registry() -> Registry {
     let mut reg = Registry::new();
     reg.register(Arc::new(EidTextAdapter::new())); // "eid-l1"
     reg.register(Arc::new(GrblAdapter::new())); // "grbl-1.1"
     reg.register(Arc::new(LinuxCncAdapter::new())); // "linuxcnc"
+    // fanuc: ЖИВОЙ адаптер eid-fanuc под manifest-ключом "fanuc"
+    // (диалект-имя крейта "fanuc-mill" != ключ манифеста — см. register_as).
+    reg.register_as("fanuc", Arc::new(eid_fanuc::FanucAdapter::new()));
+    reg
+}
+
+#[test]
+fn full_run_generates_report_iter23() {
+    let manifest_path = corpus_manifest();
+    let manifest = manifest::load(&manifest_path).expect("manifest.toml loads");
+
+    let reg = full_registry();
 
     let rep = runner::run(&manifest, &reg);
     let tier_b_rep = runner::run_tier_b(&manifest, &reg, &std::collections::BTreeMap::new());
@@ -287,7 +302,7 @@ fn full_run_generates_report_iter23() {
         "# REPORT-ITER23 — полный прогон корпуса через eid-harness runner\n\n\
         - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)\n\
         - corpus: `{}` (векторов: {})\n\
-        - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter; R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)\n\
+        - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter, `fanuc` = FanucAdapter (eid-fanuc, ключ `fanuc` = манифест tier_b); R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)\n\
         - сводка runner: Pass = {}, Fail = {}, Pending = {}, Skipped = {}\n\n\
         ## Отказы по этапам (Diagnostic.stage, interface v0.1.2)\n\n\
         | Этап | Fail |\n|---|---:|\n| Parse | {} |\n| Canonicalize | {} |\n| Verify | {} |\n| Emit | {} |\n| не-диагностический | {} |\n\n\
@@ -365,4 +380,57 @@ fn full_run_generates_report_iter23() {
     // Sanity: генератор не зависит от зелёности корпуса — только от манифеста.
     assert!(!manifest.vectors.is_empty());
     assert!(out.is_file());
+}
+
+// ---------------------------------------------------------------------------
+// Живой fanuc-прогон tier_b (регистрация адаптера "fanuc", Агент E):
+// 17 файлов корпуса идут РЕАЛЬНЫМ eid-fanuc адаптером (было Pending/
+// no-adapter). Паритет со смоуком eid-fanuc (tests/fanuc_corpus_smoke.rs,
+// этап 3): ok=6 / diagnosed=11 / crash=0. Расхождение с смоуком — красный
+// тест и сырьё для стоп-отчёта (CORPUS §9: не правим по итогам здесь).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fanuc_tier_b_live_parse_or_diagnose() {
+    let manifest = manifest::load(&corpus_manifest()).expect("manifest.toml loads");
+    let reg = full_registry();
+
+    let rep = runner::run_tier_b(&manifest, &reg, &std::collections::BTreeMap::new());
+
+    let fanuc: Vec<_> = rep
+        .entries
+        .iter()
+        .filter(|e| e.dialect == "fanuc")
+        .collect();
+    assert_eq!(fanuc.len(), 17, "манифест: 17 fanuc-файлов tier_b");
+
+    let ok = fanuc.iter().filter(|e| e.outcome == "Ok").count();
+    let diagnosed = fanuc
+        .iter()
+        .filter(|e| e.outcome.starts_with("Err("))
+        .count();
+    let no_adapter = fanuc
+        .iter()
+        .filter(|e| e.outcome == "no-adapter")
+        .count();
+    let panics = fanuc.iter().filter(|e| e.outcome == "panic").count();
+
+    println!("=== ЖИВОЙ ПРОГОН harness: 17 fanuc-файлов tier_b (адаптер eid-fanuc) ===");
+    for e in &fanuc {
+        println!("{:<12} {:<44} {}", e.dialect, e.path, e.outcome);
+    }
+    println!("=== итог: ok={ok} diagnosed={diagnosed} no-adapter={no_adapter} panic={panics} ===");
+
+    assert_eq!(
+        ok, 6,
+        "паритет со смоуком eid-fanuc: ok=6; фактические исходы: {fanuc:?}"
+    );
+    assert_eq!(
+        diagnosed, 11,
+        "паритет со смоуком: diagnosed=11 (parse-or-diagnose); исходы: {fanuc:?}"
+    );
+    assert_eq!(no_adapter, 0, "адаптер зарегистрирован — no-adapter не остаётся");
+    assert_eq!(panics, 0, "crash=0 инвариант (CORPUS §3)");
+    assert!(rep.is_crash_free());
+    assert_eq!(ok + diagnosed, 17, "все 17 — parse-or-diagnose");
 }

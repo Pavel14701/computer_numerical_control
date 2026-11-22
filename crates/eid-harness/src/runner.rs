@@ -49,6 +49,14 @@ impl Registry {
             .insert(adapter.dialect_name().to_string(), adapter);
     }
 
+    /// Регистрирует адаптер под ЯВНЫМ ключом диалекта — для расхождений
+    /// manifest-имени с `Adapter::dialect_name` (fanuc: манифест tier_b и
+    /// CLI-словарь — "fanuc", канон крейта eid-fanuc — "fanuc-mill"; крейт
+    /// стабилен — имя не трогаем: расширяем реестр, не trait v0.1.2).
+    pub fn register_as(&mut self, dialect: &str, adapter: Arc<dyn Adapter>) {
+        self.adapters.insert(dialect.to_string(), adapter);
+    }
+
     pub fn get(&self, dialect: &str) -> Option<&Arc<dyn Adapter>> {
         self.adapters.get(dialect)
     }

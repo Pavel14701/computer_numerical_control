@@ -1,11 +1,11 @@
 # MachineProfile по умолчанию: Fanuc (Агент E, итерация 6 — аудит #25; TOML с
 # итерации 3 — R-1). По образцу grbl_default.toml / linuxcnc_default.toml.
 #
-# СТАТУС (#25): диалект "fanuc" валиден в профилях и CLI-словаре, но адаптер
-# eid-fanuc в разработке — парсер этапы 2-3, эмиссия этап 3. Registry
-# (eid-integration::translate::AnyAdapter::for_name("fanuc")) честно отвечает
-# AdapterPending без паники; крейт eid-fanuc НЕ подключён как зависимость
-# eid-integration (API в полёте).
+# СТАТУС (#25, итерация «регистрация fanuc»): диалект "fanuc" LIVE — адаптер
+# eid-fanuc в registry (eid-integration::translate::AnyAdapter::for_name(
+# "fanuc") → обёртка FanucNamedAdapter; канон крейта — "fanuc-mill").
+# translate --from/--to fanuc обрабатывается реально; verify --dialect fanuc —
+# тоже.
 #
 # Лимиты — дефолты COVERAGE §1.2 (200000 / 10000 / 1000000 / 32).
 # emit_r_arcs: false — политика EQUIVALENCE §4: эмиссия дуг всегда IJK;

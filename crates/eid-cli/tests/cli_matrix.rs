@@ -74,8 +74,9 @@ fn cli_unknown_command_usage() {
 
 #[test]
 fn cli_unknown_dialect_usage() {
-    // "haas" вне словаря CLI → usage (2). fanuc — имя валидно (#25),
-    // pending-адаптер → exit 1 (см. cli_adapter_pending_fanuc).
+    // "haas" вне словаря CLI → usage (2). fanuc — имя валидно и LIVE
+    // (см. cli_dir_grbl_to_fanuc_live); pending остались только
+    // grbl-hal/fluidnc → exit 1 (cli_adapter_pending_grbl_hal).
     let prof = grbl_profile();
     let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
     let output = tmp().join("ud.out");
@@ -96,12 +97,15 @@ fn cli_unknown_dialect_usage() {
 }
 
 #[test]
-fn cli_adapter_pending_fanuc() {
-    // #25: fanuc — имя валидно, адаптер pending (парсер этапы 2-3, эмиссия
-    // этап 3) → exit 1 с честным pending-сообщением, НЕ usage и не паника.
+fn cli_dir_grbl_to_fanuc_live() {
+    // #25 закрыт: fanuc-цель LIVE (адаптер eid-fanuc в registry) — Raw-free
+    // grbl-источник переводится, выход — легальная fanuc-программа.
+    // Полная semantic-эквивалентность — на уровне eid-integration (tests/
+    // e2e.rs: exact_stop без value-shift); здесь — живость пути CLI.
     let prof = grbl_profile();
     let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
-    let output = tmp().join("fanuc.out");
+    let output = tmp().join("fanuc_live.out");
+    let _ = std::fs::remove_file(&output);
     let code = code_of(&[
         "translate",
         "--from",
@@ -115,22 +119,31 @@ fn cli_adapter_pending_fanuc() {
         "--output",
         p(&output),
     ]);
-    assert_eq!(code, 1);
-    assert!(!output.exists(), "pending-цель не пишет output");
+    assert_eq!(code, 0, "fanuc-цель live: translate должен завершиться 0");
+    let meta = std::fs::metadata(&output).expect("output файл создан");
+    assert!(meta.len() > 0, "output пуст");
+    let emitted = std::fs::read_to_string(&output).unwrap();
+    assert!(emitted.contains("M30"), "program_end fanuc — M30: {emitted:?}");
+    // выход разбирается fanuc-адаптером (registry-имя "fanuc")
+    parse_with("fanuc", &emitted, "out.fanuc.nc").expect("выход парсится fanuc");
 }
 
 #[test]
-fn cli_adapter_pending_fanuc_source() {
-    // #25: fanuc-ИСТОЧНИК — pending тоже.
-    let prof = grbl_profile();
-    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
-    let output = tmp().join("fanuc_src.out");
+fn cli_fanuc_raw_cross_refuses() {
+    // RAW-правило (SPEC §8.2): ok-файл tier_b с Macro B (Raw-опы) не
+    // переводится кросс-диалектно — честный E_RAW_UNTRANSLATABLE, exit 1,
+    // output не создаётся. same-dialect fanuc→fanuc — verbatim (см.
+    // eid-integration tests/e2e.rs).
+    let prof = repo_root().join("crates/eid-integration/profiles/fanuc_default.toml");
+    let input = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let output = tmp().join("fanuc_raw.out");
+    let _ = std::fs::remove_file(&output);
     let code = code_of(&[
         "translate",
         "--from",
         "fanuc",
         "--to",
-        "linuxcnc",
+        "grbl",
         "--profile",
         p(&prof),
         "--input",
@@ -138,7 +151,33 @@ fn cli_adapter_pending_fanuc_source() {
         "--output",
         p(&output),
     ]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 1, "кросс-диалект с Raw — отказ трансляции");
+    assert!(!output.exists(), "отказ не пишет output");
+}
+
+#[test]
+fn cli_dir_fanuc_same_dialect_live() {
+    // same-dialect fanuc→fanuc: RAW вербатимен (SPEC §8.1) — live путь exit 0.
+    let prof = repo_root().join("crates/eid-integration/profiles/fanuc_default.toml");
+    let input = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let output = tmp().join("fanuc_same.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "fanuc",
+        "--to",
+        "fanuc",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 0, "same-dialect RAW легален");
+    let emitted = std::fs::read_to_string(&output).unwrap();
+    assert!(emitted.contains("WHILE["), "Macro B payload verbatim: {emitted:?}");
 }
 
 #[test]
@@ -692,13 +731,13 @@ fn cli_exit_codes_repeatable_matrix() {
             ],
         ),
         case(
-            1,
+            0,
             &[
                 "translate",
                 "--from",
                 "grbl",
                 "--to",
-                "fanuc", // pending (#25)
+                "fanuc", // live (регистрация fanuc: адаптер eid-fanuc в registry)
                 "--profile",
                 p(&prof_g),
                 "--input",

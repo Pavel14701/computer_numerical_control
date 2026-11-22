@@ -5,6 +5,8 @@
 //! parse(output) ≡ parse(input) по semantic_diff (EQUIVALENCE §4) → + reverse.
 //! Негатив #27: translate(tool_change → grbl-1.1) → Err SYNTAX на emit-стадии
 //! (manifest r4_expect, COVERAGE §5) → CLI-маппинг = exit 1.
+//! Регистрация fanuc (Агент E): fanuc-цель live (parse-back ≡ на exact_stop),
+//! RAW-правило на ok-файле tier_b (кросс-диалект отказ, same-dialect verbatim).
 
 use eid_core::adapter::Adapter;
 use eid_core::diag::ErrorCode;
@@ -638,34 +640,72 @@ fn e2e_preamble_off_emits_verbatim_and_rolls_back_clean() {
 }
 
 // ---------------------------------------------------------------------------
-// Fanuc-диалект (аудит #25): имя валидно, адаптер pending — без паники
+// Fanuc-диалект (#25 закрыт: адаптер eid-fanuc LIVE в registry) — 2 кейса
 // ---------------------------------------------------------------------------
 
 #[test]
-fn e2e_fanuc_pending_is_reported() {
-    let src =
-        std::fs::read_to_string(corpus_pilot("01_linear_box", "linear_box.grbl.ngc")).unwrap();
-    // цель fanuc → pending
-    let err = translate_text("grbl-1.1", "fanuc", &src, "f.grbl.ngc")
-        .expect_err("fanuc — pending (парсер этапы 2-3)");
-    match &err {
-        TranslateError::AdapterPending { dialect, message } => {
-            assert_eq!(dialect, "fanuc");
-            assert!(
-                message.contains("eid-fanuc parser in development"),
-                "pending-текст #25: {message}"
-            );
-            assert!(
-                message.contains("этап 3"),
-                "в тексте должен быть статус эмиссии: {message}"
-            );
-        }
-        other => panic!("ожидался AdapterPending, фактический: {other:?}"),
-    }
-    assert_eq!(err.stage(), "config");
+fn e2e_fanuc_live_target_parse_back_equiv() {
+    // Цель fanuc live: parse(выход fanuc) ≡ parse(источник) — semantic_diff 0.
+    // Источник linuxcnc с ЯВНЫМ G61.1 (exact_stop): value-shift не возникает
+    // (fanuc ExactStop → G61 1:1, без warning — COVERAGE §2.2/§5.1); источник
+    // exact_path дал бы задокументированный сдвиг ExactPath→G61→ExactStop
+    // (warning-канал), поэтому честная эквивалентность берётся на exact_stop.
+    let src = "G21 G90 G94 G17\nG61.1\nM3 S8000\nM8\nG0 X0 Y0 Z5\nG1 X10 F150\nM5\nM9\nM2\n";
+    let out = translate_text("linuxcnc", "fanuc", src, "fanuc_target.linuxcnc.ngc")
+        .expect("fanuc-цель live: translate linuxcnc → fanuc");
+    assert_eq!(out.from, "linuxcnc");
+    assert_eq!(out.to, "fanuc", "registry-имя обёртки FanucNamedAdapter");
+    assert!(out.emitted.contains("G61"), "exact_stop эмиссия — G61: {:?}", out.emitted);
+    assert!(out.emitted.contains("M30"), "program_end fanuc — M30");
+    assert!(
+        out.q3_warnings.is_empty(),
+        "exact_stop → G61 1:1 без потерь: {:?}",
+        out.q3_warnings
+    );
 
-    // источник fanuc → pending тоже
-    let err2 = translate_text("fanuc", "grbl-1.1", &src, "f.fanuc.ngc")
-        .expect_err("fanuc-источник — pending");
-    assert!(matches!(err2, TranslateError::AdapterPending { .. }));
+    // parse-back: выход читается fanuc-адаптером и AST эквивалентен источнику.
+    let a = parse("linuxcnc", src, "in.linuxcnc.ngc");
+    let b = parse("fanuc", &out.emitted, "out.fanuc.nc");
+    assert_equivalent(&a, &b, "linuxcnc(G61.1)→fanuc parse-back");
+
+    // и фанук-профиль жив: mock-sim принимает эмиссию (verify-путь #10/#25)
+    let profile = MachineProfile::fanuc_default();
+    let report = mock_sim(&profile, &out.emitted, "out.fanuc.nc");
+    assert!(
+        report.is_ok(),
+        "mock-sim fanuc-профиль: {:?}",
+        report.errors
+    );
+}
+
+#[test]
+fn e2e_fanuc_raw_rule_cross_refusal_and_same_dialect_verbatim() {
+    // Ok-файл tier_b с Macro B (WHILE) — parse-or-diagnose ok=6 смоука:
+    // кросс-диалект с Raw → честный E_RAW_UNTRANSLATABLE (SPEC §8.2),
+    // same-dialect fanuc→fanuc → verbatim (SPEC §8.1).
+    let path = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let src = std::fs::read_to_string(&path).expect("mpe_while_clear_variables.nc");
+
+    let err = translate_text("fanuc", "grbl-1.1", &src, "wcv.fanuc.nc")
+        .expect_err("кросс-диалект fanuc с Raw обязан отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags.len(), 1, "ровно одна диагностика: {diags:?}");
+            assert_eq!(diags[0].code, ErrorCode::RawUntranslatable);
+            assert!(diags[0].message.contains("RAW op(s)"), "{diags:?}");
+        }
+        other => panic!("ожидался Err(Emit/RawUntranslatable), фактический: {other:?}"),
+    }
+
+    let out = translate_text("fanuc", "fanuc", &src, "wcv.fanuc.nc")
+        .expect("same-dialect fanuc → verbatim RAW легален");
+    assert_eq!(out.from, "fanuc");
+    assert_eq!(out.to, "fanuc");
+    for needle in ["WHILE[", "END1", "#1 = #1 + 1"] {
+        assert!(
+            out.emitted.contains(needle),
+            "Macro B payload потерян при same-dialect: {needle:?} в {:?}",
+            out.emitted
+        );
+    }
 }
