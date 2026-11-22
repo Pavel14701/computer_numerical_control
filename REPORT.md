@@ -164,6 +164,14 @@ Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUs
 
 **SPEC v0.18.1** (9db50fa): §11 sub_index-нумерация после drop — дыры = documented semantics (мутраунд-1 наблюдение доведено до рулинга). **COVERAGE v0.9.5** (9b714f2): G76-Haas официальная XOR-механика (codes-G76 detail впервые через Cloudflare; Q→Setting 27 = Fanuc-5101-класс; без Q → I/J в тексте; этап-12-кандидат «всё в тексте» снят), §6.71: R = geometry-ЗНАЧЕНИЕ в G10 L10, код-гэп eid-fanuc локализован (кандидат consumed.extend — этап 12/бриф). **Haas-корпус** (c702501): 13 файлов (1 MIT + 12 NOASSERTION→local; пермиссивного живого Haas-NGC на GitHub нет), **dialect=haas** — 5-й ключ манифеста, живые через HaasAdapter; G31-сирота и H-до-Z закрыты дикими файлами. Корпус: **157 файлов**.
 
-## 10. Дальше (итерация 10)
+## 10. Итерация 10 — добивающая (dead-code, §6.71, NaN-заметка, emission-гейт) — ЗАВЕРШЕНА
 
-Dead-code очистка (takes_p/takes_q fanuc) + §6.71 consumed.extend P/L/R (behavior-change Err→Raw — бриф-решение) · NaN-swallow — EQUIVALENCE-заметка · emission-профили для grbl/linuxcnc (если применимо) · NURBS/Q10 — ревью-очередь пользователя · parallel rs274_e2e48? — нет (docker за фичей); intra-file парсинг — за горизонтом.
+- **§6.71 ЗАКРЫТ** (agent C, 129e639): consumed.extend P/L/R (зеркало haas) — официальный `G10 L10 G90 P5 R250.` → Raw{TABLE} вместо Err «R without consumer»; брифовское ожидание регресса (Err) исправлено эмпирикой (L2 P1.9 = Ok(Raw{SYNTAX}) и до и после — пин реальности).
+- **Dead-code зачистка** (agent C): takes_p/takes_q, FeedPerRev-arm, k>MAX dead-check, end_is_last-пломбинг удалены; plane fallback-arms → unreachable! с инвариантом. **Мут-раунд 3: state.rs 254 мутанта — 0 missed** (все 7 эквивалентов ушли из счётчика), canonicalize 0 новых выживших. 315 тестов fanuc.
+- **NaN-swallow EQUIVALENCE-заметка** (agent D, a831336): §4 наблюдение — сравнения с NaN ложны → молчаливый pass на вырожденных промежуточных; защищено предшествующими фильтрами; 29 выживших arc_block подсчитаны точно, паттерн системен в 4 канонических поверхностях; is_finite-гейт — кандидат v0.3.x.
+- **emission-гейт emit_r_arcs** (agent E, 200e53c, находка D): true вне fanuc/haas → отказ валидации («тихое игнорирование запрещено»); честный текст M02 (старый факт-неверен, прибит тестом). Анализ применимости:wcs-map и program_end_style неприменимы/не нужны на grbl/linuxcnc (посылка G59.x-grbl опровергнута — grblHAL-дельта).
+- **COVERAGE v0.9.6**: §6.71 закрыт, CHANGELOG emission-гейт. Workspace **1115/0**.
+
+## 11. Дальше (итерация 11+)
+
+NURBS/Q10 — **ревью-очередь пользователя** (ждёт с итерации 7) · emission-профили: оставшиеся in-flight находки применены; Haas `?`-остатки (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку · intra-file парсинг (Амдал-хвост R10) · parallel rs274 — нет (docker за фичей) · NURBS-декомпозиция/G65-Macro-B — этап 12 (L2).
