@@ -34,10 +34,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "eid-haas"
+version = "0.1.0"
+dependencies = [
+ "eid-core",
+]
+
+[[package]]
 name = "eid-harness"
 version = "0.1.0"
 dependencies = [
  "eid-core",
+ "eid-fanuc",
  "eid-grbl",
  "eid-linuxcnc",
  "serde",
@@ -49,6 +57,7 @@ name = "eid-integration"
 version = "0.1.0"
 dependencies = [
  "eid-core",
+ "eid-fanuc",
  "eid-grbl",
  "eid-harness",
  "eid-linuxcnc",
