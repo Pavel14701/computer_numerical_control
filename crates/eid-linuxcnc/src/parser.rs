@@ -8,16 +8,20 @@
 //!
 //! Классы отказов (правило двух классов, CORPUS §1.2 v0.5):
 //!  * жёсткий Err — структурные (искажают интерпретацию последующих опов):
-//!    units/path-переключения, L20 вне пресетки, machine-frame без
-//!    in-text origins (§5.3), сломанные дуги (§6), PEND-дубликат, поток
-//!    управления, `#`-параметры, O-code, лимиты;
+//!    path-переключения, L20 вне пресетки, machine-frame без
+//!    in-text origins (§5.3), сломанные дуги (§6), PEND-дубликат, лимиты;
+//!    units-переключение снято с v0.21 (ревизия §2.5 принцип 5 — легально,
+//!    носитель Raw + chaining);
 //!  * Ok + диагностика (line-level RAW) — локальные конструкции: вендорские
 //!    M/G (SEMANTICS/SYNTAX), G43 H (REQUIRES), G28/G30 (REQUIRES),
 //!    одиночное T (lookup в момент T, REQUIRES — SPEC §5.2 v0.20, зонд 6),
 //!    block delete (RUNTIME_STATE), mid-program G92 (SEMANTICS — носитель
 //!    узла frame_preset; семантика применена к чейнингу, SPEC §5.3 v0.20),
-//!    хвост после M2/M30 (SEMANTICS — диалект-расхождение rs274/grbl,
-//!    SPEC §5.2 v0.20, зонд 5)…
+//!    units-switch (SEMANTICS — носитель смены системы чтения + chaining
+//!    25.4, SPEC §2.5 v0.21), Macro-B строки — `#`/`[ ]`/IF-GOTO-WHILE
+//!    (SYNTAX — зеркало eid-fanuc политики v0.16, исполнение = этап 12 L2;
+//!    Q10 закрыт), хвост после M2/M30 (SEMANTICS — диалект-расхождение
+//!    rs274/grbl, SPEC §5.2 v0.20, зонд 5)…
 //!    Диагностики Ok-пути буферизуются: `ParseOut::diagnostics`
 //!    (LinuxCncAdapter::take_diagnostics).
 //!
@@ -77,6 +81,20 @@ pub const EID_VERSION: &str = "EID/L1 v0.3"; // grammar v0.3 (magic bump)
 /// start-проверку следующего motion-опа (модель разрыва фрейма замороженного
 /// `eid_core::verify` mid-G92 не знает — chaining-ребейз легален).
 pub(crate) const MID_G92_REASON_PREFIX: &str = "G92 mid-program";
+
+/// Маркер Raw-носителя units-switch (SPEC §2.5 принцип 5, ревизия v0.21):
+/// подстрока reason для того же механизма подавления start-проверок —
+/// первый motion-оп после смены системы чтения стартует от прежнего
+/// физического положения в НОВОЙ системе (конверсия 25.4), замороженная
+/// модель verify смешанных систем не знает.
+pub(crate) const UNITS_SWITCH_REASON_PREFIX: &str = "units switch mid-program";
+
+/// Macro-B строка (`#`-параметр / `[ ]`-выражение / control-flow keyword) —
+/// line-level Raw{E_UNSUPPORTED_SYNTAX} (v0.21, зеркало eid-fanuc политики
+/// v0.16 §4.3 / COVERAGE §4). Распознанная конструкция: исполнение = этап 12
+/// (L2); Q10 остаётся закрытым — Raw ≠ интерпретация. Dead-assignment
+/// (`#1=3`, Curva) — та же диспозиция (drop+notice отвергнут).
+pub(crate) const MACRO_B_RAW_REASON: &str = "Macro B construct: #-параметр / []-выражение / IF-GOTO-WHILE-DO-END-THEN — параметрика = этап 12 (L2) — line-level Raw (зеркало eid-fanuc §4.3, COVERAGE §4; Q10 закрыт — Raw не интерпретация)";
 
 /// Публичный результат parse: Program + line-level диагностики + notices.
 #[derive(Debug, Clone)]
@@ -141,7 +159,20 @@ struct LastMotion {
 
 struct St {
     file: Arc<str>,
+    /// Program.units (заголовок) — ПЕРВАЯ установленная G20/G21 система
+    /// (SPEC §2.5, красный #10). При первом вхождении с предшествующими
+    /// mm-дефолтными ходами остаётся None (дефолт mm) — заголовок честен.
     units: Option<Units>,
+    /// Текущая система ЧТЕНИЯ (ревизия SPEC §2.5 принцип 5 v0.21):
+    /// G20/G21 легальны в любой позиции — переключение = смена системы
+    /// чтения, число переключений не ограничено.
+    units_mode: Units,
+    /// Масштаб текущей системы чтения к Program.units:
+    /// value_in_current = value_in_program_units × units_scale
+    /// (mm→inch: ÷25.4, inch→mm: ×25.4). Пресетка хранится в Program.units —
+    /// якорные чтения применяют масштаб при чтении (не в месте хранения —
+    /// эмиттер выводит пресетку в заголовке program.units).
+    units_scale: f64,
     path: Option<PathKind>,
     path_t: Option<Num>,
     distance_abs: bool,   // G90 (true) / G91
@@ -318,6 +349,10 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
     let mut st = St {
         file: Arc::from(file),
         units: None,
+        // Дефолт контроллера — mm (COVERAGE §0.3; SPEC §2.5: дефолт mm —
+        // не «уже установлено», красный #10).
+        units_mode: Units::Mm,
+        units_scale: 1.0,
         path: None,
         path_t: None,
         distance_abs: true,    // G90 — дефолт контроллера (COVERAGE §0.3)
@@ -382,6 +417,22 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
                     ErrorCode::UnsupportedSyntax,
                 );
             }
+            LineTok::MacroB => {
+                // Macro B / параметрика (v0.21, зеркало eid-fanuc §4.3):
+                // `#`-параметр / `[ ]`-выражение / control-flow keyword —
+                // line-level RAW{E_UNSUPPORTED_SYNTAX}, разбор продолжается
+                // (бывший жёсткий Err E_RUNTIME_STATE/E_UNSUPPORTED_SYNTAX
+                // снят; Curva dead-assignment `#1=3` включён — Ok+Raw).
+                // Модальное состояние кадра НЕ абсорбируется — лексер
+                // потребляет строку целиком (паритет eid-fanuc §4.3).
+                st.push_raw(
+                    ld.line_no,
+                    &ld.raw,
+                    ld.term,
+                    MACRO_B_RAW_REASON,
+                    ErrorCode::UnsupportedSyntax,
+                );
+            }
             LineTok::Slash => {
                 // Block delete: исполнение зависит от переключателя станка —
                 // не статично (COVERAGE §4) → line-level RAW.
@@ -434,6 +485,7 @@ fn parse_block(
     let mut extra_axes: Vec<char> = Vec::new(); // A/B/C/U/V/W
     let mut has_t = false;
     let mut has_m6 = false;
+    let mut has_e = false; // E-слово: легально ТОЛЬКО в кадре G76
 
     // Модальные группы: конфликт (два разных major одной группы) → InvalidInput.
     let mut seen: Vec<(&'static str, i64)> = Vec::new();
@@ -627,6 +679,19 @@ fn parse_block(
             // H/D — параметры G43*/G41* (кадр уходит в line-level raw целиком);
             // значения сохраняются для полноты лексики, диспозицией несут кадры.
             'H' | 'D' => {}
+            // E — слово цикла G76 (сбег резьбы; LinuxCNC G76: P/Z/I/J/K/H/R/
+            // Q/E/L) — кадр G76 уходит в line-level raw целиком (COVERAGE §2.5).
+            // Вне G76 — вне словаря rs274 (RepRap-экструзия) → Err
+            // (unused-скан, раздел 5).
+            'E' => {
+                let _v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad E value `{}`", w.number)
+                    )
+                })?;
+                has_e = true;
+            }
             'N' => {} // IGNORED_SAFE (COVERAGE §4)
             other => {
                 return Err(fl!(
@@ -662,7 +727,10 @@ fn parse_block(
             // ходами (этап 12 L2) → вся строка Raw{SEMANTICS}; P/X/Y (и Q —
             // счётчик точек NURBS) — часть Raw-строки. Полярность — зеркально
             // eid-fanuc G06.2 (Raw{SEM}, «NURBS interpolation»).
-            (5, _) => Some((
+            // v0.21 (Curva_Stella, инвентаризация): G2.2/G3.2 — та же
+            // NURBS-семья (открывающие коды NURBS-блока в LinuxCNC 2.9,
+            // закрытие G5.3) — та же диспозиция.
+            (5, _) | (2, 2) | (3, 2) => Some((
                 ErrorCode::UnsupportedSemantics,
                 "NURBS/сплайны — семантика не представима ходами (этап 12 L2); P/X/Y контрольные точки — часть Raw-строки (COVERAGE §2.1)",
             )),
@@ -726,16 +794,17 @@ fn parse_block(
             break;
         }
     }
-    // Состояние G5.x-блока (ruling SPEC v0.19): G5/G5.1/G5.2 открывают
-    // сплайн-режим, G5.3 закрывает NURBS-блок; явный motion-G (модальная
-    // группа motion) отменяет модальный сплайн — дальнейшие голые координаты
-    // снова обычные ходы. Фиксируется ДО raw-ветки: строки-продолжения сами
-    // уходят в Raw (ниже) и раннего return'а ещё не было.
+    // Состояние G5.x-блока (ruling SPEC v0.19): G5/G5.1/G5.2 (и G2.2/G3.2 —
+    // v0.21, та же NURBS-семья LinuxCNC 2.9) открывают сплайн-режим,
+    // G5.3 закрывает NURBS-блок; явный motion-G (модальная группа motion)
+    // отменяет модальный сплайн — дальнейшие голые координаты снова обычные
+    // ходы. Фиксируется ДО raw-ветки: строки-продолжения сами уходят в Raw
+    // (ниже) и раннего return'а ещё не было.
     if gs.iter().any(|&(maj, min)| (maj, min) == (5, 3)) {
         st.spline_active = false;
     } else if gs
         .iter()
-        .any(|&(maj, min)| matches!((maj, min), (5, 0) | (5, 1) | (5, 2)))
+        .any(|&(maj, min)| matches!((maj, min), (5, 0) | (5, 1) | (5, 2) | (2, 2) | (3, 2)))
     {
         st.spline_active = true;
     } else if gs.iter().any(|&(maj, min)| {
@@ -744,15 +813,16 @@ fn parse_block(
     }) {
         st.spline_active = false;
     }
-    // Строки-продолжения G5.x-блока (контрольные точки `X.. Y.. P..` без
-    // G-кода — модальный сплайн, реальный LinuxCNC исполняет их как часть
-    // NURBS-блока) — та же диспозиция, что и строка G5.x: вся строка →
-    // Raw{E_UNSUPPORTED_SEMANTICS}; P/Q/L — часть Raw-строки. Без этого
-    // P-слово точек падало в «P-слово без потребителя» (жёсткий Err всего
-    // файла — 11 nurbs-файлов Tier B, ruling SPEC v0.19).
+    // Строки-продолжения G5.x/G2.2/G3.2-блока (контрольные точки
+    // `X.. Y.. P..` без G-кода — модальный сплайн, реальный LinuxCNC
+    // исполняет их как часть NURBS-блока) — та же диспозиция, что и строка
+    // открывателя: вся строка → Raw{E_UNSUPPORTED_SEMANTICS}; P/Q/L — часть
+    // Raw-строки. Без этого P-слово точек падало в «P-слово без
+    // потребителя» (жёсткий Err всего файла — 11 nurbs-файлов Tier B,
+    // ruling SPEC v0.19).
     if raw_reason.is_none() && st.spline_active && gs.is_empty() {
         raw_reason = Some((
-            "NURBS/сплайны — строка-продолжение G5.x-блока: P/X/Y контрольные точки — часть Raw-строки, семантика не представима ходами (этап 12 L2) (COVERAGE §2.1)".into(),
+            "NURBS/сплайны — строка-продолжение NURBS-блока (G5.x/G2.2/G3.2): P/X/Y контрольные точки — часть Raw-строки, семантика не представима ходами (этап 12 L2) (COVERAGE §2.1)".into(),
             ErrorCode::UnsupportedSemantics,
         ));
     }
@@ -947,21 +1017,120 @@ fn parse_block(
         }
     }
 
-    // Units (G20/G21): одна система на программу (SPEC §2.5) — N7.
+    // Units (G20/G21) — ревизия SPEC §2.5 принцип 5 v0.21 (инвентаризация
+    // Tier C: LinuxCNC исполняет G20/G21 в любой позиции — прежний Err N7
+    // «одно переключение» снят): первое вхождение устанавливает систему
+    // (v0.13, красный #10); дальнейшие G20/G21 = смена системы чтения,
+    // число переключений не ограничено. Chaining: чтение после переключения
+    // = прежнее физическое положение в НОВОЙ системе — конверсия 25.4 В
+    // ПРЕДЕЛАХ ДОПУСКА (4dp-дрейф ≤2e-5 мм < ε_pos; SPEC прямо оговаривает:
+    // не «точна»). Носитель смены — line-level Raw (опа units в AST v0.2
+    // нет); эмиссия воспроизводит G20/G21 в потоке (иначе семантика
+    // последующих слов потеряна).
+    let mut line_has_units_switch = false;
     for &(maj, min) in &gs {
         if min == 0 && (maj == 20 || maj == 21) {
             let u = if maj == 20 { Units::In } else { Units::Mm };
-            match st.units {
-                None => st.units = Some(u),
-                Some(old) if old != u => {
-                    return Err(fl!(
-                        ErrorCode::UnsupportedSemantics,
-                        "переключение единиц в середине программы — одна система единиц (SPEC §2.5/§3, N7)",
-                    ));
+            if st.units_mode == u {
+                continue; // повтор той же системы чтения — легальный no-op
+            }
+            if st.units.is_none()
+                && !(st.saw_motion || st.last_motion.is_some() || st.reading_unknown)
+            {
+                // Чистое первое вхождение (до ходов/чтений) — заголовок
+                // Program.units = система; смена чтения не нужна.
+                st.units = Some(u);
+                st.units_mode = u;
+                st.units_scale = 1.0;
+                continue;
+            }
+            // Смена системы чтения (включая ПЕРВОЕ вхождение G20 после
+            // mm-дефолтных ходов: prior reading — mm, теперь inch —
+            // Program.units остаётся дефолт mm, заголовок честен).
+            let factor = if u == Units::In { 1.0 / 25.4 } else { 25.4 };
+            if let Some(lm) = st.last_motion.as_mut() {
+                // Machine-frame конец — машинные единицы (физические),
+                // конверсии не подлежит; WCS-чтение конвертируется.
+                if lm.frame == Frame::Wcs {
+                    for v in &mut lm.end {
+                        *v *= factor;
+                    }
                 }
-                _ => {} // повтор той же системы — легальный no-op
+            }
+            st.units_mode = u;
+            // v0.21-fix: якорные значения (пресетка до ходов) скейлятся НА
+            // МЕСТЕ (см. convert_units_anchor) — чтение якоря = значение в
+            // текущей системе, масштаб всегда единичный.
+            st.units_scale = 1.0;
+            line_has_units_switch = true;
+            // v0.21-fix (N7-находка, eid verify): anchor-согласование —
+            // конверсия чтения применяется и к ХРАНИМОМУ end последнего
+            // motion-опа (якорь expected в core-verify: пара
+            // start_{i+1} == end_i обязана остаться бит-в-бит после
+            // конверсии, иначе «start != expected» на validate-пути CLI).
+            if st
+                .last_motion
+                .as_ref()
+                .is_some_and(|lm| lm.frame == Frame::Wcs)
+            {
+                convert_units_anchor(st, factor);
+            }
+            // Пресетка до ходов — якорь первого хода (core: Exact(pr.values)):
+            // скейлится вместе с reading-системой (после ходов не трогается —
+            // пара pr.values ↔ start первого опа остаётся literal-точной).
+            if !st.saw_motion {
+                if let Some(pr) = st.preset.as_mut() {
+                    pr.values = p3_snap([
+                        pr.values.x.value * factor,
+                        pr.values.y.value * factor,
+                        pr.values.z.value * factor,
+                    ]);
+                }
+            }
+            // Ход на switch-строке: rs274 исполняет весь блок — цепочка
+            // чтений продолжается в НОВОЙ системе (end хода = слова кадра
+            // в новой системе; оп не строится — байты строки в носителе).
+            if axes.iter().any(|a| a.is_some()) && !gs.iter().any(|&(maj, _)| maj == 53) {
+                let explicit = gs.iter().rev().find_map(|&(maj, min)| {
+                    if min == 0 && (0..=3).contains(&maj) {
+                        Some(match maj {
+                            0 => MotionKind::G0,
+                            1 => MotionKind::G1,
+                            2 => MotionKind::G2,
+                            _ => MotionKind::G3,
+                        })
+                    } else {
+                        None
+                    }
+                });
+                if explicit.or(st.motion).is_some() {
+                    let all_axes = axes.iter().all(|a| a.is_some());
+                    let end = match (st.last_motion.as_ref().map(|lm| lm.end), st.distance_abs) {
+                        (Some(b), true) => Some(axes_from_words(&axes, &b)),
+                        (Some(b), false) => Some(add_axes(&b, &axes)),
+                        (None, true) if all_axes => Some(axes_from_words(&axes, &[0.0; 3])),
+                        _ => None, // чтение неизвестно — цепочку не продвигаем
+                    };
+                    if let Some(end) = end {
+                        st.last_motion = Some(LastMotion {
+                            end,
+                            frame: Frame::Wcs,
+                            wcs: st.wcs,
+                        });
+                        st.saw_motion = true;
+                        st.reading_unknown = false;
+                    }
+                }
             }
         }
+    }
+    if line_has_units_switch && raw_reason.is_none() {
+        raw_reason = Some((
+            format!(
+                "{UNITS_SWITCH_REASON_PREFIX} (SPEC §2.5 принцип 5, ревизия v0.21 — LinuxCNC исполняет G20/G21 в любой позиции): смена системы чтения; chaining через конверсию 25.4 в пределах допуска (4dp-дрейф ≤2e-5 мм < ε_pos); опа units в AST v0.2 нет — носитель line-level Raw (байты lossless same-dialect, кросс-диалект — отказ, правило Raw)"
+            ),
+            ErrorCode::UnsupportedSemantics,
+        ));
     }
 
     // Path mode (G61/G61.1/G64): один на программу (SPEC §3) — mid-switch Err.
@@ -1148,12 +1317,22 @@ fn parse_block(
         if line_has_mid_g92 && !reason.contains(MID_G92_REASON_PREFIX) {
             reason.push_str("; [G92 mid-program (v0.20): rebase чтений применён]");
         }
+        // v0.21: units-switch на строке с ДРУГИМ raw-основанием — конверсия/
+        // chaining применены (rs274 исполняет G20/G21 в блоке), маркер
+        // обязателен для того же механизма подавления start-проверок.
+        if line_has_units_switch && !reason.contains(UNITS_SWITCH_REASON_PREFIX) {
+            reason.push_str(
+                "; [units switch mid-program (SPEC §2.5 v0.21): смена системы чтения — chaining применён]",
+            );
+        }
         if let Some(t) = t_word {
             st.selected_tool = Some(t); // предвыбор сохраняется для последующего M6
         }
         // W_MODAL_ON_RAW (SPEC §8.5 правило 6, #33): motion-G на RAW-строке
         // не обновляет st.motion — модальный motion-режим не продолжается
-        // (реальный контроллер продолжил бы G33/G8x-модальность).
+        // (реальный контроллер продолжил бы G33/G8x-модальность). Цепочка
+        // ПОЗИЦИЙ (не модальность) на units-switch строке продолжается —
+        // см. units-цикл выше.
         let raw_motion_g = gs.iter().any(|&(maj, min)| {
             (min == 0 && matches!(maj, 0 | 1 | 2 | 3 | 33 | 38 | 73 | 74 | 76 | 80 | 81..=89))
                 || (maj, min) == (33, 1)
@@ -1165,6 +1344,34 @@ fn parse_block(
                 line_no,
                 line,
             );
+        }
+        // v0.21: носитель units-switch ПЕРВЫМ — эмиссия обязана сменить
+        // систему чтения ДО координатных слов производных опов строки
+        // (reparse читает их уже в новой системе).
+        if line_has_units_switch {
+            if st.ops.len() > MAX_OPS_PER_PROGRAM {
+                return Err(vec![crate::lexer::limit_diag(
+                    "max_ops_per_program",
+                    MAX_OPS_PER_PROGRAM as f64,
+                    st.ops.len() as f64,
+                    &st.file,
+                    line_no,
+                    1,
+                )]);
+            }
+            st.push_raw(line_no, line, ld.term, reason, code);
+            st.ops.append(&mut pending);
+            if st.ops.len() > MAX_OPS_PER_PROGRAM {
+                return Err(vec![crate::lexer::limit_diag(
+                    "max_ops_per_program",
+                    MAX_OPS_PER_PROGRAM as f64,
+                    st.ops.len() as f64,
+                    &st.file,
+                    line_no,
+                    1,
+                )]);
+            }
+            return Ok(());
         }
         // G10 L2/L20 этой строки уже обработаны (WcsDefine/WcsSetHere — выше).
         st.ops.append(&mut pending);
@@ -1230,11 +1437,23 @@ fn parse_block(
         pending.push(Op::ToolChange { tool, state, src });
     }
 
-    // G4 → Dwell (P секунды; SPEC §5.2).
+    // G4 → Dwell (P секунды; SPEC §5.2). v0.21: X-форма легальна — rs274
+    // interp_convert convert_dwell: P → X → «Dwell time p word missing
+    // with g4» (LinuxCNC docs: «G4 X- также принимается, deprecated»);
+    // X-слово потребляется G4 (не голые координаты).
     if gs.iter().any(|&(maj, min)| (maj, min) == (4, 0)) {
-        let p = p_word
-            .clone()
-            .ok_or_else(|| fl!(ErrorCode::InvalidInput, "G4 без P-слова (секунды)"))?;
+        let p = match p_word.clone() {
+            Some(p) => p,
+            None => match axes[0] {
+                Some((v, ref text)) => Num::new(text.clone(), v),
+                None => {
+                    return Err(fl!(
+                        ErrorCode::InvalidInput,
+                        "G4 без P-слова (секунды) — rs274: „Dwell time p word missing with g4“"
+                    ));
+                }
+            },
+        };
         if p.value < 0.0 {
             return Err(fl!(
                 ErrorCode::InvalidInput,
@@ -1296,9 +1515,13 @@ fn parse_block(
 
     let has_axis_words = axes.iter().any(|a| a.is_some());
     // Оси, поглощённые G92/G10/циклом — не «голые координаты».
+    // v0.21: X-слово G4-dwell (P отсутствует) потребляется кадром G4.
+    let g4_x_dwell =
+        gs.iter().any(|&(maj, min)| (maj, min) == (4, 0)) && p_word.is_none() && axes[0].is_some();
     let frame_took_axes = gs.iter().any(|&(maj, min)| {
         (maj, min) == (92, 0)
             || (maj, min) == (10, 0)
+            || ((maj, min) == (4, 0) && g4_x_dwell)
             || matches!(
                 (maj, min),
                 (73, 0) | (81, 0) | (82, 0) | (83, 0) | (85, 0) | (86, 0) | (89, 0)
@@ -1378,6 +1601,14 @@ fn parse_block(
     }
     if l_word.is_some() && !(has_g(10, 0) || is_cycle) {
         return Err(fl!(ErrorCode::InvalidInput, "L-слово без G10 или цикла"));
+    }
+    // v0.21: E — только параметр G76 (сбег резьбы); вне G76 — вне словаря
+    // rs274 (RepRap-экструзия, инвентаризация класс #13 — TRUE-ERR).
+    if has_e && !has_g(76, 0) {
+        return Err(fl!(
+            ErrorCode::InvalidInput,
+            "E-слово без G76 (вне словаря rs274)"
+        ));
     }
 
     st.ops.append(&mut pending);
@@ -1561,11 +1792,23 @@ fn current_reading_wcs(st: &St) -> [Option<f64>; 3] {
         }
         None => match st.preset.as_ref() {
             // До первого motion-опа чтение = якорь стартовой пресетки.
-            Some(pr) if pr.wcs == st.wcs => known(to_f64(&pr.values)),
+            // v0.21: пресетка хранится в Program.units — чтение в ТЕКУЩЕЙ
+            // системе = значения × units_scale (конверсия 25.4 при
+            // переключении после пресетки).
+            Some(pr) if pr.wcs == st.wcs => {
+                let v = to_f64(&pr.values);
+                let s = st.units_scale;
+                known([v[0] * s, v[1] * s, v[2] * s])
+            }
             Some(pr) => match (st.origin_of(pr.wcs), st.origin_of(st.wcs)) {
                 (Some(a), Some(b)) => {
                     let v = to_f64(&pr.values);
-                    known([v[0] + a[0] - b[0], v[1] + a[1] - b[1], v[2] + a[2] - b[2]])
+                    let s = st.units_scale;
+                    known([
+                        (v[0] + a[0] - b[0]) * s,
+                        (v[1] + a[1] - b[1]) * s,
+                        (v[2] + a[2] - b[2]) * s,
+                    ])
                 }
                 _ => [None; 3],
             },
@@ -1580,27 +1823,117 @@ enum Linked {
     UnknownRequired,
 }
 
+/// end поля motion-опа (значения) — только чтение (pub для интеграционных
+/// тестов: пин бит-точности границ units-якоря).
+pub fn motion_end_vals(op: &Op) -> Option<[f64; 3]> {
+    match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => {
+            Some([end.x.value, end.y.value, end.z.value])
+        }
+        _ => None,
+    }
+}
+
+/// v0.21-fix (N7-находка, eid verify): конверсия ХРАНИМОГО якоря при смене
+/// units. Последний motion-оп до switch-строки получает `end` в НОВОЙ
+/// системе — пара `start_{i+1} == end_i` остаётся бит-в-бит точной для
+/// core-verify («start != expected» возникала, когда конверсия применялась
+/// к chaining-состоянию, но не к хранимому end якоря). Дуга-якорь требует
+/// единой геометрии (§6: радиусы из center/start/end) — center и start
+/// скейлятся вместе с end, а если её start был бит-равен end предыдущего
+/// опа, конверсия каскадом идёт назад по цепочке (равенство бит инвариантно
+/// к равномерному масштабу). Границы каскада: unknown-start, cross-frame,
+/// literal-разрыв (эти пары вне Exact-проверки core-verify). Значения
+/// квантуются к 4dp (§10.6) — как и все хранимые координаты.
+fn convert_units_anchor(st: &mut St, factor: f64) {
+    let mut idx = match st.ops.iter().rposition(is_motion_op) {
+        Some(i) => i,
+        None => return, // ходов нет — якоря нет
+    };
+    let mut need_end = true;
+    loop {
+        // Каскадная связь с предыдущим опом — ДО масштабирования: start дуги
+        // был бит-равен end предыдущего опа?
+        let cascade = match &st.ops[idx] {
+            Op::Arc {
+                start: StartPoint::Known(p),
+                ..
+            } if idx > 0 && is_motion_op(&st.ops[idx - 1]) => {
+                match motion_end_vals(&st.ops[idx - 1]) {
+                    Some(e) if e == [p.x.value, p.y.value, p.z.value] => true,
+                    _ => false, // Known, но не chained (literal-разрыв/граница)
+                }
+            }
+            Op::Arc { .. } => false, // Unknown-start дуга: каскад невозможен
+            _ => false,              // rapid/linear: start не скейлится —
+                                      // пара с предыдущим end literal-точна
+        };
+        {
+            let op = &mut st.ops[idx];
+            // end — якорь следующего хода (или унаследованное каскадом).
+            if need_end {
+                if let Some(end) = match op {
+                    Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => {
+                        Some(end)
+                    }
+                    _ => None,
+                } {
+                    *end = p3_snap([
+                        end.x.value * factor,
+                        end.y.value * factor,
+                        end.z.value * factor,
+                    ]);
+                }
+            }
+            // Дуга: center/start — та же геометрия (§6), равномерный скейл.
+            if let Op::Arc { start, center, .. } = op {
+                center.x = num_snap(center.x.value * factor);
+                center.y = num_snap(center.y.value * factor);
+                center.z = num_snap(center.z.value * factor);
+                if let StartPoint::Known(p) = start {
+                    *p = p3_snap([p.x.value * factor, p.y.value * factor, p.z.value * factor]);
+                }
+            }
+        }
+        if cascade {
+            idx -= 1;
+            need_end = true;
+        } else {
+            return;
+        }
+    }
+}
+
 pub(crate) fn is_motion_op(op: &Op) -> bool {
     matches!(op, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. })
 }
 
-/// v0.20: фильтрация start-диагностик core-verify для motion-опов, чей старт
-/// получен ребейзом mid-program G92 / corner-unknown (носитель — Raw-оп с
-/// reason-маркером [`MID_G92_REASON_PREFIX`]). Замороженная модель разрыва
-/// фрейма `eid_core::verify` mid-G92 не знает и требует
-/// `start = end предыдущего` (EQUIVALENCE §1.3) — после G92 это неверно
-/// (зонд 1: start следующего хода = новое чтение). Ребейз последующего
-/// движения мог быть zero-length-дропнут — «вооружение» снимается на
-/// первом ВЫЖИВШЕМ motion-опе AST. Общий механизм parse-finish'а и эмиттера
-/// (одинаковый маркер по AST). Публично в крейте (emit.rs).
+/// v0.20/v0.21: фильтрация start-диагностик core-verify для motion-опов, чей
+/// старт получен ребейзом mid-program G92 / corner-unknown / units-switch
+/// (носитель — Raw-оп с reason-маркером [`MID_G92_REASON_PREFIX`] или
+/// [`UNITS_SWITCH_REASON_PREFIX`]). Замороженная модель разрыва фрейма
+/// `eid_core::verify` эти разрывы не знает и требует
+/// `start = end предыдущего` (EQUIVALENCE §1.3) — после G92/chaining это
+/// неверно (зонд 1: start следующего хода = новое чтение; units-switch:
+/// прежнее физическое положение в НОВОЙ системе — конверсия 25.4). Ребейз
+/// последующего движения мог быть zero-length-дропнут — «вооружение»
+/// снимается на первом ВЫЖИВШЕМ motion-опе AST. Общий механизм
+/// parse-finish'а и эмиттера (одинаковый маркер по AST). Публично в крейте
+/// (emit.rs).
 pub(crate) fn strip_mid_g92_start_diags(diags: Vec<Diagnostic>, ops: &[Op]) -> Vec<Diagnostic> {
     let mut suppress: std::collections::BTreeSet<u32> = Default::default();
     let mut armed = false;
     for op in ops {
         match op {
             // contains (не starts_with): маркер может быть суффиксом при
-            // совмещении с другим raw-основанием строки (`G92 X0 G28`).
-            Op::Raw { reason, .. } if reason.contains(MID_G92_REASON_PREFIX) => armed = true,
+            // совмещении с другим raw-основанием строки (`G92 X0 G28`,
+            // `G20 G43 H2`).
+            Op::Raw { reason, .. }
+                if reason.contains(MID_G92_REASON_PREFIX)
+                    || reason.contains(UNITS_SWITCH_REASON_PREFIX) =>
+            {
+                armed = true
+            }
             _ if is_motion_op(op) && armed => {
                 if let Op::Rapid { src, .. } | Op::Linear { src, .. } | Op::Arc { src, .. } = op {
                     suppress.insert(src.line_start);
@@ -1705,15 +2038,18 @@ fn link_start(
                 (Some(_), Some(_)) => Linked::UnknownRequired,
                 (Some(delta), None) => Linked::Known(delta),
                 (None, Some(pr)) => {
+                    // v0.21: пресетка — в Program.units; чтение в текущей
+                    // системе = значения × units_scale (конверсия 25.4).
                     let pr_vals = to_f64(&pr.values);
+                    let s = st.units_scale;
                     if pr.wcs == st.wcs {
-                        Linked::Known(pr_vals)
+                        Linked::Known([pr_vals[0] * s, pr_vals[1] * s, pr_vals[2] * s])
                     } else {
                         match (st.origin_of(pr.wcs), st.origin_of(st.wcs)) {
                             (Some(o0), Some(on)) => Linked::Known([
-                                pr_vals[0] + o0[0] - on[0],
-                                pr_vals[1] + o0[1] - on[1],
-                                pr_vals[2] + o0[2] - on[2],
+                                (pr_vals[0] + o0[0] - on[0]) * s,
+                                (pr_vals[1] + o0[1] - on[1]) * s,
+                                (pr_vals[2] + o0[2] - on[2]) * s,
                             ]),
                             _ => Linked::UnknownRequired, // (b): разность не вычислима
                         }
@@ -1892,9 +2228,15 @@ fn build_motion(
                 }
             };
             if ijk.iter().all(|o| o.is_none()) && r_word.is_none() {
+                // v0.21 (инвентаризация класс #9, §5): дуга-продолжение без
+                // offset-слов — текст причины выровнен с реальными
+                // контроллерами: GRBL error 2 STATUS_GCODE_ARC_OFFSETS_
+                // MISSING (offsets обязательны в КАЖДОМ дуговом блоке),
+                // LinuxCNC «I/J/K word missing with G2/G3». Вердикт тот же
+                // (TRUE-ERR — оба контроллера отказывают).
                 return Err(fl!(
                     ErrorCode::InvalidInput,
-                    "дуга без центра: ни I/J/K, ни R (LinuxCNC: no offsets in arc block)",
+                    "дуга без offset-слов: в дуговом блоке нет ни I/J/K, ни R — GRBL error 2 (ARC_OFFSETS_MISSING: offsets обязательны в каждом дуговом блоке), LinuxCNC: „I/J/K word missing with G2/G3“",
                 ));
             }
             let dir = if kind == MotionKind::G2 {
@@ -2211,7 +2553,9 @@ fn expand_cycle(
     let mut r_cur = if st.distance_abs { r_word } else { initial_z };
     let mut sub = 1u32;
     let spindle_before = st.spindle.clone(); // рестарт G86 (Q9)
-    let units = st.units.unwrap_or(Units::Mm);
+                                             // v0.21: клиренс unit-scaled — по ТЕКУЩЕЙ системе чтения (G20/G21
+                                             // легальны в любой позиции, SPEC §2.5 v0.21), не по заголовку.
+    let units = st.units_mode;
     let mut est_total = 0usize; // guard blowup развёртки (COVERAGE §1.2)
 
     for _ in 0..l {
@@ -2443,7 +2787,11 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     let mut report = eid_core::verify::validate_with_notices(&draft);
     // v0.20: start-проверки для опов после mid-G92-ребейза подавляются
     // (замороженная модель verify разрыва mid-G92 не знает; зонды 1–3/8).
-    report.diagnostics = strip_mid_g92_start_diags(report.diagnostics, &draft.ops);
+    // v0.21-fix (g76-файл): «вооружение» снимается только на ВЫЖИВШЕМ
+    // motion-опе (kept_ops) — zero-length-дропнутый ход после ребейза
+    // (прим.: `g0z0` после `g92z0`) не должен поглощать подавление
+    // следующего хода за другим Raw-носителем (`g92.1`).
+    report.diagnostics = strip_mid_g92_start_diags(report.diagnostics, &report.kept_ops);
     if !report.diagnostics.is_empty() {
         return Err(report.diagnostics);
     }

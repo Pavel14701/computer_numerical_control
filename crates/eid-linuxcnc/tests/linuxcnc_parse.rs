@@ -6,9 +6,11 @@
 //!
 //! Негатив (правило двух классов, CORPUS §1.2 v0.5):
 //!
-//!  * Err-класс (структурные): N1, N2, N5a, N5b, N7, N12, N13, N14, N15,
-//!    N16, N17, N19 — точные коды;
-//!  * Ok-класс (line-level RAW + диагностика): N3, N8, N9, N10, N18.
+//!  * Err-класс (структурные): N1, N2, N5a, N5b, N12, N13, N14, N15,
+//!    N16, N17, N19 — точные коды; N7 снят v0.21 (units-switch легален,
+//!    Raw-носитель + chaining — SPEC §2.5 принцип 5 ревизия);
+//!  * Ok-класс (line-level RAW + диагностика): N3, N7 (v0.21), N8, N9,
+//!    N10, N18 + Macro-B строки (v0.21, зеркало eid-fanuc v0.16).
 //!
 //! Итерация 3-4: N4/N6 расконсервированы (развёртывание циклов §7.7);
 //! N11 — Err по CORPUS §1.2 v0.5.2.
@@ -360,12 +362,49 @@ fn n5b_arc_chord_gt_2r_err_invalid_input() {
 }
 
 #[test]
-fn n7_unit_switch_mid_err_semantics() {
-    assert_err_code(
+fn n7_unit_switch_mid_ok_carrier_chaining() {
+    // SPEC §2.5 принцип 5, ревизия v0.21 (инвентаризация Tier C): LinuxCNC
+    // исполняет G20/G21 в любой позиции — прежний Err N7 снят. Смена
+    // системы чтения = line-level Raw-носитель (опа units в AST v0.2 нет,
+    // байты lossless same-dialect) + chaining-конверсия 25.4 (start
+    // следующего хода = прежнее физическое положение в НОВОЙ системе).
+    // Вектор: G21-заголовок / G0 (0,0,5) mm / G20 / G0 (10,10,5) inch / M2
+    // → [Rapid(unknown), Raw-носитель, Rapid(inch), PEND].
+    let p = assert_ok_diag(
         "n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc",
         ErrorCode::UnsupportedSemantics,
         "N7",
     );
+    assert_eq!(
+        p.ops.len(),
+        4,
+        "[Rapid, Raw-носитель G20, Rapid(inch), PEND]"
+    );
+    assert_eq!(p.units, eid_core::ast::Units::Mm, "первое вхождение = G21");
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(
+                reason.contains("units switch mid-program"),
+                "маркер chaining в reason: {reason}"
+            );
+        }
+        other => panic!("op 1 must be Raw-носитель G20, got {other:?}"),
+    }
+    // Inch-ход: старт = (0,0,5)mm = (0,0,0.1969)in (конверсия 25.4, 4dp).
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_eq!((s.x.value, s.y.value, s.z.value), (0.0, 0.0, 0.1969));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (10.0, 10.0, 5.0));
+        }
+        other => panic!("op 2 must be inch Rapid, got {other:?}"),
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
 }
 
 #[test]
@@ -821,13 +860,28 @@ fn unit_block_delete_raw_runtime_state() {
 }
 
 #[test]
-fn unit_hash_param_err_runtime_state() {
+fn unit_hash_param_line_raw_syntax() {
+    // v0.21 (зеркало eid-fanuc политики v0.16): `#`-параметр — line-level
+    // Raw{E_UNSUPPORTED_SYNTAX}, разбор продолжается (бывший жёсткий
+    // E_RUNTIME_STATE снят; исполнение = этап 12 L2, Q10 закрыт).
     let src = "G21 G90\nG0 X1.0000 Y1.0000 Z1.0000\n#100 = 5\nM2\n";
-    let err = parse_str(src).expect_err("E_RUNTIME_STATE");
-    assert!(
-        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
-        "{err:?}"
-    );
+    let p = parse_str(src).expect("Ok + Raw");
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw {
+            code,
+            payload_hex,
+            reason,
+            ..
+        } => {
+            // "#100 = 5" + LF — D9 (hex lossless)
+            assert_eq!(payload_hex, "23313030203D20350A");
+            assert_eq!(*code, ErrorCode::UnsupportedSyntax);
+            assert!(reason.contains("Macro B"), "{reason}");
+        }
+        other => panic!("op 1 must be Raw, got {other:?}"),
+    }
+    assert!(matches!(&p.ops[2], Op::ProgramEnd { .. }));
 }
 
 #[test]
@@ -918,13 +972,382 @@ fn q10_o_subprogram_no_inlining_pin() {
 }
 
 #[test]
-fn unit_while_err_syntax() {
+fn unit_while_line_raw_syntax() {
+    // v0.21: control-flow keyword (`while [1] do 1`) — line-level
+    // Raw{E_UNSUPPORTED_SYNTAX} (зеркало eid-fanuc; бывший Err снят).
     let src = "G21 G90\nwhile [1] do 1\nM2\n";
-    let err = parse_str(src).expect_err("E_UNSUPPORTED_SYNTAX");
+    let p = parse_str(src).expect("Ok + Raw");
     assert!(
-        err.iter().all(|d| d.code == ErrorCode::UnsupportedSyntax),
+        matches!(
+            &p.ops[0],
+            Op::Raw {
+                code: ErrorCode::UnsupportedSyntax,
+                ..
+            }
+        ),
+        "{:?}",
+        p.ops[0]
+    );
+    assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn macro_b_if_goto_then_line_raw() {
+    // v0.21 golden-пара: IF/GOTO/THEN строки (fanuc-диалект под linuxcnc-
+    // меткой, инвентаризация классы #1/#6/#20) — каждая → ровно один
+    // Raw{E_UNSUPPORTED_SYNTAX}, разбор продолжается, PEND на месте.
+    let a = LinuxCncAdapter::new();
+    let src = concat!(
+        "G21 G90 G94\n",
+        "#1=3\n",
+        "IF [#1 GT 0] GOTO 100\n",
+        "GOTO 100\n",
+        "IF [#1 EQ 3] THEN M3\n",
+        "G1 X10.0000 F100.0\n",
+        "M2\n",
+    );
+    let out = a.parse(src, "macro_b.ngc").expect("Ok + Raw");
+    let p = out.program;
+    // [#1=3 Raw, IF-GOTO Raw, GOTO Raw, IF-THEN Raw, Linear, PEND]
+    assert_eq!(p.ops.len(), 6, "{:?}", p.ops);
+    for (i, op) in p.ops.iter().enumerate().take(4) {
+        assert!(
+            matches!(
+                op,
+                Op::Raw {
+                    code: ErrorCode::UnsupportedSyntax,
+                    ..
+                }
+            ),
+            "op {i} must be Raw{{SYNTAX}}: {op:?}"
+        );
+    }
+    assert!(matches!(&p.ops[4], Op::Linear { .. }));
+    let syn = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == ErrorCode::UnsupportedSyntax)
+        .count();
+    assert_eq!(syn, 4, "диагностики ⊇ 4×SYNTAX");
+}
+
+#[test]
+fn macro_b_expr_word_line_raw() {
+    // v0.21 golden-пара (инвентаризация класс #2): слово со значением-
+    // выражением (`X[...]`, `I[...]`) и значение-параметр (`T#3026`) —
+    // line-level Raw{SYNTAX} вместо «слово без числа»/«выражение».
+    let a = LinuxCncAdapter::new();
+    for (src, label) in [
+        ("G21 G90\nG1 X[1+2] F100.0\nM2\n", "X[expr]"),
+        ("G21 G90\nT#3026\nM2\n", "T#n"),
+        (
+            "G21 G90\nG2 X5.0000 Y5.0000 I[1+1] J0.0 F100.0\nM2\n",
+            "I[expr]",
+        ),
+    ] {
+        let out = a
+            .parse(src, "expr.ngc")
+            .unwrap_or_else(|e| panic!("{label}: ожидался Ok + Raw, Err: {e:?}"));
+        assert!(
+            matches!(
+                &out.program.ops[0],
+                Op::Raw {
+                    code: ErrorCode::UnsupportedSyntax,
+                    ..
+                }
+            ),
+            "{label}: первый оп — Raw{{SYNTAX}}: {:?}",
+            out.program.ops[0]
+        );
+    }
+}
+
+#[test]
+fn v021_units_switch_mid_motion_on_switch_line() {
+    // SPEC §2.5 v0.21, ручной расчёт брифа: `G21 G0 X10 / G20 G1 X0.5 /
+    // G21 G1 X10` — middle-ход в inch (0.5" = 12.7 мм); физическая
+    // последовательность 10 → 12.7 → 10. Ход на switch-строке: rs274
+    // исполняет весь блок — цепочка чтений продолжается в НОВОЙ системе
+    // (оп не строится — байты строки в носителе, носитель ПЕРВЫМ).
+    // AST: [Rapid(→10mm), Raw(G20-носитель), Raw(G21-носитель), PEND].
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG0 X10\nG20 G1 X0.5\nG21 G1 X10\nM2\n";
+    let out = a.parse(src, "units_mid.ngc").expect("Ok");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4, "{:?}", p.ops);
+    assert_eq!(
+        p.units,
+        eid_core::ast::Units::Mm,
+        "первое вхождение G21 = заголовок"
+    );
+    assert!(
+        matches!(&p.ops[0], Op::Rapid { start: StartPoint::Unknown, end, .. } if end.x.value == 10.0)
+    );
+    for (i, expect_prefix) in [
+        (1usize, "units switch mid-program"),
+        (2, "units switch mid-program"),
+    ] {
+        match &p.ops[i] {
+            Op::Raw { code, reason, .. } => {
+                assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+                assert!(
+                    reason.contains(expect_prefix),
+                    "op {i}: маркер в reason: {reason}"
+                );
+            }
+            other => panic!("op {i} must be Raw-носитель, got {other:?}"),
+        }
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
+    // Диагностики Ok-пути: 2 носителя (+ 2 W_MODAL_ON_RAW на ходы в
+    // switch-кадрах — тот же код SEMANTICS; фильтр по маркеру).
+    let carriers = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("units switch mid-program"))
+        .count();
+    assert_eq!(carriers, 2);
+}
+
+#[test]
+fn v021_units_switch_chaining_converted_starts() {
+    // Chaining через конверсию 25.4: ходы ПОСЛЕ switch-строк — start
+    // следующего хода = прежнее физическое положение в НОВОЙ системе
+    // (вычислимо — НЕ unknown). Физическая цепочка 10 → 12.7 → 10 мм
+    // (ручной расчёт: 10mm = 0.3937"; 0.5" = 12.7mm).
+    // v0.21-fix (N7, eid verify): anchor-согласование — ХРАНИМЫЙ end
+    // последнего motion-опа конвертируется вместе с chaining-состоянием
+    // (раньше end оставался literal: op2.end = 0.5 при op3.start = 12.7 —
+    // «start != expected» на validate-пути CLI). Теперь пары границ
+    // бит-точны: op1.end == op2.start == 0.3937; op2.end == op3.start == 12.7.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10\n",        // (0,0,0) → (10,0,0) mm
+        "G20\n",           // носитель; чтение 10mm = 0.3937"
+        "G1 X0.5 F10.0\n", // inch: start (0.3937,0,0), end (0.5,0,0)
+        "G21\n",           // носитель; чтение 0.5" = 12.7mm
+        "G1 X10 F10.0\n",  // mm: start (12.7,0,0), end (10,0,0)
+        "M2\n",
+    );
+    let p = parse_str(src).expect("Ok");
+    // [Rapid, Raw, Linear, Raw, Linear, PEND]
+    assert_eq!(p.ops.len(), 6, "{:?}", p.ops);
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            // 10mm / 25.4 = 0.39370078… → 4dp 0.3937 (дрейф 2e-5 мм < ε_pos)
+            assert_eq!((s.x.value, s.y.value, s.z.value), (0.3937, 0.0, 0.0));
+            // end в FINAL AST — 12.7: при второй смене (якорь следующего
+            // хода) 0.5" конвертирован в mm (v0.21-fix anchor-согласование).
+            assert_eq!((end.x.value, end.y.value, end.z.value), (12.7, 0.0, 0.0));
+        }
+        other => panic!("op 2 must be inch Linear, got {other:?}"),
+    }
+    match &p.ops[4] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            // 0.5" × 25.4 = 12.7mm — физическая последовательность 10→12.7→10
+            assert_eq!((s.x.value, s.y.value, s.z.value), (12.7, 0.0, 0.0));
+            assert_eq!((end.x.value, end.y.value, end.z.value), (10.0, 0.0, 0.0));
+        }
+        other => panic!("op 4 must be mm Linear, got {other:?}"),
+    }
+    // Пары границ бит-точны (start_{i+1} == end_i) — без «start != expected».
+    let ends_starts = |i: usize, j: usize| {
+        let e = eid_linuxcnc::parser::motion_end_vals(&p.ops[i]).expect("motion end");
+        match &p.ops[j] {
+            Op::Linear {
+                start: StartPoint::Known(s),
+                ..
+            }
+            | Op::Rapid {
+                start: StartPoint::Known(s),
+                ..
+            } => [s.x.value, s.y.value, s.z.value] == e,
+            _ => false,
+        }
+    };
+    assert!(
+        ends_starts(0, 2) && ends_starts(2, 4),
+        "границы бит-точны после anchor-конверсии"
+    );
+}
+
+#[test]
+fn v021_units_switch_roundtrip_stable() {
+    // Round-trip: emit → reparse — число опов и физическая цепочка
+    // (дрейф в пределах ε_pos: verbatim-концы не переквантуются).
+    let a = LinuxCncAdapter::new();
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10\n",
+        "G20\n",
+        "G1 X0.5 F10.0\n",
+        "G21\n",
+        "G1 X10 F10.0\n",
+        "M2\n",
+    );
+    let p1 = a.parse(src, "rt1.ngc").expect("parse 1").program;
+    let text = a.emit(&p1).expect("emit").text;
+    // Носитель G20 в потоке — иначе семантика потеряна.
+    assert!(
+        text.lines().any(|l| l.trim().starts_with("G20")),
+        "G20 в эмиттенном потоке:\n{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.trim().starts_with("G21") && !l.contains("G90 G94")),
+        "G21-носитель после заголовка:\n{text}"
+    );
+    let p2 = a.parse(&text, "rt2.ngc").expect("reparse").program;
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "round-trip: unexpected divergences: {d:?}");
+}
+
+#[test]
+fn v021_units_anchor_n7_pattern_exact_chain() {
+    // N7-паттерн (ходы → switch на ОТДЕЛЬНОЙ строке → ход): anchor-
+    // согласование — op1.end конвертируется вместе с chaining-состоянием,
+    // границы бит-точны, и КОРЕКТОР (eid_core::verify::validate — тот же
+    // путь, что eid verify CLI) проходит без «start != expected».
+    // Физика: Z5mm = 0.1969"; ход 10" (X) в inch-режиме.
+    let src = concat!(
+        "G21 G90 G94 G17 G91.1\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "G20\n",
+        "G0 X10.0000 Y10.0000 Z5.0000\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "n7pat.ngc").expect("parse Ok").program;
+    assert_eq!(p.ops.len(), 4, "[Rapid, Raw(G20), Rapid, PEND]");
+    // Anchor-конверсия: op1.end = 5mm → 0.1969" (бит-равен op2.start).
+    match (&p.ops[0], &p.ops[2]) {
+        (
+            Op::Rapid { end: e1, .. },
+            Op::Rapid {
+                start: StartPoint::Known(s2),
+                end: e2,
+                ..
+            },
+        ) => {
+            let e1v = [e1.x.value, e1.y.value, e1.z.value];
+            assert_eq!(e1v, [0.0, 0.0, 0.1969], "op1.end конвертирован (якорь)");
+            assert_eq!(
+                [s2.x.value, s2.y.value, s2.z.value],
+                e1v,
+                "граница бит-точна: op2.start == op1.end"
+            );
+            assert_eq!(
+                [e2.x.value, e2.y.value, e2.z.value],
+                [10.0, 10.0, 5.0],
+                "inch-слова хранятся literal (система чтения)"
+            );
+        }
+        other => panic!("неожиданный AST: {other:?}"),
+    }
+    // Тот же путь, что eid verify CLI: parse → core validate → Ok.
+    let vdiags = eid_core::verify::validate(&p);
+    assert!(
+        vdiags.is_empty(),
+        "core validate (путь eid verify) чист: {vdiags:?}"
+    );
+    // R1: emit → reparse — тот же AST (эмиттер восстанавливает
+    // до-конверсные литералы, репарс повторяет конверсию).
+    let text = a.emit(&p).expect("emit").text;
+    let p2 = a.parse(&text, "n7pat2.ngc").expect("reparse").program;
+    let d = semantic_diff(&p, &p2, &DiffConfig::default());
+    assert!(
+        d.is_empty(),
+        "R1 n7-паттерна: {d:?}\n--- emitted ---\n{text}"
+    );
+}
+
+#[test]
+fn v021_units_anchor_no_switch_unchanged() {
+    // Негатив-регресс (N7-фикс): БЕЗ switch-строки anchor-сравнение
+    // работает как прежде — цепочка literal-точна, коректор чист.
+    let src =
+        "G21 G90 G94 G17 G91.1\nG0 X0.0000 Y0.0000 Z5.0000\nG0 X10.0000 Y10.0000 Z5.0000\nM2\n";
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "nosw.ngc").expect("parse Ok").program;
+    match (&p.ops[0], &p.ops[1]) {
+        (
+            Op::Rapid { end: e1, .. },
+            Op::Rapid {
+                start: StartPoint::Known(s2),
+                ..
+            },
+        ) => {
+            assert_eq!(
+                [e1.x.value, e1.y.value, e1.z.value],
+                [s2.x.value, s2.y.value, s2.z.value],
+                "без switch цепочка не тронута"
+            );
+        }
+        other => panic!("неожиданный AST: {other:?}"),
+    }
+    let vdiags = eid_core::verify::validate(&p);
+    assert!(vdiags.is_empty(), "core validate чист: {vdiags:?}");
+}
+
+#[test]
+fn v021_negative_regressions_intact() {
+    // Негатив-регрессы волны v0.21: настоящий мусор остаётся Err.
+    let a = LinuxCncAdapter::new();
+    // P-слово без потребителя вне Macro-B (инвентаризация #10, TRUE-ERR —
+    // rs274: «P word with no G4/G10/...»).
+    let err = a
+        .parse(
+            "G21 G90 G94\nG0 X0 Y0 Z0\nG2 X5.0000 Y5.0000 I5.0000 J0.0000 P4 F100.0\nM2\n",
+            "p.ngc",
+        )
+        .expect_err("P без потребителя");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
         "{err:?}"
     );
+    // Letter-run мусор (не keyword) — Err (настоящий мусор).
+    let err = a
+        .parse("G21 G90\nGT 5\nM2\n", "gt.ngc")
+        .expect_err("letter-run мусор");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    // Дуга-продолжение без offset-слов — текст выровнен с контроллерами
+    // (GRBL error 2 ARC_OFFSETS_MISSING; инвентаризация #9), вердикт Err.
+    let err = a
+        .parse(
+            "G21 G90 G94 G17\nG0 X0 Y0 Z0\nG91.1\nG2 X5.0000 Y5.0000 F100.0\nM2\n",
+            "arc.ngc",
+        )
+        .expect_err("дуга без offsets");
+    assert!(
+        err.iter()
+            .any(|d| d.message.contains("ARC_OFFSETS_MISSING")),
+        "{err:?}"
+    );
+    // Частичные offsets (I без нужной J → ρ_s ≠ ρ_e) — прежний
+    // radius-mismatch текст цел (N5a).
+    let err = a
+        .parse(
+            "G21 G90 G94 G17\nG0 X0 Y0 Z0\nG91.1\nG2 X5.0000 Y0.0000 I2.0000 F100.0\nM2\n",
+            "arc2.ngc",
+        )
+        .expect_err("radius mismatch");
+    assert!(
+        err.iter()
+            .any(|d| d.message.contains("несоответствие радиусов")),
+        "{err:?}"
+    );
+    // bare-T → Raw{TABLE} (N9) цел — см. unit_bare_t_then_m6_uses_selection.
 }
 
 #[test]
@@ -2233,7 +2656,9 @@ fn spec_cov_lcnc_nurbs_tierb_corpus_files_ok_raw() {
             "{name}: диагностики Ok-пути ⊇ {{код}} (CORPUS §1.2)"
         );
     }
-    // Curva_*: `#1=…` — E_RUNTIME_STATE (класс не изменился ruling'ом).
+    // Curva_* (v0.21, инвентаризация §2): dead-assignment `#1=3` — та же
+    // line-level Raw{SYNTAX} диспозиция (drop+notice отвергнут: Raw хранит
+    // байты честно) — Ok+Raw вместо Err, NURBS-Raw{SEM} строки целы.
     for name in [
         "lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc",
         "lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc",
@@ -2241,12 +2666,41 @@ fn spec_cov_lcnc_nurbs_tierb_corpus_files_ok_raw() {
         "lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc",
     ] {
         let src = std::fs::read_to_string(dir.join(name)).expect("corpus file readable");
-        let err = a
+        let out = a
             .parse(&src, name)
-            .expect_err("{name}: `#`-параметр — жёсткий отказ SPEC §1.1");
+            .unwrap_or_else(|e| panic!("{name}: ожидался Ok + Raw, Err: {e:?}"));
+        let raw_sem = out
+            .program
+            .ops
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o,
+                    Op::Raw {
+                        code: ErrorCode::UnsupportedSemantics,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert!(raw_sem > 0, "{name}: NURBS Raw{{SEM}}-опы целы");
+        let raw_syn = out
+            .program
+            .ops
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o,
+                    Op::Raw {
+                        code: ErrorCode::UnsupportedSyntax,
+                        ..
+                    }
+                )
+            })
+            .count();
         assert!(
-            err.iter().all(|d| d.code == ErrorCode::RuntimeState),
-            "{name}: {err:?}"
+            raw_syn >= 1,
+            "{name}: `#1=3` (dead assignment) → Raw{{SYNTAX}} (зеркало fanuc)"
         );
     }
 }

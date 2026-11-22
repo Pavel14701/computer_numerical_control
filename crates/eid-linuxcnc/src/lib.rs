@@ -1,6 +1,9 @@
 //! eid-linuxcnc — канонизатор и эмиттер LinuxCNC (Агент D, IMPLEMENTATION-PLAN §2-D).
 //! Интерфейс заморожен. quirks: G90.1/G91.1 ABSORB; O-code/M98/M99 → SYNTAX;
-//! `#`-параметры → RUNTIME_STATE, if/while → SYNTAX (SPEC §1.1 v0.3);
+//! Macro-B строки (`#`/`[ ]`/IF-GOTO-WHILE-THEN) → line-level Raw{SYNTAX}
+//! (v0.21 — зеркало eid-fanuc политики v0.16; Q10 закрыт — Raw ≠
+//! интерпретация); units-switch mid-program → легально, носитель Raw +
+//! chaining через конверсию 25.4 (SPEC §2.5 принцип 5, ревизия v0.21);
 //! G10 L2 vs L20 — разные узлы; mid-program G92 → Raw-носитель узла
 //! frame_preset + чейнинг-ребейз чтений (SPEC §5.3 v0.20, зонды 1–3/7/8);
 //! G92.1–.3 → Raw{TABLE} (зонд 4); одиночное T → Raw{TABLE} (зонд 6);

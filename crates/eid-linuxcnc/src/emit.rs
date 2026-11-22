@@ -50,7 +50,7 @@
 //! подавлением mid-G92-ребейза) — отказ пробрасывается
 //! как Err(Vec<Diagnostic>).
 
-use crate::canonicalize::{plane_def, to_f64, Plane};
+use crate::canonicalize::{num_snap, plane_def, to_f64, Plane};
 use crate::LinuxCncAdapter;
 use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Program, Spindle, StartPoint, Units, Wcs};
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
@@ -302,6 +302,160 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
     v
 }
 
+// ===========================================================================
+// Units-switch anchor: обратная конверсия на эмиссии (v0.21-fix, N7)
+// ===========================================================================
+
+/// Обратные факторы конверсии якорей units-switch (v0.21-fix). Парсер при
+/// смене системы чтения конвертирует ХРАНИМЫЙ end последнего motion-опа
+/// (см. `parser::convert_units_anchor`) — иначе core-verify видит разрыв
+/// пары `start_{i+1} == end_i` («start != expected», N7/eid verify). Эмиттер
+/// обязан ВОССТАНОВИТЬ до-конверсные литералы: маркеры G20/G21 идут в потоке
+/// verbatim (D9), репарс повторяет конверсию от тех же литералов —
+/// R1 round-trip по AST. Последовательности факторов применяются в обратном
+/// порядке (парсер конвертировал по маркерам вперёд, с 4dp-квантованием на
+/// каждом шаге — реплей симметричен).
+#[derive(Debug, Default, Clone)]
+struct UnitsInverse {
+    /// op индекс → факторы для end (rapid/linear/arc).
+    end: std::collections::HashMap<usize, Vec<f64>>,
+    /// op индекс → факторы для start+center (arc, §6-геометрия единая).
+    geo: std::collections::HashMap<usize, Vec<f64>>,
+    /// FRAME_PRESET заголовок (пресетка до ходов скейлится на парсере при
+    /// маркере до первого motion-опа).
+    preset: Vec<f64>,
+}
+
+impl UnitsInverse {
+    /// Обратное значение Num: факторы в обратном порядке, 4dp на шаге
+    /// (зеркало parse-конверсии). Пустой/отсутствующий список — как есть.
+    fn num(&self, key: &std::collections::HashMap<usize, Vec<f64>>, idx: usize, n: &Num) -> Num {
+        match key.get(&idx) {
+            Some(invs) if !invs.is_empty() => Self::apply(invs, n),
+            _ => n.clone(),
+        }
+    }
+
+    /// Обратное значение для заголовочной пресетки.
+    fn preset_num(&self, n: &Num) -> Num {
+        if self.preset.is_empty() {
+            n.clone()
+        } else {
+            Self::apply(&self.preset, n)
+        }
+    }
+
+    fn apply(invs: &[f64], n: &Num) -> Num {
+        let mut v = n.value;
+        for g in invs.iter().rev() {
+            v = num_snap(v * g).value;
+        }
+        num_snap(v)
+    }
+}
+
+/// Система, объявленная в декодированной строке маркера (последний G20/G21).
+fn marker_mode(payload_hex: &str) -> Option<Units> {
+    let mut bytes = Vec::with_capacity(payload_hex.len() / 2);
+    for i in (0..payload_hex.len()).step_by(2) {
+        bytes.push(u8::from_str_radix(&payload_hex[i..i + 2], 16).ok()?);
+    }
+    let line = String::from_utf8(bytes).ok()?;
+    let lines = crate::lexer::lex_program(&line, "units-marker").ok()?;
+    let words = match &lines.first()?.tok {
+        crate::lexer::LineTok::Words(w) => w,
+        _ => return None,
+    };
+    let mut mode = None;
+    for w in words {
+        if w.letter == 'G' {
+            if let Some((maj, min)) = crate::lexer::code_num(&w.number) {
+                if min == 0 && maj == 20 {
+                    mode = Some(Units::In);
+                } else if min == 0 && maj == 21 {
+                    mode = Some(Units::Mm);
+                }
+            }
+        }
+    }
+    mode
+}
+
+/// Построение обратных факторов по маркерам UNITS_SWITCH_REASON_PREFIX
+/// (зеркало `parser::convert_units_anchor` + пресетка-скейл: каскад от
+/// якоря назад по бит-цепочке, порядок маркеров — потоковый).
+fn build_units_inverse(program: &Program) -> UnitsInverse {
+    let mut inv = UnitsInverse::default();
+    let mut mode = program.units;
+    for (i, op) in program.ops.iter().enumerate() {
+        let Op::Raw {
+            payload_hex,
+            reason,
+            ..
+        } = op
+        else {
+            continue;
+        };
+        if !reason.contains(crate::parser::UNITS_SWITCH_REASON_PREFIX) {
+            continue;
+        }
+        let Some(new_mode) = marker_mode(payload_hex) else {
+            continue;
+        };
+        if new_mode == mode {
+            continue; // no-op на репарсе — конверсии не было (зеркало parse)
+        }
+        let f = if new_mode == Units::In {
+            1.0 / 25.4
+        } else {
+            25.4
+        };
+        let g = 1.0 / f;
+        let motion_before = (0..i).any(|j| crate::parser::is_motion_op(&program.ops[j]));
+        if !motion_before {
+            // Пресетка до ходов: парсер скейлит её, якорей нет.
+            inv.preset.push(g);
+            mode = new_mode;
+            continue;
+        }
+        // Якорь = последний motion-оп до маркера; каскад назад по бит-цепочке
+        // (равенство бит инвариантно к равномерному скейлу — связность та же,
+        // что на parse-конверсии).
+        let mut cur = (0..i)
+            .rev()
+            .find(|&j| crate::parser::is_motion_op(&program.ops[j]));
+        let mut need_end = true;
+        while let Some(ci) = cur {
+            if need_end {
+                inv.end.entry(ci).or_default().push(g);
+            }
+            let cascade = match &program.ops[ci] {
+                Op::Arc {
+                    start: StartPoint::Known(p),
+                    ..
+                } => {
+                    inv.geo.entry(ci).or_default().push(g);
+                    ci > 0
+                        && crate::parser::is_motion_op(&program.ops[ci - 1])
+                        && match crate::parser::motion_end_vals(&program.ops[ci - 1]) {
+                            Some(e) => e == [p.x.value, p.y.value, p.z.value],
+                            None => false,
+                        }
+                }
+                _ => false,
+            };
+            if cascade {
+                cur = Some(ci - 1);
+                need_end = true;
+            } else {
+                cur = None;
+            }
+        }
+        mode = new_mode;
+    }
+    inv
+}
+
 /// Точка входа. `Err` — нарушена каноническая форма (SPEC §3), нелегальность
 /// эмиссии (COVERAGE §5, через таблицу) или неосевой normal дуги; warnings
 /// возвращаются отдельно.
@@ -340,7 +494,10 @@ pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
     };
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
     // v0.20: start-проверки для опов после mid-G92-ребейза подавляются (тот
-    // же маркер-механизм, что в parse-finish; зонды 1–3/8).
+    // же маркер-механизм, что в parse-finish; зонды 1–3/8). Строгий
+    // validate() (zero-length в AST = отказ) — путь эмиссии; канонический
+    // AST не содержит zero-length (отброшены при parse), поэтому арминг по
+    // ops ≡ арминг по kept_ops (v0.21-фикс parse-finish'а).
     let vdiags = eid_core::verify::validate(validate_target);
     let vdiags = crate::parser::strip_mid_g92_start_diags(vdiags, &validate_target.ops);
     if !vdiags.is_empty() {
@@ -363,7 +520,9 @@ pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut w = Writer::new(program, body_ops);
+    // v0.21-fix (N7): обратные факторы units-switch якорей — до Writer.
+    let uinv = build_units_inverse(program);
+    let mut w = Writer::new(program, body_ops, &uinv);
     w.run()?;
     // Raw-хвост после PEND (v0.20): байты дословно, same-dialect fidelity.
     for op in tail_ops {
@@ -436,6 +595,8 @@ struct Writer<'a> {
     /// Опы для вывода: у программ с Raw-хвостом (v0.20) — тело до PEND
     /// (хвост добавляется в emit_program дословно после run()).
     ops: &'a [Op],
+    /// Обратные факторы units-switch якорей (v0.21-fix, N7).
+    uinv: &'a UnitsInverse,
     text: String,
     warnings: Vec<Diagnostic>,
     // Модальное состояние вывода (то, что увидит reparse).
@@ -448,7 +609,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(program: &'a Program, ops: &'a [Op]) -> Self {
+    fn new(program: &'a Program, ops: &'a [Op], uinv: &'a UnitsInverse) -> Self {
         let cur_wcs = program
             .frame_preset
             .as_ref()
@@ -457,6 +618,7 @@ impl<'a> Writer<'a> {
         Self {
             program,
             ops,
+            uinv,
             text: String::new(),
             warnings: Vec::new(),
             cur_wcs,
@@ -503,25 +665,25 @@ impl<'a> Writer<'a> {
             },
         }
         // 3. frame_preset: выборка WCS, затем G92 (EQUIVALENCE §1.4); без
-        //    запекания в G10 (golden_preset_no_bake).
+        //    запекания в G10 (golden_preset_no_bake). v0.21-fix: пресетка,
+        //    скейленная парсером при units-маркере до ходов, эмитится в
+        //    ДО-конверсных литералах (репарс повторяет скейл от маркера).
         if let Some(pr) = &self.program.frame_preset {
-            finite3(
-                &pr.values.x,
-                &pr.values.y,
-                &pr.values.z,
-                "frame_preset value",
-            )?;
+            let px = self.uinv.preset_num(&pr.values.x);
+            let py = self.uinv.preset_num(&pr.values.y);
+            let pz = self.uinv.preset_num(&pr.values.z);
+            finite3(&px, &py, &pz, "frame_preset value")?;
             self.line(wcs_word(pr.wcs));
             self.line(format!(
                 "G92 X{} Y{} Z{}",
-                num_text(&pr.values.x),
-                num_text(&pr.values.y),
-                num_text(&pr.values.z)
+                num_text(&px),
+                num_text(&py),
+                num_text(&pz)
             ));
         }
         // 4. Опы (тело; Raw-хвост v0.20 добавляется в emit_program).
-        for op in self.ops {
-            self.op(op)?;
+        for (i, op) in self.ops.iter().enumerate() {
+            self.op(i, op)?;
         }
         Ok(())
     }
@@ -561,7 +723,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    fn op(&mut self, op: &Op) -> Result<(), Vec<Diagnostic>> {
+    fn op(&mut self, op_idx: usize, op: &Op) -> Result<(), Vec<Diagnostic>> {
         match op {
             Op::Rapid {
                 end, state, sub, ..
@@ -574,11 +736,15 @@ impl<'a> Writer<'a> {
                 } else {
                     "G0"
                 };
+                // v0.21-fix: units-якорь — до-конверсный литерал end.
+                let ex = self.uinv.num(&self.uinv.end, op_idx, &end.x);
+                let ey = self.uinv.num(&self.uinv.end, op_idx, &end.y);
+                let ez = self.uinv.num(&self.uinv.end, op_idx, &end.z);
                 self.line(format!(
                     "{g} X{} Y{} Z{}{f}",
-                    num_text(&end.x),
-                    num_text(&end.y),
-                    num_text(&end.z)
+                    num_text(&ex),
+                    num_text(&ey),
+                    num_text(&ez)
                 ));
                 Ok(())
             }
@@ -593,11 +759,14 @@ impl<'a> Writer<'a> {
                 } else {
                     "G1"
                 };
+                let ex = self.uinv.num(&self.uinv.end, op_idx, &end.x);
+                let ey = self.uinv.num(&self.uinv.end, op_idx, &end.y);
+                let ez = self.uinv.num(&self.uinv.end, op_idx, &end.z);
                 self.line(format!(
                     "{g} X{} Y{} Z{}{f}",
-                    num_text(&end.x),
-                    num_text(&end.y),
-                    num_text(&end.z)
+                    num_text(&ex),
+                    num_text(&ey),
+                    num_text(&ez)
                 ));
                 Ok(())
             }
@@ -623,9 +792,26 @@ impl<'a> Writer<'a> {
                 }
                 // Центр: ТОЛЬКО in-plane пара, инкрементальная от старта
                 // (G91.1 в заголовке); normal-компонента не эмитится.
+                // v0.21-fix: units-якорь — до-конверсные литералы
+                // start+center (геометрия §6 единая) и end.
+                let start_c = eid_core::ast::Point3 {
+                    x: self.uinv.num(&self.uinv.geo, op_idx, &start.x),
+                    y: self.uinv.num(&self.uinv.geo, op_idx, &start.y),
+                    z: self.uinv.num(&self.uinv.geo, op_idx, &start.z),
+                };
+                let center_c = eid_core::ast::Point3 {
+                    x: self.uinv.num(&self.uinv.geo, op_idx, &center.x),
+                    y: self.uinv.num(&self.uinv.geo, op_idx, &center.y),
+                    z: self.uinv.num(&self.uinv.geo, op_idx, &center.z),
+                };
+                let end_c = eid_core::ast::Point3 {
+                    x: self.uinv.num(&self.uinv.end, op_idx, &end.x),
+                    y: self.uinv.num(&self.uinv.end, op_idx, &end.y),
+                    z: self.uinv.num(&self.uinv.end, op_idx, &end.z),
+                };
                 let (n_axis, u, v) = plane_def(plane);
-                let sv = to_f64(start);
-                let cv = to_f64(center);
+                let sv = to_f64(&start_c);
+                let cv = to_f64(&center_c);
                 let mut offs = [0.0f64; 3];
                 offs[u] = cv[u] - sv[u];
                 offs[v] = cv[v] - sv[v];
@@ -665,15 +851,15 @@ impl<'a> Writer<'a> {
                 let axes_part = if full_turn && !helical_turn {
                     String::new()
                 } else if helical_turn {
-                    let ev = to_f64(end);
+                    let ev = to_f64(&end_c);
                     let letter = ["X", "Y", "Z"];
                     format!("{}{} ", letter[n_axis], fmt_num(ev[n_axis]))
                 } else {
                     format!(
                         "X{} Y{} Z{} ",
-                        num_text(&end.x),
-                        num_text(&end.y),
-                        num_text(&end.z)
+                        num_text(&end_c.x),
+                        num_text(&end_c.y),
+                        num_text(&end_c.z)
                     )
                 };
                 self.line(format!("{g} {axes_part}{arc_words}{f}"));

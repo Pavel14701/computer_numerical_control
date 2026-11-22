@@ -6,9 +6,12 @@
 //!  * `%` — маркер программы, одиночный на строке → IGNORED_SAFE;
 //!  * `/` block delete в начале строки → вся строка RAW(E_RUNTIME_STATE)
 //!    (COVERAGE §4: исполнение зависит от переключателя станка);
-//!  * `#`-параметры/выражения `[...]` → жёсткий отказ E_RUNTIME_STATE;
-//!    `if/while/do/...` и O-слова → жёсткий отказ E_UNSUPPORTED_SYNTAX
-//!    (SPEC §1.1);
+//!  * Macro B / параметрика (v0.21, зеркало eid-fanuc политики v0.16,
+//!    COVERAGE §4): `#`-слово / `[ ]`-выражение / control-flow keyword
+//!    (IF/GOTO/WHILE/DO/END/THEN/…) → вся строка line-level
+//!    RAW{E_UNSUPPORTED_SYNTAX} (распознанная конструкция, исполнение =
+//!    этап 12 L2; Q10 закрыт — Raw ≠ интерпретация). O-слова → как прежде
+//!    line-level RAW{E_UNSUPPORTED_SYNTAX};
 //!  * слово = буква + число (пробелы между словами необязательны, регистр
 //!    букв не важен; пробел/таб между буквой и числом слова допустим —
 //!    зонд rs274 #18: `X 10.5` принимается контроллером); слово длиннее
@@ -52,6 +55,12 @@ pub enum LineTok {
     /// → line-level RAW{E_UNSUPPORTED_SYNTAX} (правило двух классов:
     /// line-local, CORPUS #47; зеркально eid-grbl).
     Unknown,
+    /// Macro B / параметрика (v0.21, зеркало eid-fanuc §4.3/COVERAGE §4):
+    /// `#`-слово, `[ ]`-выражение или control-flow keyword — вся строка
+    /// line-level RAW{E_UNSUPPORTED_SYNTAX} (распознанная конструкция,
+    /// исполнение = этап 12 L2; Q10 закрыт — Raw ≠ интерпретация;
+    /// dead-assignment `#1=3` — та же диспозиция).
+    MacroB,
     /// Слова кадра.
     Words(Vec<Word>),
 }
@@ -68,7 +77,10 @@ pub struct LineData {
     pub tok: LineTok,
 }
 
-/// Управляющие ключевые слова LinuxCNC (SPEC §1.1: поток управления вне L1).
+/// Управляющие ключевые слова (поток управления/параметрика вне L1):
+/// LinuxCNC (if/while/…) + Macro-B-штук GOTO/THEN/END (fanuc-диалект под
+/// linuxcnc-меткой, инвентаризация класс #6). Триггер MacroB-строки —
+/// line-level Raw{E_UNSUPPORTED_SYNTAX}.
 const CONTROL_KEYWORDS: &[&str] = &[
     "if",
     "else",
@@ -84,6 +96,9 @@ const CONTROL_KEYWORDS: &[&str] = &[
     "return",
     "sub",
     "endsub",
+    "goto",
+    "then",
+    "end",
 ];
 
 pub fn limit_diag(
@@ -263,11 +278,11 @@ fn lex_line(raw: &str, file: &Arc<str>, line_no: usize) -> Result<LineTok, Vec<D
             if j - k > 1 {
                 let lower = alpha.to_ascii_lowercase();
                 if CONTROL_KEYWORDS.contains(&lower.as_str()) {
-                    return Err(fail(
-                        ErrorCode::UnsupportedSyntax,
-                        format!("control flow keyword `{alpha}` — вне грамматики L1 (SPEC §1.1)"),
-                        col_at(k),
-                    ));
+                    // v0.21 (зеркало eid-fanuc §4.3): control-flow keyword —
+                    // распознанная Macro-B конструкция → вся строка
+                    // line-level Raw{SYNTAX}, разбор продолжается (бывший
+                    // жёсткий Err снят: исполнение = этап 12 L2, Q10 закрыт).
+                    return Ok(LineTok::MacroB);
                 }
                 return Err(fail(
                     ErrorCode::InvalidInput,
@@ -301,8 +316,23 @@ fn lex_line(raw: &str, file: &Arc<str>, line_no: usize) -> Result<LineTok, Vec<D
                 m += 1;
             }
             if m == int_start {
+                // v0.21 (инвентаризация класс #2): слово со значением-параметром
+                // (`X#100`, `T#3026`, `I[expr]`) — Macro-B конструкция →
+                // line-level Raw{SYNTAX} (бывший Err «слово без числа» снят).
+                // Пробелы между знаком/буквой и телом не мешают детекту
+                // (`X - [ #1 + #2 ]`, vultr_m97) — rs274 допускает пробелы
+                // внутри выражений (зонд #18: между буквой и числом).
+                let mut probe = m;
+                while probe < bytes.len() && (bytes[probe] == ' ' || bytes[probe] == '\t') {
+                    probe += 1;
+                }
+                if probe < bytes.len() && (bytes[probe] == '#' || bytes[probe] == '[') {
+                    return Ok(LineTok::MacroB);
+                }
                 // Допускаем ".5"-форму? Число обязано начинаться с цифры или '.'
-                if m < bytes.len() && bytes[m] == '.' {
+                // (`X - .5` — знак, пробелы, ".digits" — лексически валидно).
+                if probe < bytes.len() && bytes[probe] == '.' {
+                    m = probe;
                     // форма ".digits"
                     m += 1;
                     let f0 = m;
@@ -354,26 +384,14 @@ fn lex_line(raw: &str, file: &Arc<str>, line_no: usize) -> Result<LineTok, Vec<D
             continue;
         }
         match ch {
-            '#' => return Err(fail(
-                ErrorCode::RuntimeState,
-                "`#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)"
-                    .into(),
-                col_at(k),
-            )),
-            '[' => {
-                return Err(fail(
-                    ErrorCode::RuntimeState,
-                    "выражение `[...]` — вычислимо только при исполнении (SPEC §1.1)".into(),
-                    col_at(k),
-                ))
-            }
-            ']' => {
-                return Err(fail(
-                    ErrorCode::InvalidInput,
-                    "закрывающая `]` без открывающей `[`".into(),
-                    col_at(k),
-                ))
-            }
+            // v0.21 (зеркало eid-fanuc §4.3, COVERAGE §4): `#` / `[` / `]` —
+            // Macro-B конструкция → вся строка line-level Raw{E_UNSUPPORTED_
+            // SYNTAX}, разбор продолжается. Бывшие жёсткие Err
+            // (E_RUNTIME_STATE «зависит от состояния исполнения») сняты:
+            // распознанная конструкция, исполнение = этап 12 (L2); Raw ≠
+            // интерпретация (Q10 закрыт). Dead-assignment `#1=3` — та же
+            // диспозиция (drop+notice отвергнут как излишняя семантика).
+            '#' | '[' | ']' => return Ok(LineTok::MacroB),
             '%' => {
                 return Err(fail(
                     ErrorCode::InvalidInput,
@@ -477,9 +495,13 @@ pub fn word_num(s: &str) -> Option<f64> {
 }
 
 /// G/M-номер → (major, minor): "91.1" → (91, 1), "0" → (0, 0).
+/// v0.21: трейлинг-точка в номере кода легальна — rs274 читает номера кодов
+/// как reals («M1.» = M1, Renishaw-посты mpe_g65); «1.0» → (1, 0) как прежде.
 pub fn code_num(s: &str) -> Option<(i64, u32)> {
     let (maj, min) = match s.split_once('.') {
-        Some((a, b)) => (a, Some(b)),
+        // "1." — minor = "" (трейлинг-точка без дробной части) → major alone
+        Some((a, b)) if !b.is_empty() => (a, Some(b)),
+        Some((a, _)) => (a, None),
         None => (s, None),
     };
     if maj.is_empty() || !maj.bytes().all(|c| c.is_ascii_digit()) {
