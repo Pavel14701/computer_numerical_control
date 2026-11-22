@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **758 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203t) + Haas-адаптер ПОЛНЫЙ (176t, registered live) + fanuc-live в реестре (17 файлов) + INTERFACE-V0.2-DESIGN · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
+**Числа:** **982 теста passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203t) + Haas-адаптер ПОЛНЫЙ (176t, registered live) + fanuc-live в реестре (17 файлов) + INTERFACE-V0.2-DESIGN · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -123,9 +123,9 @@
 
 Counting-аллокатор на 150k-оповой программе опроверг два claim'а: **SrcSpan→Arc — ДЕЛАТЬ** (file-String = 7.9% аллокаций, доминирует Num.text; «3–5×» — миф), **Box-PR — ОТКЛОНЁН** (+300k аллокаций/+21% на горячей клон-фазе, lint-зазор остаётся). AdapterOutput (Send+Sync) — ДЕЛАТЬ (открывает параллельный корпус/веб; фиксирует класс «затёртых notices» из R3-consistency). **F-флаг = State.feed_restated: bool** (88B/0-alloc, goldens целы; comparator-collapse отвергнут повторно — 3 основания). LegalityCondition-enum — ДЕЛАТЬ (паник-точки выписаны). План 5 волн + риск-реестр 12 + приёмка T1–T12.
 
-### 7.4 Мутационный раунд v0.18 (agent D, в полёте)
+### 7.4 Мутационный раунд v0.18 (agent D, 85e7054) — ЗАВЕРШЁН
 
-Kill-rate по изменившимся поверхностям vs baseline 75.5%; real-gap = потенциальные новые находки.
+Kill-rate изменённых поверхностей **75.8% → 80.5%** (1766 мутантов; core verify.rs 92.8%, grbl emit 92.3%, linuxcnc 75.8%, fanuc 78.4% — приоритет следующего раунда). 29 новых + 3 tightened теста убили 80 мутантов. **Real-gap = 0** — новых багов против SPEC не найдено (v0.18-код чист). ~70 equivalent классифицировано; ~207 missing-test каталогизировано. Наблюдение: fanuc sub-нумерация с дырами после zero-length-drop — кандидат SPEC §11-рулинга. Рекомендация: _tierb_full за cargo-фичу (docker 551с/запуск несовместим с mutation runs).
 
 ## 8. Дальше (итерация 8)
 
