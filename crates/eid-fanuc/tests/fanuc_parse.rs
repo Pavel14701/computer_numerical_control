@@ -1158,6 +1158,42 @@ fn g10_l1_table_raw() {
 }
 
 #[test]
+fn g10_l10_r_tool_table_raw() {
+    // COVERAGE §6.71: R в официальном Fanuc G10 L10 = geometry-значение
+    // (L10 = длина-geometry/H, L12 = диаметр-geometry/D — R-словом).
+    // Frame/DataRecord-план потребляет P/L/R (паритет eid-haas) → строка
+    // доходит до шага (17) → Raw{REQUIRES_MACHINE_TABLE}, НЕ Err на шаге (14)
+    // (BEHAVIOR-CHANGE: прежде Err(INVALID) «R word without consumer» —
+    // ревью-одобрено, официальный формат vs недосмотр).
+    let out =
+        canonicalize_with_notices("G10 L10 G90 P5 R250.;\nM30;\n", "t.ngc").expect("полный кадр");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw {
+            code: ErrorCode::RequiresMachineTable,
+            ..
+        }
+    ));
+    assert!(raw_reason(&out.program, 0).contains("table record"));
+}
+
+#[test]
+fn g10_l2_broken_p_fractional_unaffected() {
+    // Негатив-регресс §6.71: сломанная форма L2 P1.9 (P вне целого домена
+    // 1..6) — фикс потребления P/L/R её disposition НЕ меняет (шаг (17):
+    // Raw{SYNTAX} «outside ... domain», как и до фикса).
+    let out = canonicalize_with_notices("G10 L2 P1.9;\nM30;\n", "t.ngc").expect("ok");
+    assert!(matches!(
+        &out.program.ops[0],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSyntax,
+            ..
+        }
+    ));
+    assert!(raw_reason(&out.program, 0).contains("outside"));
+}
+
+#[test]
 fn g11_cancel_ignored() {
     // G11 (cancel G10-режима) без RAW G10-форм в файле — IGNORED_SAFE.
     let (p, notices) = notices_of("G10 L2 P1 X1. Y1. Z1.;\nG11;\nM30;\n");
@@ -3541,6 +3577,35 @@ fn mround2_peck_bottom_above_r_single_pass() {
         })
         .collect();
     assert_eq!(lins, vec![2.0], "один feed к z_bottom");
+}
+
+#[test]
+fn mround2_peck_bottom_at_r_single_pass() {
+    // z_bottom РОВНО на R (t == 0): n = 1 — один пек, feed до дна zero-length
+    // (d = max(r−q, z) = r) → drop+notice; финальный retract G99 на R тоже
+    // zero-length → notice. Итого 2 notice. Мутант `t > 0.0` → `>=` дал бы
+    // n = ceil(0/q) = 0 → пек-ветка пропущена → только 1 notice (final
+    // retract). Спутник mround2_peck_bottom_above_r_single_pass
+    // (мутраунд-2: дедупликация нормализации n == 0).
+    let (p, notices) = notices_of("G0 X0. Y0. Z5.\nG83 X10. Z2. R2. Q3. F100.\nM30\n");
+    assert!(
+        p.ops.iter().all(|o| !matches!(o, Op::Linear { .. })),
+        "feed к дну == R — zero-length, в опах линейных нет"
+    );
+    assert_eq!(notices.len(), 2, "zero-пек + zero-retract: {notices:?}");
+}
+
+#[test]
+fn mround2_peck_est_limit_exact_boundary_ok() {
+    // est_total РОВНО 10000 на границе max_unroll_iterations → Ok (не Err):
+    // G73 K=16, n = ceil(0.621/0.002) = ceil(310.5) = 311 → est на отверстие
+    // 2+2·311+1 = 625 → 16·625 = 10000. Убивает мутантов `>` → `>=` /
+    // `==` (est-лимит) и `+` → `*` (формула est: 2·2·311+1 = 1245 →
+    // 16·1245 = 19920 > 10000 → Err — тест бы упал). Спутник
+    // mround2_peck_est_limit_exceeded («ровно-на-границе», мутраунд-2).
+    let p = parse("G0 X0. Y0. Z5.\nG73 X10. Z-0.621 R0. Q0.002 F100. K16\nM30\n")
+        .expect("est_total == 10000 ровно — не превышение");
+    assert_eq!(p.ops.len() > 1000, true, "развёртка состоялась");
 }
 
 #[test]

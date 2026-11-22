@@ -360,15 +360,10 @@ impl CycleKind {
         })
     }
 
-    /// Циклы с dwell-P (G82/G89 — обязателен, G86 — опционален `?` §10(6)).
-    pub fn takes_p(&self) -> bool {
-        matches!(self, CycleKind::DrillDwell | CycleKind::BoreDwell)
-    }
-
-    /// Пекерующие (Q обязателен, > 0).
-    pub fn takes_q(&self) -> bool {
-        matches!(self, CycleKind::Peck | CycleKind::ChipBreak)
-    }
+    // NB: долженствования P/Q циклов (ex-`takes_p`/`takes_q`) проверяются
+    // инлайн в canonicalize.rs (unroll_cycle: `q.expect("пекерующий…")`,
+    // dwell-P-arms по kind) — предикаты на CycleKind здесь мёртвый код
+    // (мутраунд-2: 4 эквивалентных FnValue-мутанта) — удалены.
 }
 
 // ---------------------------------------------------------------------------
@@ -508,7 +503,11 @@ pub fn plane_axes(g: GCode) -> (usize, usize, usize) {
         GCode::PlaneXY => (0, 1, 2),
         GCode::PlaneZX => (2, 0, 1),
         GCode::PlaneYZ => (1, 2, 0),
-        _ => (0, 1, 2),
+        // defensive: недостижимо — modal.plane ⊂ {XY, ZX, YZ} (инвариант
+        // ModalState::apply + явные Plane* в emit.rs); прежний fallback-тупл
+        // (0,1,2) дублировал arm PlaneXY → delete-arm мутанты были
+        // эквивалентны (мутраунд-2). Громкий паник вместо тихо-неверных осей.
+        _ => unreachable!("plane_axes: non-plane G-code (plane invariant)"),
     }
 }
 
@@ -518,7 +517,8 @@ pub fn plane_normal(g: GCode) -> [f64; 3] {
         GCode::PlaneXY => [0.0, 0.0, 1.0],
         GCode::PlaneZX => [0.0, 1.0, 0.0],
         GCode::PlaneYZ => [1.0, 0.0, 0.0],
-        _ => [0.0, 0.0, 1.0],
+        // defensive: см. plane_axes — недостижимо (plane-инвариант).
+        _ => unreachable!("plane_normal: non-plane G-code (plane invariant)"),
     }
 }
 
@@ -578,8 +578,6 @@ impl ModalState {
                 self.feed_per_min = false;
                 self.feed_inverse = true;
             }
-            // G95 в state не попадает (Raw в канонизаторе до apply).
-            GCode::FeedPerRev => {}
             GCode::UnitsIn | GCode::UnitsInAlias => self.units = Units::In,
             GCode::UnitsMm | GCode::UnitsMmAlias => self.units = Units::Mm,
             GCode::RetractG98 => self.retract_g98 = true,
@@ -595,6 +593,10 @@ impl ModalState {
                 }
             }
             // Path-режим — в канонизаторе (switch → Err); cycle-коды — Ctx.
+            // G95 (FeedPerRev) доходит сюда через absorb_frame_state (b) ДО
+            // шага (4), но whole-block → Raw{SEMANTICS} — state не меняется,
+            // no-op покрывается `_`. Пустой arm удалён (дублировал `_`,
+            // мутраунд-2: delete-arm мутант был эквивалентен).
             _ => {}
         }
     }

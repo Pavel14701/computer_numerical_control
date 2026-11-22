@@ -331,7 +331,6 @@ struct Ctx {
     /// голый F в кадре без движения): прицепляются к следующему опу.
     pending_dpi: RefCell<Vec<String>>,
     end_count: usize,
-    end_is_last: bool,
     end_line: u32,
     /// Правило семейств (COVERAGE §1.3) — пре-скан файла:
     family_g40: bool, // G41/G42-семья (Fanuc-состав) встречена в файле
@@ -467,10 +466,9 @@ impl Ctx {
         }
     }
 
-    fn mark_end(&mut self, line: u32, is_last: bool, blen: usize) {
+    fn mark_end(&mut self, line: u32, blen: usize) {
         self.end_count += 1;
         self.end_line = line;
-        self.end_is_last = is_last;
         let op = Op::ProgramEnd {
             src: span(&self.file, line, blen),
         };
@@ -687,16 +685,14 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         notices: Vec::new(),
         pending_dpi: RefCell::new(Vec::new()),
         end_count: 0,
-        end_is_last: true,
         end_line: 0,
         family_g40,
         family_g49,
         family_g10_raw,
     };
 
-    let n = parsed.blocks.len();
-    for (i, b) in parsed.blocks.iter().enumerate() {
-        process_block(&mut ctx, b, i + 1 == n)?;
+    for b in parsed.blocks.iter() {
+        process_block(&mut ctx, b)?;
     }
     finalize(&mut ctx, line_count as u32)
 }
@@ -724,6 +720,10 @@ fn g10_form_is_raw(b: &Block) -> bool {
 /// Err — осознанное расхождение с grbl n12: raw-сохранение хвоста честно,
 /// motion-опы после PEND не строятся. Дубль M2/M30 — defensive-guard
 /// (недостижим при tail-политике). Отсутствие M2/M30 → auto-PEND + notice.
+///
+/// Поле ex-`end_is_last` удалено (мутраунд-2, dead-code): Fanuc хвост после
+/// PEND — line-level Raw (см. process_block (0)), НЕ Err — флаг
+/// «end последний?» нигде не читался (grbl n12 — другой адаптер).
 fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>> {
     if ctx.end_count > 1 {
         return Err(vec![err(
@@ -734,7 +734,6 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
             0,
         )]);
     }
-    let _ = ctx.end_is_last; // Fanuc: хвост → Raw (см. process_block), не Err
     if ctx.end_count == 0 {
         // SPEC §3 v0.16 / анализ §4.4: DNC-файлы Fanuc часто без M30 —
         // авто-вставка ProgramEnd последним опом + notice.
@@ -794,7 +793,7 @@ enum Plan {
 }
 
 #[allow(clippy::too_many_lines)]
-fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diagnostic>> {
+fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
 
@@ -1305,7 +1304,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
 
     // (22) M2/M30 → ProgramEnd (после motion — порядок grbl #9; SPEC §5.2).
     if b.m_codes.contains(&MCode::ProgramEnd) {
-        ctx.mark_end(line, is_last, blen);
+        ctx.mark_end(line, blen);
     }
     Ok(())
 }
@@ -1555,7 +1554,13 @@ fn unused_word_diagnostic(
         Plan::Frame => {
             consumed.extend(['X', 'Y', 'Z']);
             if b.g_codes.contains(&GCode::DataRecord) {
-                consumed.extend(['P', 'L']);
+                // P/L/R — запись G10 (§6.71 COVERAGE): в официальном Fanuc G10
+                // L10 (таблица инструментов) R = geometry-значение (L10 =
+                // длина-geometry/H, L12 = диаметр-geometry/D — R-словом).
+                // Потребляем все три — строка доходит до шага (17) → Raw{REQUIRES}
+                // (паритет eid-haas; до фикса `G10 L10 ... R250.` падал в
+                // Err(INVALID) «R word without consumer» на шаге (14)).
+                consumed.extend(['P', 'L', 'R']);
             }
         }
         Plan::Cycle { .. } => consumed.extend(['X', 'Y', 'Z', 'R', 'Q', 'P', 'K', 'L']),
@@ -2320,17 +2325,10 @@ fn unroll_cycle(
         }
     };
 
-    // Лимит развёртки (COVERAGE §1.2) — раньше прочих проверок параметров.
-    if k as u64 > MAX_UNROLL_ITERATIONS {
-        return Err(vec![limit_err(
-            "max_unroll_iterations",
-            MAX_UNROLL_ITERATIONS as f64,
-            k as f64,
-            format!("cycle repeat K/L {k} exceeds max_unroll_iterations ({MAX_UNROLL_ITERATIONS})"),
-            &ctx.file,
-            line,
-        )]);
-    }
+    // Лимит max_unroll_iterations отдельной проверкой K/L здесь НЕ нужен:
+    // repeat_count каппирует домен на 0..=9999 < 10 000 (мутраунд-2: ветка
+    // k > MAX была доказуемо мёртвой — 2 эквивалентных мутанта оператора).
+    // Живой лимит — пек-оценка est_total ниже (COVERAGE §1.2).
 
     // R и Z обязательны (Fanuc manual: «It is an error if…» — паритет LinuxCNC).
     let r_word = cyc.r.ok_or_else(|| {
@@ -2507,10 +2505,12 @@ fn unroll_cycle(
                 // общий ниже (G99 → R, G98 → initZ).
                 let q = q.expect("пекерующий цикл без Q (проверено выше)");
                 let t = r_cur - z_bottom;
-                let mut n = if t > 0.0 { (t / q).ceil() as u64 } else { 0 };
-                if n == 0 {
-                    n = 1;
-                }
+                // n ≥ 1 во всех ветках: t ≤ 0 (дно на/выше R-плоскости) →
+                // один пек на дно; t > 0 → ceil(t/q) ≥ 1. Прежняя избыточная
+                // нормализация `if n == 0 { n = 1 }` дублировала else-ветку и
+                // делала мутанта `>` → `>=` эквивалентным (мутраунд-2) —
+                // дедуплицировано.
+                let n = if t > 0.0 { (t / q).ceil() as u64 } else { 1 };
                 // est: traverse+подход (2) + на пек: feed + отводы (G83 —
                 // retract R и подход: 3; G73 — одиночный rapid: 2) + финал (1).
                 let ops_per_peck = if cyc.kind == CycleKind::Peck { 3 } else { 2 };
