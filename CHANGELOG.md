@@ -551,6 +551,46 @@ WCS давали бы неразличимые EID с разной геомет�
 
 ## COVERAGE
 
+### v0.9.5 — 2026-11-22 (закрытие двух открытых вопросов: G76-Haas Setting 27/I/J + §6.71 Fanuc R)
+
+Web-сверка (Agent B; код не затронут, коммита нет; цитаты/URL —
+`registry_verification_notes.md` §6). RAW/Err-диспозиции ячеек не менялись.
+
+1. **§2.5/§7.16 G76-Haas — механика Setting 27/I/J вычитана ОФИЦИАЛЬНО**
+   (codes-G76 detail-страница — впервые прошла Cloudflare + workbook-зеркало,
+   обе official): формы **взаимоисключающие (XOR по наличию Q)** —
+   Q present → величина = Q («always incremental»), НАПРАВЛЕНИЕ =
+   Setting 27 «G76 / G77 Shift Dir.» (вне текста); Q absent → опциональные
+   I/J = направление И величина в тексте («If Q is used Setting 27
+   determines the shift direction. If Q is not specified, the optional I
+   and J values are used to determine the shift direction and distance»).
+   Все три прежних сценария сняты (Setting 27 НЕ заменяет I/J; I/J не
+   «только для G77»; Setting 27 не «выбор оси» при I/J-величине).
+   **Кандидат этапа 12 «все параметры в тексте» — снят в общей форме,
+   сужен до I/J-формы**: Q-форма несёт направление в Setting 27 вне текста
+   (по сути Fanuc-5101-класс); отличие Haas от Fanuc — наличие текстовой
+   I/J-альтернативы, а не «всё в тексте». RAW(SEM) не меняется (M19-класс
+   ориентации в силе); §6.18-Haas-флаг снят. Остаток `?`: домен значений
+   Setting 27 (detail-страница Setting не рендерит документ) —
+   unresolvable-today.
+2. **§6.71 Fanuc R-слово в Frame/G10-плане — формат подтверждён,
+   кандидат-правка сформулирована (НЕ реализована):** R — часть
+   официального Fanuc-формата G10-записи таблицы инструментов
+   `G90 G10 L1x P_ R_` (L10 = длина-geometry, L11 = длина-wear, L12 =
+   диаметр-geometry, L13 = диаметр-wear, L110/L111 = corner radius; в L10
+   R несёт geometry-ЗНАЧЕНИЕ (длину), НЕ радиус — нюанс исходной
+   формулировки вопроса; cncmacros — MEDIUM, CNCZone — weak). Код-гэп
+   локализован чтением крейтов: eid-fanuc Frame/DataRecord потребляет
+   P/L без R → `G10 L10 G90 P5 R250.` падает в Err(E_INVALID_INPUT)
+   «R word without consumer» на unused-word-шаге, не доходя до класса
+   Raw{E_REQUIRES_MACHINE_TABLE} (шаг 17) — противоречие ячейке матрицы и
+   формату; eid-haas потребляет P/L/R (асимметрия). Кандидат-фикс для
+   брифа этапа 12/N: `consumed.extend(['P','L','R'])` (зеркало eid-haas)
+   → вся строка Raw{TABLE} + тест `g10_l10_r_tool_table_raw`; ячейка
+   §2.3 не менялась (Err — артефакт unused-word-плана).
+3. Шапка COVERAGE: v0.9.5; привязки без изменений (SPEC v0.18,
+   EQUIVALENCE v0.3.1, CORPUS-CONTRACT v0.7.1, grammar v0.4).
+
 ### v0.9.4 — 2026-11-22 (сверка `?`-реестров §6 этапа 3 + 6 находок против доков применены)
 
 Web/source-сверка реестров (Agent D; код не затронут; цитаты/URL/даты —

@@ -162,8 +162,55 @@
 1. §4-строка SpaceInWord: «GRBL — парсер строг» → end-to-end grbl пробел принимает (§6.68).
 2. §3 M6 Haas: «M6 не применяет TLO (применяет G43) — restart ?» → ch.8.3: offsets auto-update при tool change + Setting 15 H&T.
 3. §2.3/§5.2 «Setting 129 ?» (G52/G92-очистка, program_end) → Setting 129 не существует (§6.39/72).
-4. §2.5/§7.16 Haas G76 «направление = I/J в тексте» → официальный Setting 27 «G76/G77 Shift Dir.» (§6.18-флаг).
+4. §2.5/§7.16 Haas G76 «направление = I/J в тексте» → официальный Setting 27 «G76/G77 Shift Dir.» (§6.18-флаг) — **ЗАКРЫТ v0.9.5 (Pass B, §6 ниже)**.
 5. §3 M98/M99 «Setting 118 ?» → Setting 118 = «M99 Bumps M30 Cntrs» (§6.66).
 6. §2.2 G61.1 Fanuc-ячейка → G61.1 отсутствует в 30i-списке (кандидат N/A, §6.23).
 7. §4 Macro B Haas «аргументы A–Z Fanuc-совместимый ?» → подтверждено (ch.13.3, маппинг 1:1 с Fanuc).
 8. §2.5 G73 Haas: «переменные пеки I/J/K на G73 ?» → подтверждено (ch.17.4).
+9. (Pass B, v0.9.5) §4-строка «I/J/K-контекст (Haas)»: «направление сдвига G76 (I/J)» — верно только для I/J-формы G76 (без Q); Q-форма несёт направление в Setting 27 (см. §6.1 ниже) — кандидат синхронизации формулировки, вне зоны правок Pass B.
+
+## 6. Проход Agent B (v0.9.5) — закрытие двух открытых вопросов
+
+**Агент:** B. **Дата:** 2026-11-22. **Зона:** COVERAGE §2.5-строка G76 / §7.16 / §6.18-флаг / §6.71 (+шапка v0.9.5), этот файл, CHANGELOG v0.9.5. Крейты не тронуты (eid-fanuc/eid-haas — только чтение для локализации код-гэпа), коммита нет, RAW/Err-диспозиции не менялись.
+
+### 6.1 Q1: Haas G76 — Setting 27 vs I/J-слова — ВЕРДИКТ (OFFICIAL)
+
+**Источники (оба fetch 2026-11-22):**
+- **OFFICIAL — codes-G76 detail-страница** (впервые прошла Cloudflare; прежние проходы — «detail-страницы недоступны»): https://haascnc.com/service/codes-settings.type=gcode.machine=mill.value=G76.html
+- **OFFICIAL-зеркало — Mill Programming Workbook** (в списке источников с v0.9; сниппет из индекса PDF совпадает дословно с codes-страницей): https://haascnc.com/content/dam/haascnc/en/service/reference/programming-workbooks/mill---programming-workbook.pdf
+- **WEAK (согласовано):** PM тред 357238 — «setting 27 controls the direction that the tool backs off» / «There is a parameter setting for g76 move off direction, might be #27 on your machine».
+- Онлайн-глава ch.17 (mill---g-codes.html) G76 описывает без механики сдвига («bores the hole to the specified depth and after boring the hole, moves to clear the tool from hole before retracting») — механика живёт на codes-detail-странице.
+
+**Дословные цитаты (codes-G76):**
+- Word-таблица: «**I** - Shift value along the X-Axis before retracting, **if Q is not specified** / **J** - Shift value along the Y-Axis before retracting, **if Q is not specified** / **Q** - The shift value, **always incremental**».
+- Тело: «In addition to boring the hole, this cycle will shift the X and/or Y Axis prior to retracting in order to clear the tool while exiting the part. **If Q is used Setting 27 determines the shift direction. If Q is not specified, the optional I and J values are used to determine the shift direction and distance.**»
+- Workbook-зеркало: «The Q value shift direction is set with setting 27. If Q is not specified, the optional I and J values can be used to determine shift direction and distance.»
+
+**Вердикт — механизмы взаимоисключающие (XOR по наличию Q), все три прежних сценария сняты:**
+1. (а) «Setting 27 выбирает ось, I/J задают величину» — НЕВЕРНО: I/J читаются ТОЛЬКО при отсутствии Q.
+2. (б) «Setting 27 полностью заменяет I/J» — НЕВЕРНО: I/J-форма — полная альтернатива (направление И величина в тексте).
+3. (в) «I/J для G76, Setting 27 только для G77» — НЕВЕРНО: Setting 27 = «G76 / G77 Shift Dir.» — для обоих.
+4. ФАКТ: **Q present →** величина = Q («always incremental»), направление = **Setting 27** (вне текста программы); **Q absent →** опциональные **I/J** = направление И величина (I = X-компонента, J = Y-компонента).
+
+**Следствие для этапа 12:** кандидат «все параметры в тексте» — **снят в общей форме, сужен до I/J-формы**. Q-форма несёт направление в Setting 27 — вне текста (по сути Fanuc-5101-класс); отличие Haas от Fanuc сохраняется как «наличие текстовой альтернативы», но не как «всё в тексте». RAW(SEM) не меняется (M19-класс ориентации на дне в силе; CNCARENA-тред — «G76 … to position the spindle in the proper place before the Z retract» — weak-согласовано).
+
+**Остаток `?`:** домен значений Setting 27 (перечень вариантов направления: X+/X-/Y+/Y-?) — не вычитан: detail-страница Setting 27 (codes-settings.type=setting…value=27.html) не рендерит документ (2026-11-22) — unresolvable-today, на механику/диспозиции не влияет.
+
+### 6.2 Q2: Fanuc G10 L10/L11 — R-слово — ВЕРДИКТ (формат: ДА, R — data-слово формы)
+
+**Источники (fetch/поиск 2026-11-22):**
+- **MEDIUM — cncmacros.com** (полный гид по G10; в списке источников COVERAGE с v0.8): https://cncmacros.com/blog/cnc-macro-variables/fanuc-g10-command-programming-the-complete-guide-to-offsets-parameters-and-safe-automation
+- **WEAK — CNCZone тред 95572** («G10 L10 P10 R5;» — пример практиков).
+- Helman/Zappettini G10-страницы в этом проходе не добавили ничего сверх cncmacros (L10-формат у них уже покрыт L2-фокусом).
+
+**Дословные цитаты (cncmacros):**
+- «**L10** – Set tool length offsets (**Geometry**) / **L11** – Set tool length wear offsets (Wear) / **L12** – Set tool diameter offsets (Geometry) / **L13** – Set tool diameter wear offsets (Wear) / **L110** – Set corner radius offset (Geometry) / **L111** – Set corner radius offset (Wear)».
+- Синтаксис: «**Memory A** = G10 (L11) P_n_ **R_n_** / **Memory B** = G10 (L10/L11) P_n_ **R_n_** / **Memory C** = G10 (L10 - L13, L110, L111) P_n_ **R_n_**»; «**R_n_ values: R = Tool compensation value (R.625, R5.253)**»; пример «**G10 L10 G90 P5 R2.5** (Set Tool 5 length = 2.5) / G10 L12 G90 P5 R0.375 (Set Tool 5 diameter = 0.375 absolute)».
+
+**Вердикт:** R — **обязательное data-слово официального Fanuc-формата** записи таблицы инструментов (`G90 G10 L1x P_ R_`); какую ячейку пишет R — определяет L-номер. **Нюанс формулировки исходного вопроса: в L10 R несёт GEOMETRY-значение (длину), НЕ радиус** — радиус/диаметр = L12/L13 (тоже R-словом); corner radius = L110/L111. Пример haas-этапа 2 `G10 L10 G90 P5 R250.` = geometry-длина смещения #5 — потребление R на Haas корректно.
+
+**Код-гэп локализован (чтение крейтов, НЕ правка):**
+- eid-fanuc `canonicalize.rs` unused_word_diagnostic, Frame-план, DataRecord-ветка: `consumed.extend(['P', 'L'])` — **R не потребляется** → строка `G10 L10 G90 P5 R250.` на шаге (14) unused-word получает catch-all **Err(E_INVALID_INPUT)** «R word without consumer in block (arc/cycle/G10/G4 context expected)» и НЕ доходит до шага (17) G10-классификации Raw{E_REQUIRES_MACHINE_TABLE} — вопреки ячейке матрицы (Fanuc L10/L11 = RAW(TABLE)) и официальному формату.
+- eid-haas `canonicalize.rs` Frame/DataRecord: `consumed.extend(['P', 'L', 'R'])` — потребляет (этап 2 eid-haas) — асимметрия адаптеров.
+
+**Кандидат-правка (бриф агенту этапа 12/N, НЕ реализовано):** в eid-fanuc unused_word_diagnostic Frame/DataRecord-ветке добавить `'R'`: `consumed.extend(['P', 'L', 'R'])` (зеркало eid-haas) → вся G10-строка → **Raw{E_REQUIRES_MACHINE_TABLE}** (свой матричный класс; R поглощается как data-слово формы — «молчаливый пропуск» отсутствует: слово потреблено G10-формой). Тест-кандидат: `g10_l10_r_tool_table_raw` (строка официального формата → Raw{RT}, без Err). Замечание: это реальное изменение поведения адаптера (Err → Raw) для класса строк — поэтому код-кандидат этапа 12, а не hotfix; COVERAGE-ячейки не меняются.
