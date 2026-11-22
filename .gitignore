@@ -10,3 +10,4 @@ corpus/tier_b/local/
 *.out
 out_probe*.txt
 _docker_dbg.rs
+_mut_r*_fanuc_state/
