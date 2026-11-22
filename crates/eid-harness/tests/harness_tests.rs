@@ -680,6 +680,7 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
         vec![
             "43".to_string(),
             "N2".to_string(),
+            "N7".to_string(),
             "N11".to_string(),
             "N12".to_string(),
             "N13".to_string(),

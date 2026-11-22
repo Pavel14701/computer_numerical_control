@@ -945,16 +945,18 @@ id = "N7"
 name = "unit_switch_mid"
 tier = "A"
 kind = "negative"
-note = "G20 после ходов — одна система единиц на программу (SPEC §2.5/§3, COVERAGE §2.2)"
-notice = false
+note = "G20 после ходов — РЕВИЗИЯ v0.21 (инвентаризация Tier C: LinuxCNC исполняет G20/G21 в любой позиции; grbl gcode.c case 20/21 — тоже mid-stream с внутренней конверсией): переключение легально, chaining через конверсию 25.4 в пределах допуска (дрейф ≤2e-5мм < ε_pos); носитель = line-level Raw{SEM} (система маркеров); первый чистый G20 задаёт заголовок"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n7_unit_switch_mid/unit_switch_mid.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 [[vectors.files]]
 path = "tier_a/v0/n7_unit_switch_mid/unit_switch_mid.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 
 [[vectors]]
 id = "N8"
