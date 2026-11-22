@@ -202,8 +202,38 @@ Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUs
 - **grbl** (fc01bb9 + db894d6; тесты 138→145): **chain-continuity через Raw-блоки** (Raw с осями → chain-break unknown-start: ложные «невозможная дуга/radius mismatch» устранены на 5 файлах → честные RUNTIME_STATE); **protocol-strip** `c<=' '` вне комментариев (находка control-байта \x01 в mit_cws_fresa; зонд-конвергенция с rs274); units-switch (Err «one unit system» снят — convert_units_anchor + UnitsInverse, независимая реализация сошлась с D); ARC_OFFSETS_MISSING текст побайтно зеркален linuxcnc; **единственный Ok→Err флип = RTCP-файл** (бесчестный chaining сквозь rotary → честный partial-end; RTCP = этап 12).
 - **Свип Ok 81→116/157** (артефакты 43ad7c9); harness класс-листы N7 → line-class 30/30 (6a6e3cb); manifest N7 ревизия v0.21 (e4520da).
 
-## 12. Дальше (этап 12 L2 + отложенное)
+## 12. Итерация 12 — «исправь недоразумение» (G92-mid / bare-T / end-not-last) — ЗАВЕРШЕНА
 
 **Итерация 12 закрыта целиком** (волна 1 SPEC v0.20: G92-mid/bare-T/end-not-last во всех 4 адаптерах по зонд-фактам rs274+grbl-source; волна 2: Macro-B-linuxcnc / chain-continuity / units-switch v0.21 — свип Ok 116/157, workspace **1183/0**, COVERAGE v0.12; ревью-очередь пуста). Единственный Ok→Err флип волны 2 — RTCP-файл: честный partial-end вместо бесчестного chaining'а сквозь rotary (RTCP = этап 12).
 
-**Этап 12 (L2 — параметрика/исполнение):** Macro B исполнение (стек #1–33/#100–500/GOTO — Q10-следствие), NURBS-декомпозиция vs хранение, трансформации (G68/G51 — «хранение, не запекание», climb/conventional), G54.1-домен, RTCP/rotary-chaining (флип волны 2 — честный partial-end до этапа 12). **Мелкое отложенное:** §6.71-смежное (R в Fanuc Frame-плане — применено), NaN-is_finite-гейт v0.3.x, Haas `?`-остатки (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку, intra-file парсинг (Амдал-хвост R10), emission-профили grblHAL/FluidNC при адаптерах, fanuc/haas зеркала units-switch v0.21. **Ревью-очередь пуста** — все решения ревью реализованы (NURBS/Q10 v0.19, NaN-классификация, формулировки).
+## 13. ЭТАП 12 — L2 (параметрика, трансформации, 4/5-осей): фазы 12.1 + 12.2 + 12.3-кодирование — ЗАВЕРШЕНЫ
+
+Дизайн-док `EID-L2-DESIGN.md` v0.1 (d3fd57e — материализован в репо после инцидента «док в чате, не в дереве»; агент A начал фундамент по встроенной в брифе спецификации — она совпала с доком по существу). **Ключевой принцип дока «оси в AST, переменные в lowering первыми»** — 5-осевые параметрические кадры (`G0 A#100`) парсятся в полный L2 AST, а частичный lowering даёт Raw с подставленными значениями — T4 дословно.
+
+### 13.1 Фаза 12.1 — L2 AST + парсеры 3 диалектов
+
+- **Фундамент** (agent A, 22ddb0a + синхронизация с доком): AST §2 дословно (Expr/Val::Null/SysVar/Axis/ExprPose/TransformKind/L2Stmt с SrcSpan), eval #0-семантика — 22 теста T3 (арифметика Null→0, div/LN на Null → E_INVALID_INPUT, EQ Null-тождество vs GT/GE→0.0, AND/OR/XOR i64, присваивание копирует Null, адресное слово с Null игнорируется), interp D0–D2 скелет, T5-бюджеты. 51 тест.
+- **Парсеры** (agents B2/D2): **parser_macro_common** (~1250 строк: лексер слитных слов/#[expr]/скобок, курсорный expr-парсер с приоритетами Fanuc — подтверждено идиомой Renishaw «#170 AND 4 EQ 4», DO/END-стек 1..3, O-sub/M97-carving) + **parser_fanuc/haas** (G65/G66-args вкл. M-слово, M98-слип P52000=5×O2000, #4001-4030 ModalGroup; M97 NLabel+L-expr, G101-Mirror, #500–699/#109xxx VendorSpecific, bare-IF→IfThen) — **19/19 целевых файлов Ok**; **parser_linuxcnc** (O-word sub/while/if/call, named #<_var>, EXISTS/ATAN2, рекурсия ×3, не-§2.4 → целостные Op::Raw-носители verbatim) — **34/34 Ok**.
+- **Амендменты дизайн-дока**: v0.1.1 UnaryOp::Exists + BinaryOp::Atan2 (корпус-ценз), v0.1.2 SubTarget::Named (Copy снят), v0.20.1 (от A) Label/Return/labels-таблица.
+
+### 13.2 Фаза 12.2 — L2Evaluator D0–D3 + Pass-1 lowering (agent A, e48e266)
+
+D0 pose_resolve (Null = слово отсутствует) · D1 стек ×9 (Null-аргумент проброс, M99→Return) · D2 CFG IfGoto label-таблицы + per-loop бюджет · D3 мёртвые ветки (Sys-чтение в мёртвой IF-ветке не даёт ложного E_RUNTIME_STATE) · SysVar-маппинг (ModalGroup снапшот / WcsOffset→Raw{TABLE} / позиции→честный останов) · аффинные Rotate2D/Scale + Mirror дефолт-отказ / allow_mirror_bake→Cw↔Ccw+Notice · дуги → Op::Arc канон.
+
+**Trace-equivalence DoD (docker rs274): semantic_diff == 0** — factorial-рекурсия (глубина 5), flowsnake corpus (**3072 ходов, ×1026 рекурсивных вызовов** — 4dp-квантование пережило рекурсию без накопления), Null-аргумент G65. T4 дословно (payload «G0 X15.0000 A15.0000»), T5/T6/T1 конфирм.
+
+### 13.3 Фаза 12.3 — SMT-кодирование (agent E, 86f6894)
+
+Term-IR Formula/NumExpr/ValTerm + Encoder по таблице §3.2 дословно. **Кросс-валидация 444 кейса с eval.rs — 0 расхождений** (44 рукописных + 400 LCG-генерируемых; генератор сам поймал modeling-фикс: допуск Macro B 1e-9 раскрыт структурно в формулу — бит-в-бит). Solver-trait за feature="smt"; term-builder НЕ гейтится — кросс-валидация на каждой сборке. Подключение Z3/CVC5 — subprocess путь (T2 std-only сохраняется).
+
+### 13.4 T1–T6 чек-лист: ВСЕ КОНФИРМ
+
+T1 L1-passthrough 1:1 · T2 std-only (+фича только для будущего solver) · T3 #0-семантика 22 теста · T4 частичный lowering дословно · T5 бесконечный WHILE → E_LIMIT_EXCEEDED (3 конфигурации) · T6 Mirror дефолт-отказ / allow_mirror_bake→инверсия+Notice.
+
+### 13.5 Остатки этапа 12 (честно)
+
+12.4 L2↔L2 emit — не начат · 12.5 кинематика — future (нужен 5-осевой симулятор-оракул) · trace-equivalence пока на linuxcnc-пути (fanuc-MB парсеры долетели к концу — зеркальная сверка следующей) · endsub-retval/named-scoping/polar-@^ — вне §2.4, L1Op-носители · G67/G17-18-19 AST контракты — parser-фидбек D2/A · корпус: WithTransform ×0 (трансформации без корпусного драйвера — синтетика) · l2_available O-word маркеры применены (59006fa).
+
+## 14. Дальше (этап 12 фаза 12.4+ + отложенное)
+
+Фаза 12.4 (L2↔L2 emit) при потребности · fanuc-MB trace-equivalence (зеркальная сверка) · emission-профили grblHAL/FluidNC при адаптерах · NaN-is_finite-гейт v0.3.x · Haas `?`-остатки (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку · intra-file парсинг (Амдал-хвост R10) · **Ревью-очередь пуста** — все решения ревью реализованы (NURBS/Q10 v0.19, NaN-классификация, формулировки).
