@@ -311,6 +311,12 @@ impl L2Env {
     pub fn write_named(&mut self, name: impl Into<String>, v: Val) {
         self.named.insert(name.into(), v);
     }
+
+    /// Определена ли именованная (EXISTS[#<name>], v0.1.1 амендмент —
+    /// корпус-ценз g881: без чтения значения).
+    pub fn named_exists(&self, name: &str) -> bool {
+        self.named.contains_key(name)
+    }
 }
 
 // ===========================================================================
@@ -392,6 +398,10 @@ pub fn eval_expr(expr: &Expr, env: &mut L2Env) -> Result<Val, L2Error> {
         Expr::Const(v) => Ok(Val::Num(v.value())),
         Expr::Null => Ok(Val::Null),
         Expr::Var(r) => read_var(r, env),
+        // v0.1.1 амендмент (корпус-ценз): EXISTS[#var] → Num(1.0/0.0) —
+        // оценивается БЕЗ вычисления аргумента (чтение несуществующей
+        // именованной не должно останавливать исполнение до проверки).
+        Expr::Unary(UnaryOp::Exists, inner) => eval_exists(inner, env),
         Expr::Unary(op, inner) => {
             let v = eval_expr(inner, env)?;
             eval_unary(*op, &v)
@@ -402,6 +412,25 @@ pub fn eval_expr(expr: &Expr, env: &mut L2Env) -> Result<Val, L2Error> {
             eval_binary(*op, &a, &b)
         }
     }
+}
+
+/// EXISTS[#<var>] (v0.1.1 амендмент, корпус-ценз g881): 1.0 — ссылка
+/// определена/читабельна, 0.0 — нет. Именованные — по таблице окружения;
+/// Direct/Indirect — по допустимости диапазона чтения; Sys — считаются
+/// существующими (1.0); не-ссылочные выражения — 1.0.
+fn eval_exists(expr: &Expr, env: &mut L2Env) -> Result<Val, L2Error> {
+    let exists = match expr {
+        Expr::Var(VarRef::Named(name)) => env.named_exists(name),
+        Expr::Var(VarRef::Direct(idx)) => env.read_direct(*idx).is_ok(),
+        Expr::Var(VarRef::Indirect(idx_expr)) => {
+            resolve_var_index(idx_expr, env)
+                .and_then(|i| env.read_direct(i))
+                .is_ok()
+        }
+        Expr::Var(VarRef::Sys(_)) => true,
+        _ => true,
+    };
+    Ok(bool_val(exists))
 }
 
 /// Унарные операции (Приложение, таблица 2.2): тригонометрия в ГРАДУСАХ
@@ -459,6 +488,14 @@ pub fn eval_unary(op: UnaryOp, v: &Val) -> Result<Val, L2Error> {
         UnaryOp::Round => x.round(),
         UnaryOp::Fix => x.trunc(),
         UnaryOp::Fup => x.ceil(),
+        // v0.1.1 амендмент (механическая ветка компиляции, агент A — 12.2):
+        // Exists перехватывается в eval_expr ДО eval_unary (оценивается БЕЗ
+        // вычисления аргумента, корпус-ценз g881) — сюда исполнение не доходит.
+        UnaryOp::Exists => {
+            return Err(L2Error::RuntimeError(
+                "EXISTS must be dispatched in eval_expr (no-value operation)".to_string(),
+            ))
+        }
     };
     Ok(Val::Num(r))
 }
@@ -500,6 +537,8 @@ pub fn eval_binary(op: BinaryOp, a: &Val, b: &Val) -> Result<Val, L2Error> {
         BinaryOp::Lt => return Ok(bool_val(a.macro_lt(*b))),
         BinaryOp::Ge => return Ok(bool_val(a.macro_ge(*b))),
         BinaryOp::Le => return Ok(bool_val(a.macro_le(*b))),
+        // v0.1.1 амендмент (корпус-ценз): ATAN[y]/[x] → atan2(y, x) в градусах.
+        BinaryOp::Atan2 => a.as_num().atan2(b.as_num()).to_degrees(),
     };
     Ok(Val::Num(r))
 }

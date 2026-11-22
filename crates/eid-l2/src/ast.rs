@@ -21,6 +21,10 @@
 //! eid-core по PR к оркестратору (замена импорта — 1 строка).
 //! L2Program/L2Sub/placeholder_span — каркас 12.1 (доком §2 не покрыты),
 //! расширяются аддитивно.
+//!
+//! v0.20.1 (12.2, агент A) — аддитивно: `L2Stmt::Label` (N-метка-узел),
+//! `L2Stmt::Return` (M99/endsub-выход), `L2Program::labels` (label-таблица,
+//! заполняет парсер — контракт для B2/D2).
 
 use eid_core::ast::{Num, Op, SrcSpan};
 
@@ -93,6 +97,11 @@ pub enum UnaryOp {
     Round,
     Fix,
     Fup,
+    /// v0.1.1 амендмент (корпус-ценз, агент B2): `EXISTS[#<var>]` — 1.0,
+    /// если переменная определена, иначе 0.0 (LinuxCNC-конструкция,
+    /// corpus/tier_b g881). Оценивается БЕЗ вычисления аргумента
+    /// (см. `crate::eval::eval_expr`).
+    Exists,
 }
 
 /// Бинарные операции (§2.1): арифметика, побитовая логика, сравнения.
@@ -112,6 +121,10 @@ pub enum BinaryOp {
     Lt,
     Ge,
     Le,
+    /// v0.1.1 амендмент (корпус-ценз, агент B2): двухаргументный
+    /// арктангенс `ATAN[y]/[x]` → Atan2(y, x), результат в градусах
+    /// (corpus/tier_b ngcgui_lib_arc2). Одноаргументный ATAN — UnaryOp::Atan.
+    Atan2,
 }
 
 /// Ссылка на переменную (§2.1 дословно).
@@ -245,13 +258,26 @@ pub enum MoveKind {
     },
 }
 
-/// Цель перехода/вызова: O-номер (Fanuc/Haas) или N-метка (Haas M97).
+/// Цель перехода/вызова: O-номер (Fanuc/Haas), N-метка (Haas M97) или
+/// именованная O-подпрограмма (LinuxCNC).
 /// (IfGoto в доке §2.4 несёт `target_label: u32` — SubTarget используется
 /// только CallSub.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// АМЕНДМЕНТ v0.1.2 (парсер D2, рулинг оркестратора из задания D2:
+// «o-call → CallSub{target: SubTarget::Named(name), args}»): добавлен
+// Named(String) для именованных O-sub LinuxCNC `o<name> sub/call` (имя —
+// произвольный текст: "factorial", "probe_y_minus"; в корпусе ×34 это
+// ~25 файлов). Copy СНЯТ (String не Copy) — единственные потребители
+// (crate::interp) компилируются без Copy; матч форматирования ошибки в
+// interp.rs дополнен arm'ом (механическое следствие — не-exhaustive match).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubTarget {
+    /// `O123` — числовая подпрограмма (Fanuc/Haas/LinuxCNC `o123 sub`).
     ONumber(u32),
+    /// Haas M97 P<N> — вызов по N-метке блока.
     NLabel(u32),
+    /// LinuxCNC `o<name>` — именованная подпрограмма (имя до `>`,
+    /// verbatim; напр. "factorial", "probe_y_minus", "g881").
+    Named(String),
 }
 
 /// Оператор L2 (§2.4 ДОСЛОВНО). Все управляющие варианты несут
@@ -321,6 +347,20 @@ pub enum L2Stmt {
         tool_length_h: Option<u32>,
         src: SrcSpan,
     },
+    /// v0.20.1 (аддитивно, агент A — 12.2): N-метка как отдельный узел
+    /// (`N10`). КОНТРАКТ ПАРСЕРОВ (B2/D2): N-метки, достижимые GOTO/M97,
+    /// НЕ отбрасываются — носитель либо этот узел (собирается
+    /// `lowering::collect_labels` в per-body таблицу), либо таблица
+    /// [`L2Program::labels`] (заполняет парсер). Исполнение — no-op
+    /// (позиция перехода в CFG-исполнителе).
+    Label { n: u32, src: SrcSpan },
+    /// v0.20.1 (аддитивно, агент A — 12.2): возврат из подпрограммы —
+    /// M99 (Fanuc/Haas) / endsub с досрочным выходом. Парсер: M99 → этот
+    /// узел; О-конец тела БЕЗ M99 — неявный return (pop кадра делает
+    /// интерпретатор на выходе из тела, семантика одинаковая). Возврат-
+    /// ЗНАЧЕНИЕ (LinuxCNC `return [expr]`, endsub-retval) — вне D0–D3
+    /// (ценз-пробел ценза B: corpus ×3).
+    Return { src: SrcSpan },
     /// Уже канонический L1-оп (passthrough конвейера; grammar v0.4, L1 v0.20).
     L1Op(Op),
 }
@@ -337,7 +377,9 @@ impl L2Stmt {
             | L2Stmt::IfThen { src, .. }
             | L2Stmt::While { src, .. }
             | L2Stmt::CallSub { src, .. }
-            | L2Stmt::RtcpMode { src, .. } => Some(src),
+            | L2Stmt::RtcpMode { src, .. }
+            | L2Stmt::Label { src, .. }
+            | L2Stmt::Return { src } => Some(src),
             L2Stmt::L1Op(_) => None,
         }
     }
@@ -370,6 +412,13 @@ pub struct L2Program {
     pub stmts: Vec<L2Stmt>,
     /// Обнаруженные парсером подпрограммы (поиск CallSub по SubTarget).
     pub subs: Vec<L2Sub>,
+    /// v0.20.1: label-таблица, ЗАПОЛНЯЕТ ПАРСЕР (контракт B2/D2):
+    /// `N<номер> → индекс stmt` в `stmts` (индекс помеченного оператора;
+    /// переход GOTO продолжает С него). N-метки, достижимые GOTO/M97
+    /// в ГЛАВНОМ блоке, не отбрасываются. Метки в телах subs — через узлы
+    /// [`L2Stmt::Label`] (per-body сбор в `lowering::collect_labels`).
+    /// При конфликте с собранными из узлов — поле парсера имеет приоритет.
+    pub labels: std::collections::BTreeMap<u32, usize>,
 }
 
 impl L2Program {
@@ -378,6 +427,16 @@ impl L2Program {
         Self {
             stmts: Vec::new(),
             subs: Vec::new(),
+            labels: std::collections::BTreeMap::new(),
+        }
+    }
+    /// Конструктор (шорткат тестов/парсеров): stmts + subs, labels пусты
+    /// (парсер, строящий таблицу меток, заполняет поле вручную после).
+    pub fn new(stmts: Vec<L2Stmt>, subs: Vec<L2Sub>) -> Self {
+        Self {
+            stmts,
+            subs,
+            labels: std::collections::BTreeMap::new(),
         }
     }
     /// Поиск подпрограммы по цели (первое совпадение).
