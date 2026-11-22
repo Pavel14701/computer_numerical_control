@@ -183,6 +183,17 @@ fn wcs_from_p(p: u8) -> Wcs {
     }
 }
 
+/// Осевые слова хода в блоке: XYZ — словарные слова (b.words); A/B/C/U/V/W —
+/// rotary вне словаря (в unsupported_words — WordKind их не классифицирует).
+/// По словам, а не по байтам raw-строки: буквы в тексте комментария
+/// («(A : 0 ; C : 0 )» в ncm-файлах) движением не являются.
+fn block_has_motion_axis_words(b: &Block) -> bool {
+    ['X', 'Y', 'Z'].iter().any(|l| b.word(*l).is_some())
+        || b.unsupported_words
+            .iter()
+            .any(|w| matches!(w.letter, 'A' | 'B' | 'C' | 'U' | 'V' | 'W'))
+}
+
 fn wcs_to_p(w: &Wcs) -> u8 {
     match w {
         Wcs::G54 => 1,
@@ -250,6 +261,19 @@ struct Ctx {
     prev_is_machine: bool,    // последний motion был G53
     prev_wcs: Wcs,            // reading prev_end (wcs или Machine)
     pos_mach: Option<Point3>, // машинные координаты текущей позиции
+    /// Chain-continuity через Raw-блоки (Q11-механизм; инвентаризация
+    /// Tier A#3, wave 2 v0.21-кандидат): Raw-носитель с осевыми словами
+    /// (G41/G43-строки с X/Y/Z, rotary-only `G0 A0.`) представляет РЕАЛЬНОЕ
+    /// движение контроллера, которое AST L1 не выражает (split-parse
+    /// запрещён как скрытая декомпозиция). Позиционная цепочка РАЗРЫВАЕТСЯ:
+    /// следующий ход парсится от start=unknown — RAPID/LINEAR с полным end
+    /// Ok от unknown; ARC / частичный end / G91 → честный E_RUNTIME_STATE
+    /// вместо ложной «невозможной дуги / radius mismatch», валидировавшейся
+    /// от СТАРОЙ позиции (comp311, placa, ncm_g41_d, ncm_g43_g69).
+    /// Сбрасывается в update_pos — ход с явным end восстанавливает цепочку.
+    /// prev_end/anchor при этом НЕ чистятся: разрыв «после genuinely-unknown»
+    /// — не разрыв (a) «старт программы», дефолт-0 недоступен (SPEC §2 v0.11).
+    pos_unknown: bool,
     ops: Vec<Op>,
     notices: Vec<Notice>,
     units_established: bool, // первое слово G20/G21 устанавливает (SPEC §2.5)
@@ -395,6 +419,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         prev_is_machine: false,
         prev_wcs: Wcs::G54,
         pos_mach: None,
+        pos_unknown: false,
         ops: Vec::new(),
         notices: Vec::new(),
         units_established: false,
@@ -612,6 +637,15 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         // push_raw (вызов ТОЛЬКО на raw-ветках; легальный путь обрабатывает
         // G92/G10 в process_tail — двойная обработка недопустима).
         absorb_frame_structs(ctx, b)?;
+        // Chain-break через Raw-блок (Ctx.pos_unknown, инвентаризация
+        // Tier A#3): блок с осевыми словами — реальное движение контроллера
+        // (`G41 G1 Y4` ведёт Y в 4; `G0 A0.` при RTCP двигает TCP), ход
+        // непредставим → позиция после блока неизвестна. Без break следующий
+        // ход валидировался бы от СТАРОЙ позиции → ложные «невозможная дуга
+        // / radius mismatch» (зонд: с G41-блоком отказ, без — OK).
+        if block_has_motion_axis_words(b) {
+            ctx.pos_unknown = true;
+        }
         ctx.push(op);
         return Ok(());
     }
@@ -858,7 +892,16 @@ fn reading_now(ctx: &Ctx, g53: bool) -> Result<Option<Point3>, Vec<Diagnostic>> 
                 )]);
             }
         }
+        // §5.3-инварианты текста проверены выше; позиционно цепочка разорвана
+        // Raw-носителем с осевыми словами (Ctx.pos_unknown) → unknown.
+        if ctx.pos_unknown {
+            return Ok(None);
+        }
         return Ok(machine_start(ctx));
+    }
+    // Chain-break через Raw-блок (Q11): чтение неизвестно до явного end.
+    if ctx.pos_unknown {
+        return Ok(None);
     }
     let base = if ctx.prev_end.is_none() {
         // (a) первый motion-оп: якорь = frame_preset / wcs_set_here (той же WCS).
@@ -920,7 +963,10 @@ fn resolve_end(
     allow_controller_default: bool,
 ) -> Result<Option<Point3>, Vec<Diagnostic>> {
     let rv = reading.as_ref().map(e3);
-    let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
+    // Разрыв цепочки Raw-носителем (pos_unknown) — НЕ точка разрыва (a):
+    // дефолт-0 контроллера применим только на старте программы, до ходов.
+    let at_start =
+        allow_controller_default && reading.is_none() && ctx.prev_end.is_none() && !ctx.pos_unknown;
     let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
         v[i] = match b.word(w) {
@@ -1254,6 +1300,7 @@ fn update_pos(ctx: &mut Ctx, g53: bool, end: Point3) {
     ctx.prev_is_machine = g53;
     ctx.prev_wcs = ctx.wcs;
     ctx.g92_shift = [0.0; 3];
+    ctx.pos_unknown = false; // ход с явным end восстановил цепочку (Q11)
 }
 
 fn add3(a: &Point3, b: &Point3) -> Point3 {

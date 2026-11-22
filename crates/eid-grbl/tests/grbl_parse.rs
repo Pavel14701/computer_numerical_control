@@ -763,9 +763,14 @@ fn audit33_g91_absorbed_on_raw_line_incremental_continues() {
 
 #[test]
 fn audit33_units_absorbed_on_raw_line_g20_g43() {
-    // `G20 G43 H2 X5.` — G43/H вне словаря GRBL → RAW, но G20 абсорбирован:
+    // `G20 G43 H2` — G43/H вне словаря GRBL → RAW, но G20 абсорбирован:
     // units = inch, следующая строка читается в inch (до фикса units терялись).
-    let out = canonicalize_with_notices("G20 G43 H2 X5.\nG1 X1.0 F10.0\nM2\n", "a33u.ngc")
+    // (Прежний источник нес `X5.` на raw-строке: с v0.21 chain-break через
+    // Raw-носитель с осевыми словами такой ход делает позицию неизвестной и
+    // частичный end `G1 X1.0` честно даёт E_RUNTIME_STATE — см.
+    // v021_partial_end_after_raw_axis_block_runtime; audit-вектор целиком —
+    // units-абсорбция, осевое слово было декорацией и убрано.)
+    let out = canonicalize_with_notices("G20 G43 H2\nG1 X1.0 F10.0\nM2\n", "a33u.ngc")
         .expect("parses Ok");
     assert_eq!(
         out.program.units,
@@ -1927,4 +1932,130 @@ fn v020_tail_emit_same_dialect_honest_bytes() {
         eid_core::adapter::Adapter::emit(&ad, &bad).is_err(),
         "не-Raw оп после PEND → отказ n12"
     );
+}
+
+// ---------------------------------------------------------------------------
+// v0.21-кандидат (инвентаризация Tier A#3): chain-continuity через Raw-блоки.
+// Raw-носитель с осевыми словами представляет РЕАЛЬНОЕ движение контроллера
+// (`G41 G1 Y4` ведёт Y в 4; rotary-only `G0 A0.` при RTCP двигает TCP), ход
+// непредставим в AST L1 (split-parse запрещён) → позиционная цепочка
+// разрывается (Ctx.pos_unknown). Следующий ход — от start=unknown (Q11,
+// SPEC §2 принцип 2): ARC → честный E_RUNTIME_STATE вместо ложной
+// «невозможной дуги / radius mismatch» от СТАРОЙ позиции (зонд: с G41-блоком
+// отказ, без — OK); RAPID/LINEAR с полным end — Ok от unknown.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v021_raw_axis_block_arc_unknown_start_runtime() {
+    // comp311-мимикрия: `G41 G1 Y4` — G41 вне словаря GRBL → Raw-носитель
+    // с осевым словом Y; дуга ПОСЛЕ него парсится от unknown → честный
+    // E_RUNTIME_STATE «arc with unknown start», НЕ ложный radius-mismatch
+    // (без break: start (1,5,−1), центр (2,5,−1): ρ_start 1 vs ρ_end 2 →
+    // INVALID n5a на живом файле).
+    let r = parse("G21 G90\nG0 X1 Y5\nG1 Z-1 F60\nG41 G1 Y4\nG3 X2 Y3 I1\n");
+    let Err(d) = r else {
+        panic!("дуга от разорванной цепочки — E_RUNTIME_STATE")
+    };
+    assert_eq!(
+        d[0].code,
+        ErrorCode::RuntimeState,
+        "честный код вместо INVALID: {:?}",
+        d[0].message
+    );
+    assert!(
+        d[0].message.contains("unknown start"),
+        "диагностика указывает unknown-старт: {}",
+        d[0].message
+    );
+}
+
+#[test]
+fn v021_raw_axis_block_linear_full_end_from_unknown() {
+    // RAPID/LINEAR с ПОЛНЫМ end — Ok от unknown (Q11-механизм); Raw-носитель
+    // остаётся lossless-опом в последовательности.
+    let p = parse("G21 G90\nG0 X1 Y5\nG41 G1 Y4\nG1 X10 Y20 Z5 F60\nM2\n")
+        .expect("linear с полным end — Ok от unknown");
+    // ops: rapid, raw(G41-строка), linear, pend
+    assert!(matches!(p.ops[0], Op::Rapid { .. }));
+    assert!(matches!(p.ops[1], Op::Raw { .. }), "G41-блок — Raw");
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Unknown,
+            end,
+            ..
+        } => assert_pt(end, 10.0, 20.0, 5.0),
+        other => panic!("linear start=Unknown, получен {other:?}"),
+    }
+}
+
+#[test]
+fn v021_rotary_only_raw_breaks_chain() {
+    // rotary-only `G0 A0.` (ncm_g434_rtcp/ncm_g43_g69): A/C — unsupported →
+    // Raw-носитель; RTCP-движение TCP непредставимо → цепочка разорвана,
+    // следующий linear с полным end — от start=Unknown.
+    let p = parse("G21 G90\nG0 A0.\nG1 X10 Y10 Z10 F60\nM2\n")
+        .expect("rotary-only Raw + linear от unknown — Ok");
+    assert!(matches!(p.ops[0], Op::Raw { .. }));
+    match &p.ops[1] {
+        Op::Linear {
+            start: StartPoint::Unknown,
+            ..
+        } => {}
+        other => panic!("linear start=Unknown, получен {other:?}"),
+    }
+}
+
+#[test]
+fn v021_partial_end_after_raw_axis_block_runtime() {
+    // ncm_g43_g69-механизм: `G43 Z162. H1` — Raw-носитель глотает Z162 →
+    // частичный end (`Z154.`) наследует неизвестное → честный
+    // E_RUNTIME_STATE (SPEC §2 v0.11: дефолт-0 — только на старте,
+    // pos_unknown разрывом старта НЕ является).
+    let r = parse("G21 G90\nG0 X1 Y5\nG43 Z162. H1\nZ154.\n");
+    let Err(d) = r else {
+        panic!("частичный end после разрыва — E_RUNTIME_STATE")
+    };
+    assert_eq!(d[0].code, ErrorCode::RuntimeState);
+    assert!(
+        d[0].message.contains("partial end"),
+        "диагностика: {}",
+        d[0].message
+    );
+}
+
+#[test]
+fn v021_comment_axis_letters_do_not_break_chain() {
+    // Буквы осей в ТЕКСТЕ комментария («(A : 0 ; C : 0 )» — ncm-шапки)
+    // движением не являются: разрыв по словам, не по байтам raw.
+    let p = parse("G21 G90\nG0 X1 Y5\n(A : 0 ; C : 0)\nG1 X10 Y20 Z5 F60\nM2\n")
+        .expect("комментарий не рвёт цепочку");
+    match &p.ops[1] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, 1.0, 5.0, 0.0),
+        other => panic!("chaining жив — start Known(1,5,0), получен {other:?}"),
+    }
+}
+
+#[test]
+fn v021_chain_restores_after_full_end_move() {
+    // Разрыв одноразовый: ход с явным полным end восстанавливает цепочку —
+    // следующий ход снова Known (update_pos сбрасывает pos_unknown).
+    let p =
+        parse("G21 G90\nG0 X1 Y5\nG41 X2 D1\nG1 X10 Y20 Z5 F60\nG1 X30 Y40 Z5\nM2\n").expect("Ok");
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Unknown,
+            ..
+        } => {}
+        other => panic!("первый ход после разрыва — Unknown, получен {other:?}"),
+    }
+    match &p.ops[3] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, 10.0, 20.0, 5.0),
+        other => panic!("цепочка восстановлена, получен {other:?}"),
+    }
 }

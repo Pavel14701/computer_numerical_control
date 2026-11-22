@@ -1,7 +1,9 @@
 //! Лексер GRBL 1.1 — строка → токены: слова (буква+число), комментарии,
 //! маркеры. Этап 1 (Агент C). Правила: COVERAGE §4 (N-слова, `%`, `/`),
 //! n3 (`$`-config → ConfigLine), комментарии — аннотации (SPEC §11),
-//! case-insensitive, whitespace между словами пропускается (grbl gcode.c).
+//! case-insensitive, protocol-strip байтов `c <= ' '` при приёме строки
+//! (grbl protocol.c — COVERAGE §6.68; инвентаризация Tier A-c), whitespace
+//! между словами пропускается (grbl gcode.c).
 
 use eid_core::ast::Num;
 
@@ -52,23 +54,64 @@ pub struct LexError {
 /// MAX_WORD_CHARS − 1 (буква); COVERAGE §1.2.
 const MAX_NUM_TEXT: usize = 31;
 
-/// Разбор одной строки. `\r` (CRLF) трактуется как whitespace.
+/// grbl protocol.c (source-check gnea/grbl master, COVERAGE §6.68): при приёме
+/// строки выбрасываются ВСЕ байты `c <= ' '` — «Throw away whitepace and
+/// control characters» — ДО парсера. Инвентаризация Tier A-c (wave 2):
+/// mit_cws_fresa.gcode:98 (`y58.669\x01`) — контроль-символ в конце слова;
+/// реальный GRBL такой байт молча отбрасывает, наш лексер раньше отказывал
+/// (UnexpectedChar). Пробел между буквой и числом (`X 10.5`) — тот же
+/// механизм (§4/§6.68: ядро-парсер строго, но пробелы до него не доходят).
+/// Зеркало — посимвольный префильтр ВНЕ комментариев: текст комментариев
+/// сохраняется дословно (SPEC §11 — аннотации; grbl содержимое комментариев
+/// не читает, поэтому семантического расхождения нет).
+fn is_strip_char(c: char) -> bool {
+    c.is_whitespace() || c <= '\u{20}'
+}
+
+/// Разбор одной строки. `\r` (CRLF) и все байты `<= ' '` трактованы как
+/// protocol-strip; исходные колонки сохранены для диагностики.
 pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
     let err = |col: u32, kind: LexErrorKind| LexError {
         line: line_no,
         col,
         kind,
     };
-    let cs: Vec<char> = line.chars().collect();
+    // Префильтр protocol.c + параллельный массив исходных колонок (1-based):
+    // диагностика остаётся в координатах входа, strip — в координатах grbl.
+    let mut cs: Vec<char> = Vec::with_capacity(line.len());
+    let mut cols: Vec<u32> = Vec::with_capacity(line.len());
+    let mut in_paren = false; // ( ... ) — остаток строки дословно, включая strip-байты
+    let mut in_semi = false; // ; ... — до конца строки дословно
+    for (idx, c) in line.chars().enumerate() {
+        if in_paren || in_semi {
+            cs.push(c);
+            cols.push(idx as u32 + 1);
+            if in_paren && c == ')' {
+                in_paren = false;
+            }
+        } else if c == '(' {
+            in_paren = true;
+            cs.push(c);
+            cols.push(idx as u32 + 1);
+        } else if c == ';' {
+            in_semi = true;
+            cs.push(c);
+            cols.push(idx as u32 + 1);
+        } else if is_strip_char(c) {
+            // protocol.c: выброшено до парсера
+        } else {
+            cs.push(c);
+            cols.push(idx as u32 + 1);
+        }
+    }
     let mut toks = Vec::new();
     let mut i = 0usize;
 
-    // Маркеры начала строки.
-    while i < cs.len() && cs[i].is_whitespace() {
-        i += 1;
-    }
+    // Маркеры начала строки (strip уже выполнен — ведущие пробелы gone).
     if i < cs.len() && cs[i] == '$' {
-        return Ok(vec![Tok::ConfigLine(line.trim().to_string())]);
+        // payload из ФИЛЬТРОВАННОЙ строки: strip-байты до парсера не доходят.
+        let payload: String = cs[i..].iter().collect();
+        return Ok(vec![Tok::ConfigLine(payload)]);
     }
     if i < cs.len() && cs[i] == '%' {
         return Ok(vec![Tok::Percent]);
@@ -80,7 +123,7 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
 
     while i < cs.len() {
         let c = cs[i];
-        if c.is_whitespace() {
+        if is_strip_char(c) {
             i += 1;
         } else if c == '(' {
             let start = i + 1;
@@ -89,7 +132,7 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
                 j += 1;
             }
             if j >= cs.len() {
-                return Err(err(i as u32 + 1, LexErrorKind::UnterminatedComment));
+                return Err(err(cols[i], LexErrorKind::UnterminatedComment));
             }
             toks.push(Tok::Comment {
                 style: CommentStyle::Paren,
@@ -105,9 +148,9 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
             i = cs.len();
         } else if c.is_ascii_alphabetic() {
             let letter = c.to_ascii_uppercase();
-            let word_col = i as u32 + 1;
+            let word_col = cols[i];
             i += 1;
-            while i < cs.len() && cs[i].is_whitespace() {
+            while i < cs.len() && is_strip_char(cs[i]) {
                 i += 1;
             }
             let (num_text, next) = read_number(&cs, i);
@@ -135,7 +178,7 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<Tok>, LexError> {
                 });
             }
         } else {
-            return Err(err(i as u32 + 1, LexErrorKind::UnexpectedChar(c)));
+            return Err(err(cols[i], LexErrorKind::UnexpectedChar(c)));
         }
     }
     Ok(toks)
@@ -330,6 +373,44 @@ mod tests {
             lex_line(&long, 4).unwrap_err().kind,
             LexErrorKind::WordTooLong
         );
+    }
+
+    // ===========================================================================
+    // Protocol-strip байтов `c <= ' '` (grbl protocol.c, COVERAGE §6.68;
+    // инвентаризация Tier A-c — mit_cws_fresa.gcode:98 `y58.669\x01`).
+    // ===========================================================================
+
+    #[test]
+    fn protocol_strip_bytes_le_space() {
+        // Control-символ в конце слова — реальный GRBL его отбрасывает:
+        // mit_cws_fresa:98 (`x58.667 y58.669\x01`).
+        let toks = lex_line("x58.667 y58.669\u{1}", 98).unwrap();
+        assert_eq!(
+            toks,
+            vec![word('X', "58.667"), word('Y', "58.669")],
+            "strip c <= ' ' до парсера"
+        );
+        // Strip ВНУТРИ слова: до парсера доходит «X12» (end-to-end accept,
+        // ядро-парсер strict — §6.68).
+        assert_eq!(lex_line("X1 2", 1).unwrap(), vec![word('X', "12")]);
+        // Строка из strip-байтов — пустая (grbl пропускает).
+        assert_eq!(lex_line("\u{1}\u{2}", 2).unwrap(), vec![]);
+        // Control ДО `$`-маркера — strip, конфиг распознан; payload без
+        // strip-байтов (до парсера не доходят).
+        assert_eq!(
+            lex_line("\u{1}$110=250.000", 3).unwrap(),
+            vec![Tok::ConfigLine("$110=250.000".into())]
+        );
+        // Текст комментария — ДОСЛОВНО (SPEC §11 аннотации; grbl содержимое
+        // комментариев не читает): control и пробелы внутри скобок сохранены.
+        match &lex_line("(a b\u{1}c) X5", 4).unwrap()[0] {
+            Tok::Comment { text, .. } => assert_eq!(text, "a b\u{1}c"),
+            t => panic!("ожидался комментарий, получен {t:?}"),
+        }
+        // Диагностика в ИСХОДНЫХ колонках: strip-байты не сжимают col.
+        let e = lex_line("G1 \u{1}&", 5).unwrap_err();
+        assert_eq!(e.kind, LexErrorKind::UnexpectedChar('&'));
+        assert_eq!(e.col, 5, "'&' — 5-й символ исходной строки");
     }
 
     // ===========================================================================
