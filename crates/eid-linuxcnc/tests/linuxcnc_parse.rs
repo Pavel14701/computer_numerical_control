@@ -726,6 +726,65 @@ fn unit_o_code_err_syntax() {
 }
 
 #[test]
+fn q10_o_subprogram_no_inlining_pin() {
+    // Q10 (ruling SPEC v0.19, пин «инлайнинг отклонён НАВСЕГДА для L1»):
+    // исполнение O-sub/call — этап 12 L2. Количество опов = строк с O/M98:
+    // каждая O-строка → ровно один Raw{SYNTAX}; тело sub присутствует в AST
+    // РОВНО ОДИН РАЗ (текст программы), вызовы НЕ разгораются в ходы;
+    // M98 → 1 Raw{SYNTAX} (P/L поглощены whole-line raw). Emit → reparse:
+    // число опов стабильно.
+    let src = concat!(
+        "G21 G90 G94\n",
+        "o100 sub\n",
+        "G1 X10.0000 F100.0\n",
+        "G1 X0.0000\n",
+        "o100 endsub\n",
+        "o100 call\n",
+        "o100 call\n",
+        "M98 P10 L2\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let out = a.parse(src, "osub.ngc").expect("O-файл: Ok (line-level Raw)");
+    let p = out.program;
+    // 5 строк O/M98 (4 O + 1 M98) → 5 Raw; тело — 2 Linear РОВНО ОДИН РАЗ;
+    // + PEND = 8. (Инлайнинг дал бы 2 Linear × 2 call = +4 хода.)
+    assert_eq!(p.ops.len(), 8, "нет декомпозиции: {:?}", p.ops);
+    let raws: Vec<&Op> = p.ops.iter().filter(|o| matches!(o, Op::Raw { .. })).collect();
+    let linears = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Linear { .. }))
+        .count();
+    assert_eq!(raws.len(), 5, "каждая O/M98-строка = один Raw");
+    assert_eq!(linears, 2, "тело sub НЕ инлайнится (2 × call → +0 ходов)");
+    for o in &raws {
+        match o {
+            Op::Raw { code, payload_hex, .. } => {
+                assert_eq!(code, &ErrorCode::UnsupportedSyntax);
+                assert!(
+                    payload_hex.starts_with("6F313030") || payload_hex.starts_with("4D3938"),
+                    "payload = `o100…`/`M98…`, фактически {payload_hex}"
+                );
+            }
+            other => panic!("ожидались только Raw: {other:?}"),
+        }
+    }
+    // M98: P/L-слова поглощены whole-line Raw (не Err «без потребителя»).
+    assert!(
+        raws.iter().any(|o| matches!(o, Op::Raw { payload_hex, .. }
+            if payload_hex.starts_with("4D393820"))),
+        "payload `M98 P10 L2` verbatim"
+    );
+    let text = a.emit(&p).expect("emit").text;
+    let p2 = LinuxCncAdapter::new()
+        .parse(&text, "osub2.ngc")
+        .expect("reparse")
+        .program;
+    assert_eq!(p2.ops.len(), p.ops.len(), "emit→reparse: число опов стабильно");
+}
+
+#[test]
 fn unit_while_err_syntax() {
     let src = "G21 G90\nwhile [1] do 1\nM2\n";
     let err = parse_str(src).expect_err("E_UNSUPPORTED_SYNTAX");
@@ -1729,6 +1788,306 @@ fn spec_cov_lcnc_nurbs_p_words_raw_semantics() {
         matches!(&p.ops[2], Op::Linear { .. }),
         "разбор продолжается"
     );
+}
+
+// ===========================================================================
+// spec_cov — ruling SPEC v0.19: NURBS/сплайны (G5/G5.1/G5.2/G5.3) →
+// line-level Raw{E_UNSUPPORTED_SEMANTICS} ВСЕЙ строкой, включая строки-
+// продолжения (контрольные точки P/X/Y без G-кода). Полярность — зеркально
+// eid-fanuc G06.2 NURBS (Raw{SEM}). Раньше строки-продолжения падали в
+// жёсткий Err «P-слово без потребителя» — nurbs-файлы Tier B.
+// ===========================================================================
+
+#[test]
+fn spec_cov_lcnc_nurbs_continuation_points_raw_semantics() {
+    // Ruling golden: NURBS-блок G5.2 P1 L3 / контрольные точки / G5.3 —
+    // ВСЕ 6 строк → Ok + Raw{SEM}; payload — байты строки с терминатором
+    // (same-dialect verbatim, D9); после G5.3 модальный G0 продолжается
+    // обычными ходами (bare-координаты — снова Rapid, НЕ Raw).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "F100\n",
+        "G5.2 P1 L3\n",
+        "X0 Y1 P1\n",
+        "X2 Y2 P1\n",
+        "X2 Y0 P1\n",
+        "X0 Y0 P2\n",
+        "G5.3\n",
+        "G0 X0 Y1\n",
+        "X2 Y2\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let out = a.parse(src, "nurbs.ngc").expect("ruling: Ok + Raw, НЕ Err");
+    let p = out.program;
+    // Rapid + 6 Raw (G5.2, 4 контрольные точки, G5.3) + 2 Rapid + PEND.
+    assert_eq!(p.ops.len(), 10, "{:?}", p.ops);
+    for (k, (label, expect_prefix)) in [
+        ("G5.2 P1 L3", "47352E32205031204C33"),
+        ("X0 Y1 P1", "5830205931205031"),
+        ("X2 Y2 P1", "5832205932205031"),
+        ("X2 Y0 P1", "5832205930205031"),
+        ("X0 Y0 P2", "5830205930205032"),
+        ("G5.3", "47352E33"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let op = k + 1; // ops[0] — якорный Rapid
+        match &p.ops[op] {
+            Op::Raw { code, payload_hex, .. } => {
+                assert_eq!(*code, ErrorCode::UnsupportedSemantics, "строка `{label}`");
+                assert!(
+                    payload_hex.starts_with(expect_prefix),
+                    "`{label}`: payload = `{expect_prefix}…`, фактически {payload_hex}"
+                );
+            }
+            other => panic!("op {op} должен быть Raw (`{label}`): {other:?}"),
+        }
+    }
+    assert!(matches!(&p.ops[7], Op::Rapid { .. }), "после G5.3 — ходы");
+    assert!(matches!(&p.ops[8], Op::Rapid { .. }), "модальный G0 жив");
+    assert!(matches!(&p.ops.last(), Some(Op::ProgramEnd { .. })));
+    // Диагностики Ok-пути: 6 × Raw{SEM}.
+    let sem = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == ErrorCode::UnsupportedSemantics)
+        .count();
+    assert_eq!(sem, 6, "6 диагностик UnsupportedSemantics");
+    // Reason — ruling-формулировка, зеркально fanuc G06.2 NURBS.
+    assert!(
+        out.diagnostics.iter().any(|d| {
+            d.message.contains("NURBS")
+                && d.message.contains("этап 12")
+                && d.message.contains("Raw-строки")
+        }),
+        "reason: NURBS/этап 12/Raw-строки: {:?}",
+        out.diagnostics.first().map(|d| &d.message)
+    );
+}
+
+#[test]
+fn spec_cov_lcnc_nurbs_g5_g51_open_lines_raw_and_mode_clear() {
+    // G5 (кубический сплайн) и G5.1 (квадратичный) — та же диспозиция
+    // Raw{SEM}; строки-продолжения (bare X/Y в сплайн-режиме) — Raw; явный
+    // motion-G (G1) РАЗРЫВАЕТ модальный сплайн → следующие bare-координаты
+    // снова обычные ходы (регресс «режим не прилип навсегда»).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "F100\n",
+        "G5 X0 Y1\n",
+        "X2 Y2\n",
+        "G1 X5.0000 Y5.0000\n",
+        "X7.0000 Y7.0000\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "g5.ngc").expect("Ok + Raw").program;
+    // Rapid(якорь) + Raw(G5) + Raw(X2 Y2) + Linear + Linear + PEND.
+    assert_eq!(p.ops.len(), 6, "{:?}", p.ops);
+    let g5_hex = match &p.ops[1] {
+        Op::Raw { code, payload_hex, .. } => {
+            assert_eq!(code, &ErrorCode::UnsupportedSemantics, "G5-строка → Raw SEM");
+            payload_hex.as_str()
+        }
+        other => panic!("op 1 должен быть Raw (G5): {other:?}"),
+    };
+    assert!(g5_hex.starts_with("473520"), "payload `G5 …`: {g5_hex}");
+    let cont_hex = match &p.ops[2] {
+        Op::Raw { code, payload_hex, .. } => {
+            assert_eq!(
+                code, &ErrorCode::UnsupportedSemantics,
+                "продолжение X2 Y2 → Raw SEM"
+            );
+            payload_hex.as_str()
+        }
+        other => panic!("op 2 должен быть Raw (продолжение): {other:?}"),
+    };
+    assert!(cont_hex.starts_with("58322059"), "payload `X2 Y2`: {cont_hex}");
+    assert!(matches!(&p.ops[3], Op::Linear { .. }), "G1 разрывает сплайн");
+    assert!(matches!(&p.ops[4], Op::Linear { .. }), "bare X/Y — модальный G1");
+
+    // G5.1 — квадратичная форма.
+    let src51 = "G21 G90 G94\nG0 X0.0000 Y0.0000\nF100\nG5.1 X0 Y1\nX2 Y2\nM2\n";
+    let p51 = LinuxCncAdapter::new()
+        .parse(src51, "g51.ngc")
+        .expect("G5.1: Ok + Raw")
+        .program;
+    assert!(matches!(&p51.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(&p51.ops[2], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+}
+
+#[test]
+fn spec_cov_lcnc_nurbs_q_word_absorbed_in_raw_line() {
+    // Q-слово G5.2 (счётчик точек NURBS) — часть Raw-строки: ни на строке
+    // открытия, ни на строке-продолжении оно НЕ даёт
+    // «Q-слово без пекерующего цикла» (жёсткий Err).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "F100\n",
+        "G5.2 P1 Q6 X10.0000 Y10.0000\n",
+        "X20.0000 Y20.0000 Q1\n",
+        "G5.3\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "nurbs_q.ngc").expect("Q в G5.x-строках — Raw").program;
+    // Rapid + 3 Raw (G5.2/Q / продолжение с Q / G5.3) + PEND.
+    assert_eq!(p.ops.len(), 5, "{:?}", p.ops);
+    assert!(matches!(&p.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(&p.ops[2], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(&p.ops[3], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+}
+
+#[test]
+fn spec_cov_lcnc_p_word_without_consumer_still_err() {
+    // Регресс ruling: фикс НЕ маскирует настоящие опечатки. P-слово БЕЗ
+    // G5.x-контекста — по-прежнему жёсткий Err E_INVALID_INPUT:
+    //  (a) P в случайном кадре без потребителя;
+    //  (b) P после ЗАКРЫТИЯ NURBS-блока (G5.3) — режим снят, проверка жива;
+    //  (c) Q-слово без цикла — по-прежнему Err;
+    //  (d) L-слово без G10/цикла — по-прежнему Err.
+    // Легальные P (G4/G10/G64/цикл-dwell) покрыты векторами выше/other tests.
+    let a = LinuxCncAdapter::new();
+    for (src, ctx) in [
+        ("G21 G90\nG0 X1.0000 Y1.0000\nP5\nM2\n", "P в случайном кадре"),
+        (
+            "G21 G90\nG0 X1.0000 Y1.0000\nG5.2 P1 L2\nX0 Y1 P1\nG5.3\nP9\nM2\n",
+            "P после G5.3",
+        ),
+        ("G21 G90\nG0 X1.0000 Y1.0000\nQ3\nM2\n", "Q без цикла"),
+        ("G21 G90\nG0 X1.0000 Y1.0000\nL4\nM2\n", "L без G10/цикла"),
+    ] {
+        let err = a.parse(src, "regress.ngc").expect_err(ctx);
+        assert!(
+            err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+            "{ctx}: {err:?}"
+        );
+    }
+    // Сообщение «P-слово без потребителя» сохранено дословно.
+    let err = a
+        .parse("G21 G90\nG0 X1.0000 Y1.0000\nP5\nM2\n", "regress.ngc")
+        .expect_err("P без потребителя");
+    assert!(
+        err[0].message.contains("P-слово без потребителя"),
+        "{}",
+        err[0].message
+    );
+    // И контрольная точка P-слово на НЕ-сплайн строке при активном... нет
+    // режима: bare X/Y после обычного G0 — это ход, не Raw (фикс не расширяет
+    // диспозицию на файлы без G5.x).
+    let p = a
+        .parse("G21 G90\nG0 X1.0000 Y1.0000\nX2.0000 Y2.0000\nM2\n", "plain.ngc")
+        .expect("без G5.x bare-координаты — ходы, как раньше")
+        .program;
+    assert_eq!(p.ops.len(), 3); // Rapid + Rapid + PEND, Raw нет
+    assert!(!p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
+}
+
+#[test]
+fn spec_cov_lcnc_nurbs_tierb_corpus_files_ok_raw() {
+    // Приёмочный критерий ruling (SPEC v0.19): nurbs-файлы Tier B local —
+    // Ok + Raw{SEM} (parse проходит, same-dialect verbatim), НЕ Err.
+    // 4 файла Curva_* содержат `#1=…` — жёсткий лексический отказ SPEC §1.1
+    // (вне скоупа ruling: `#`-параметры — E_RUNTIME_STATE во ВСЕХ диалектах).
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tier_b/local");
+    const FIXED: &[&str] = &[
+        "lcnc_nc_files_nurbs_G5_butterfly-xy.ngc",
+        "lcnc_nc_files_nurbs_G5_butterfly-yz.ngc",
+        "lcnc_nc_files_nurbs_G5_butterfly-zx.ngc",
+        "lcnc_nc_files_nurbs_G5_leto-xy.ngc",
+        "lcnc_nc_files_nurbs_G5_nurbs-xy.ngc",
+        "lcnc_nc_files_nurbs_G5_nurbs-yz.ngc",
+        "lcnc_nc_files_nurbs_G5_nurbs-zx.ngc",
+        "lcnc_nc_files_nurbs_G5_trident-xy.ngc",
+        "lcnc_nc_files_nurbs_G5_trident-yz.ngc",
+        "lcnc_nc_files_nurbs_G5_trident-zx.ngc",
+        "lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc",
+    ];
+    let a = LinuxCncAdapter::new();
+    for name in FIXED {
+        let src = std::fs::read_to_string(dir.join(name)).expect("corpus file readable");
+        let out = a
+            .parse(&src, name)
+            .unwrap_or_else(|e| panic!("{name}: ожидался Ok + Raw, фактически Err: {e:?}"));
+        let raw_sem = out
+            .program
+            .ops
+            .iter()
+            .filter(|o| {
+                matches!(o, Op::Raw { code: ErrorCode::UnsupportedSemantics, .. })
+            })
+            .count();
+        assert!(raw_sem > 0, "{name}: ожидались Raw{{SEM}}-опы");
+        let sem_diags = out
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == ErrorCode::UnsupportedSemantics)
+            .count();
+        assert_eq!(
+            raw_sem, sem_diags,
+            "{name}: диагностики Ok-пути ⊇ {{код}} (CORPUS §1.2)"
+        );
+    }
+    // Curva_*: `#1=…` — E_RUNTIME_STATE (класс не изменился ruling'ом).
+    for name in [
+        "lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc",
+        "lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc",
+        "lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc",
+        "lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc",
+    ] {
+        let src = std::fs::read_to_string(dir.join(name)).expect("corpus file readable");
+        let err = a
+            .parse(&src, name)
+            .expect_err("{name}: `#`-параметр — жёсткий отказ SPEC §1.1");
+        assert!(
+            err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+            "{name}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn spec_cov_lcnc_nurbs_same_dialect_verbatim_roundtrip() {
+    // R1-класс на NURBS: same-dialect emit → payload байт-в-байт (включая
+    // терминаторы), reparse ≡ (semantic_diff 0).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G5.2 P1 L3\n",
+        "X0 Y1 P1\n",
+        "G5.3\n",
+        "M2\n",
+    );
+    let a = LinuxCncAdapter::new();
+    let p = a.parse(src, "rt.ngc").expect("Ok").program;
+    let text = a.emit(&p).expect("emit").text;
+    for needle in ["G5.2 P1 L3\n", "X0 Y1 P1\n", "G5.3\n"] {
+        assert!(text.contains(needle), "verbatim потерян: {needle:?} в {text:?}");
+    }
+    let p2 = LinuxCncAdapter::new().parse(&text, "rt2.ngc").expect("reparse").program;
+    let raws1: Vec<_> = p
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Raw { payload_hex, .. } => Some(payload_hex.clone()),
+            _ => None,
+        })
+        .collect();
+    let raws2: Vec<_> = p2
+        .ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Raw { payload_hex, .. } => Some(payload_hex.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(raws1, raws2, "payload байт-в-байт (R1-text-класс)");
+    let d = semantic_diff(&p, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]

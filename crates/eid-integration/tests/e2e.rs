@@ -806,6 +806,54 @@ fn e2e_fanuc_raw_rule_cross_refusal_and_same_dialect_verbatim() {
     }
 }
 
+#[test]
+fn e2e_linuxcnc_nurbs_raw_rule_cross_refusal_and_same_dialect_verbatim() {
+    // Ruling SPEC v0.19 (полярность fanuc G06.2 NURBS / haas Macro B):
+    // linuxcnc-файл с NURBS-блоком (G5.2 … G5.3 + P/X/Y контрольные точки,
+    // включая строки-продолжения) — parse Ok + line-level Raw{SEM};
+    // кросс-диалект linuxcnc → grbl-1.1 с Raw → честный
+    // E_RAW_UNTRANSLATABLE (SPEC §8.2, правило двух классов);
+    // same-dialect linuxcnc → linuxcnc → verbatim (SPEC §8.1).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X0.0000 Y0.0000 Z5.0000\n",
+        "F100\n",
+        "G5.2 P1 L3\n",
+        "X0 Y1 P1\n",
+        "X2 Y2 P1\n",
+        "G5.3\n",
+        "G0 X0 Y1\n",
+        "M2\n",
+    );
+
+    let err = translate_text("linuxcnc", "grbl-1.1", src, "nurbs.linuxcnc.ngc")
+        .expect_err("кросс-диалект linuxcnc с NURBS-Raw обязан отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags.len(), 1, "ровно одна диагностика: {diags:?}");
+            assert_eq!(diags[0].code, ErrorCode::RawUntranslatable);
+            assert!(diags[0].message.contains("RAW op(s)"), "{diags:?}");
+        }
+        other => panic!("ожидался Err(Emit/RawUntranslatable), фактический: {other:?}"),
+    }
+
+    let out = translate_text("linuxcnc", "linuxcnc", src, "nurbs.linuxcnc.ngc")
+        .expect("same-dialect linuxcnc → verbatim NURBS-Raw легален");
+    assert_eq!(out.from, "linuxcnc");
+    assert_eq!(out.to, "linuxcnc");
+    for needle in ["G5.2 P1 L3", "X0 Y1 P1", "X2 Y2 P1", "G5.3"] {
+        assert!(
+            out.emitted.contains(needle),
+            "NURBS payload потерян при same-dialect: {needle:?} в {:?}",
+            out.emitted
+        );
+    }
+    // parse-back: выход читается linuxcnc-адаптером, AST эквивалентен.
+    let a = parse("linuxcnc", src, "in.linuxcnc.ngc");
+    let b = parse("linuxcnc", &out.emitted, "out.linuxcnc.ngc");
+    assert_equivalent(&a, &b, "linuxcnc NURBS same-dialect parse-back");
+}
+
 // ---------------------------------------------------------------------------
 // Этап 8 (агент C, emission-профили fanuc/haas): e2e через
 // translate_text_with_profile — проброс флагов профиля до эмиссии

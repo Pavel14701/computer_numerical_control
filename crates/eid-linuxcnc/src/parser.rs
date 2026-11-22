@@ -154,6 +154,13 @@ struct St {
     diags: Vec<Diagnostic>,
     /// Drop-with-notice, собранные на ходе разбора (zero-sweep дуги, §10.6).
     notices: Vec<Notice>,
+    /// Активен G5.x-блок (сплайн/NURBS, ruling SPEC v0.19): G5/G5.1/G5.2
+    /// открывают, G5.3 закрывает, явный motion-G отменяет (модальная группа
+    /// motion). Пока активен, строки-продолжения БЕЗ G-кода (контрольные
+    /// точки P/X/Y) — line-level Raw{E_UNSUPPORTED_SEMANTICS}, как и строка
+    /// G5.x сама; иначе P-слово точек давало бы ложный
+    /// «P-слово без потребителя» (13 nurbs-файлов Tier B).
+    spline_active: bool,
 }
 
 impl St {
@@ -304,6 +311,7 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
         ops: Vec::new(),
         diags: Vec::new(),
         notices: Vec::new(),
+        spline_active: false,
     };
 
     for ld in &lines {
@@ -595,7 +603,16 @@ fn parse_block(
     };
     for &(maj, min) in &gs {
         let found = match (maj, min) {
-            (5, _) | (33, _) => Some((
+            // Ruling SPEC v0.19: G5/G5.1/G5.2/G5.3 — РАСПОЗНАННЫЕ конструкции
+            // (синтаксис есть), но семантика NURBS/сплайнов не представима
+            // ходами (этап 12 L2) → вся строка Raw{SEMANTICS}; P/X/Y (и Q —
+            // счётчик точек NURBS) — часть Raw-строки. Полярность — зеркально
+            // eid-fanuc G06.2 (Raw{SEM}, «NURBS interpolation»).
+            (5, _) => Some((
+                ErrorCode::UnsupportedSemantics,
+                "NURBS/сплайны — семантика не представима ходами (этап 12 L2); P/X/Y контрольные точки — часть Raw-строки (COVERAGE §2.1)",
+            )),
+            (33, _) => Some((
                 ErrorCode::UnsupportedSemantics,
                 "семантика не представима ходами (COVERAGE §2.1)",
             )),
@@ -654,6 +671,36 @@ fn parse_block(
             raw_reason = Some((format!("{}: {r}", gname(maj, min)), c));
             break;
         }
+    }
+    // Состояние G5.x-блока (ruling SPEC v0.19): G5/G5.1/G5.2 открывают
+    // сплайн-режим, G5.3 закрывает NURBS-блок; явный motion-G (модальная
+    // группа motion) отменяет модальный сплайн — дальнейшие голые координаты
+    // снова обычные ходы. Фиксируется ДО raw-ветки: строки-продолжения сами
+    // уходят в Raw (ниже) и раннего return'а ещё не было.
+    if gs.iter().any(|&(maj, min)| (maj, min) == (5, 3)) {
+        st.spline_active = false;
+    } else if gs
+        .iter()
+        .any(|&(maj, min)| matches!((maj, min), (5, 0) | (5, 1) | (5, 2)))
+    {
+        st.spline_active = true;
+    } else if gs.iter().any(|&(maj, min)| {
+        (min == 0 && matches!(maj, 0 | 1 | 2 | 3 | 33 | 38 | 73 | 74 | 76 | 80 | 81..=89))
+            || (maj, min) == (33, 1)
+    }) {
+        st.spline_active = false;
+    }
+    // Строки-продолжения G5.x-блока (контрольные точки `X.. Y.. P..` без
+    // G-кода — модальный сплайн, реальный LinuxCNC исполняет их как часть
+    // NURBS-блока) — та же диспозиция, что и строка G5.x: вся строка →
+    // Raw{E_UNSUPPORTED_SEMANTICS}; P/Q/L — часть Raw-строки. Без этого
+    // P-слово точек падало в «P-слово без потребителя» (жёсткий Err всего
+    // файла — 11 nurbs-файлов Tier B, ruling SPEC v0.19).
+    if raw_reason.is_none() && st.spline_active && gs.is_empty() {
+        raw_reason = Some((
+            "NURBS/сплайны — строка-продолжение G5.x-блока: P/X/Y контрольные точки — часть Raw-строки, семантика не представима ходами (этап 12 L2) (COVERAGE §2.1)".into(),
+            ErrorCode::UnsupportedSemantics,
+        ));
     }
     // G10 с L∉{2,20} → REQUIRES (COVERAGE §2.3). G10 без L — E_INVALID_INPUT
     // (см. поток G10 ниже).
