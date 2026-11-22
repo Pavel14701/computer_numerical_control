@@ -154,11 +154,11 @@ Kill-rate fanuc **76.4% → 90.3%** (1150 мутантов на v0.2.0-коде)
 
 ### 9.2 Emission-профили этапа 8 (agent C, 2a365cc)
 
- M30|M02 (validate отвергает M02 на grbl/linuxcnc — тихое игнорирование запрещено) ·  (таблица соответствия G59.x→G54.1/G154 с валидацией доменов P48/P99, notice-once «таблица подменена», неполная мапа → агрегированный отказ; fanuc map-on reparse=Raw BY DESIGN) ·  (через существующее emit_r_arcs v0.1; full-circle всегда IJK; R-roundtrip ≡ IJK semantic_diff=0). Механика: ProfileEmissionOpts в NamedAdapter-обёртках — **trait v0.2 не тронут**. 32 теста.
+`program_end_style` M30|M02 (validate отвергает M02 на grbl/linuxcnc — тихое игнорирование запрещено) · `wcs_extended_map` (таблица соответствия G59.x→G54.1/G154 с валидацией доменов P48/P99, notice-once «таблица подменена», неполная мапа → агрегированный отказ; fanuc map-on reparse=Raw BY DESIGN) · `allow_r_arcs` (через существующее emit_r_arcs v0.1; full-circle всегда IJK; R-roundtrip ≡ IJK semantic_diff=0). Механика: ProfileEmissionOpts в NamedAdapter-обёртках — **trait v0.2 не тронут**. 32 теста.
 
 ### 9.3 R10 — параллельный корпус (agent E, 2f7f778)
 
-Send+Sync применён:  (std::thread::scope + AtomicUsize-очередь, **0 новых deps**). **Parity бит-в-байт** seq↔par(16) на полном Tier B; скорость честно: мелкие ×4.06, большие ×2.10 (Амдал: SmilinJack 3.5MB — критический путь). Arc-SHARED паттерн (Arc::as_ptr identity в 8 потоках).
+Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUsize-очередь, **0 новых deps**). **Parity бит-в-байт** seq↔par(16) на полном Tier B; скорость честно: мелкие ×4.06, большие ×2.10 (Амдал: SmilinJack 3.5MB — критический путь). Arc-SHARED паттерн (Arc::as_ptr identity в 8 потоках).
 
 ### 9.4 Документы и корпус
 
