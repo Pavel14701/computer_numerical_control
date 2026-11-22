@@ -215,13 +215,45 @@ fn payload_hex(line: &str) -> String {
     s
 }
 
+/// Маркер Raw-носителя units-switch (SPEC §2.5 принцип 5, ревизия v0.21):
+/// префикс зеркален linuxcnc-адаптеру (v021-носитель) — тесты обоих
+/// адаптеров пинуют «units switch mid-program».
+pub(crate) const UNITS_SWITCH_REASON_PREFIX: &str = "units switch mid-program";
+
+/// Reason-текст носителя смены системы чтения (N7-снятие, v0.21).
+const UNITS_SWITCH_REASON: &str = "units switch mid-program (SPEC §2.5 принцип 5, ревизия v0.21 — GRBL исполняет G20/G21 в любой позиции, gcode.c case 20/21: gc_state.units переключается mid-stream, внутренняя позиция — mm, конверсия чтений внутренняя): смена системы чтения; chaining через конверсию 25.4 В ПРЕДЕЛАХ ДОПУСКА (4dp-дрейф ≤2e-5 мм < ε_pos); опа units в AST v0.2 нет — носитель line-level Raw (байты lossless same-dialect, кросс-диалект — отказ, правило Raw)";
+
+/// Фактор конверсии чтения из системы `from` в `to` (SPEC §2.5 v0.21):
+/// value_in_to = value_in_from × factor (мм→дюйм ÷25.4, дюйм→мм ×25.4).
+fn units_factor(from: Units, to: Units) -> f64 {
+    match (from, to) {
+        (Units::Mm, Units::In) => 1.0 / 25.4,
+        (Units::In, Units::Mm) => 25.4,
+        _ => 1.0,
+    }
+}
+
+/// Чтение в новой системе: 4dp-квантование конверсии (num_f64) — дрейф
+/// ≤2e-5 мм < ε_pos (SPEC §2.5 v0.21: конверсия «в пределах допуска»).
+fn conv_reading(p: &Point3, factor: f64) -> Point3 {
+    pt(
+        p.x.value() * factor,
+        p.y.value() * factor,
+        p.z.value() * factor,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Ctx — модальное состояние канонизации (SPEC §4) + позиционное отслеживание
 // ---------------------------------------------------------------------------
 
 struct Ctx {
     file: Arc<str>,
-    units: Units,          // G20/G21 (дефолт Mm = дефолт GRBL)
+    units: Units, // ТЕКУЩАЯ система чтения: G20/G21 переключают mid-stream (v0.21)
+    /// Заголовок Program.units — первое ЧИСТОЕ вхождение G20/G21 (до ходов и
+    /// чтений). Смена после ходов заголовок НЕ меняет (дефолт Mm честен —
+    /// linuxcnc-зеркало v021: «Program.units остаётся дефолт mm»).
+    program_units: Option<Units>,
     dist_abs: bool,        // G90=true / G91=false
     feed_inverse: bool,    // G93
     plane: GCode,          // G17/G18/G19 — модальное состояние парсера (SPEC §4)
@@ -257,6 +289,10 @@ struct Ctx {
     /// фрейма prev_end; применяется в reading_now поверх базового чтения,
     /// сбрасывается в update_pos (после хода prev_end уже в новом фрейме).
     g92_shift: [f64; 3],
+    /// Единицы ОПРЕДЕЛЕНИЯ пресетки (стартовая G92 / G10 L20): header
+    /// g92_values хранится verbatim в этих единицах; anchor — чтение,
+    /// конвертируется в текущие единицы при units-switch (v0.21).
+    anchor_units: Units,
     prev_end: Option<Point3>, // end последнего motion-опа (в его reading)
     prev_is_machine: bool,    // последний motion был G53
     prev_wcs: Wcs,            // reading prev_end (wcs или Machine)
@@ -274,9 +310,13 @@ struct Ctx {
     /// prev_end/anchor при этом НЕ чистятся: разрыв «после genuinely-unknown»
     /// — не разрыв (a) «старт программы», дефолт-0 недоступен (SPEC §2 v0.11).
     pos_unknown: bool,
+    /// На ТЕКУЩЕМ блоке была смена системы чтения (G20/G21 mid-stream,
+    /// v0.21): блок уходит в line-level Raw-носитель (process_block 7b).
+    /// Сброс — в absorb_frame_state (по кадру, как feed_restated).
+    line_units_switch: bool,
     ops: Vec<Op>,
     notices: Vec<Notice>,
-    units_established: bool, // первое слово G20/G21 устанавливает (SPEC §2.5)
+    units_established: bool, // первое слово G20/G21 устанавливает (SPEC §2.5, v0.21)
     g43_family_seen: bool,   // правило семейств §1.3 (G49): G43.1 в файле
     g92_values: Option<(Point3, Wcs)>, // Program.frame_preset — СТАРТОВАЯ пресетка
     end_count: usize,        // ProgramEnd-опов (M2/M30 после первого — Raw-хвост)
@@ -397,6 +437,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     let mut ctx = Ctx {
         file: file.clone(),
         units: Units::Mm,
+        program_units: None,
         dist_abs: true,
         feed_inverse: false,
         plane: GCode::PlaneXY,
@@ -415,11 +456,13 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         g92_def_count: 0,
         l20_count: 0,
         g92_shift: [0.0; 3],
+        anchor_units: Units::Mm,
         prev_end: None,
         prev_is_machine: false,
         prev_wcs: Wcs::G54,
         pos_mach: None,
         pos_unknown: false,
+        line_units_switch: false,
         ops: Vec::new(),
         notices: Vec::new(),
         units_established: false,
@@ -497,7 +540,10 @@ fn finalize(ctx: &mut Ctx, line_count: u32) -> Result<ParseOut, Vec<Diagnostic>>
     let program = Program {
         // grammar v0.3 — magic-строка (SPEC §10.4): изменение формата = новая версия.
         eid_version: "EID/L1 v0.3".to_string(),
-        units: ctx.units,
+        // Заголовок = первое ЧИСТОЕ вхождение G20/G21; без него — дефолт Mm
+        // (дефолт GRBL честен: смена после ходов заголовок не меняет —
+        // v0.21, linuxcnc-зеркало «st.units.unwrap_or(Mm)»).
+        units: ctx.program_units.unwrap_or(Units::Mm),
         // SPEC §3 v0.12: отсутствие G61/G61.1/G64 → exact_path (дефолт);
         // G61 — единственный path-код словаря GRBL — тоже exact_path.
         path_mode: eid_core::ast::PathMode::ExactPath,
@@ -737,7 +783,76 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     }
 
     let _ = (line, blen);
+
+    // (7b) Units-switch mid-program (SPEC §2.5 принцип 5, ревизия v0.21;
+    // снятие N7 — см. absorb_frame_state): блок со сменой системы чтения —
+    // line-level Raw-носитель (опа units в AST v0.2 нет), образец — G92-mid
+    // Raw-носитель v0.20. После веток (3)/(6)/(7): там блок уже уходит в
+    // Raw по СВОЕМУ основанию с полными байтами строки — units при этом
+    // абсорбированы в (2a), отдельный носитель не нужен (lossless тот же).
+    if ctx.line_units_switch {
+        return units_switch_carrier(ctx, b);
+    }
     process_tail(ctx, b)
+}
+
+/// Носитель смены системы чтения (v0.21): Raw-оп с байтами строки +
+/// chaining. Ход на switch-строке: grbl исполняет ВЕСЬ блок (gcode.c —
+/// units в [2], motion в [10]) — цепочка чтений продолжается в НОВОЙ
+/// системе: оп хода НЕ строится (байты строки в носителе), end
+/// разрешается в новой системе и пишет prev_end (зеркало linuxcnc v021
+/// «оп не строится — байты строки в носителе, носитель первым»). Ход,
+/// end которого неразрешим (частичный/инкрементальный при неизвестном
+/// чтении) или не исполняется (нет моды хода; G53 без G0/G1) — честный
+/// разрыв цепочки: pos_unknown (Q11-механизм fc01bb9).
+fn units_switch_carrier(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
+    let op = ctx.raw_op(
+        b,
+        &b.raw,
+        ErrorCode::UnsupportedSemantics,
+        UNITS_SWITCH_REASON,
+    );
+    // §8.6 правило 6: структурная часть (G92/G10) — до push_raw, как на
+    // прочих raw-ветках.
+    absorb_frame_structs(ctx, b)?;
+    // Мода хода: явная в кадре обновляет модальность (зеркало motion_block);
+    // дальше — позиционный эффект хода (если он был).
+    if let Some(m) = b.g_codes.iter().copied().find(|g| {
+        matches!(
+            g,
+            GCode::Rapid | GCode::Linear | GCode::ArcCw | GCode::ArcCcw
+        )
+    }) {
+        ctx.motion = Some(m);
+    }
+    let has_arc_words = ['I', 'J', 'K', 'R'].iter().any(|l| b.word(*l).is_some());
+    if block_has_motion_axis_words(b) || has_arc_words {
+        if b.g_codes.contains(&GCode::MachineFrame) {
+            // G53 на switch-строке: machine-конец физичен (конверсии не
+            // подлежит). G53 без G0/G1 grbl отказывает — ход не исполняется.
+            if matches!(ctx.motion, Some(GCode::Rapid) | Some(GCode::Linear)) {
+                match reading_now(ctx, true) {
+                    Err(_) => ctx.pos_unknown = true, // §5.3-нарушение — ход в носителе
+                    Ok(reading) => match resolve_end(ctx, b, &reading, false) {
+                        Ok(Some(end)) => update_pos(ctx, true, end),
+                        _ => ctx.pos_unknown = true,
+                    },
+                }
+            }
+        } else if ctx.motion.is_some() {
+            // Err недостижим: WCS-ветка reading_now без §5.3-гейтов не
+            // возвращает ошибок (они только в machine-ветке).
+            let reading = reading_now(ctx, false).unwrap_or(None);
+            match resolve_end(ctx, b, &reading, true) {
+                Ok(Some(end)) => update_pos(ctx, false, end),
+                _ => ctx.pos_unknown = true, // частичный/инкрементальный без чтения
+            }
+        }
+        // motion None: слова без активной моды хода grbl отказывает —
+        // позиция не меняется (pos_unknown не трогаем).
+    }
+    ctx.push(op);
+    Ok(())
 }
 
 fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
@@ -1083,6 +1198,21 @@ fn arc_block(
     // Центр: in-plane пара; linear-компонента = start (круг в плоскости старта).
     let mut c = s;
     let r_val = b.word('R').map(|n| n.value());
+    // v0.21 (инвентаризация §5, класс #9): дуга-продолжение БЕЗ offset-слов
+    // (ни I/J/K, ни R в блоке) — прежняя подстановка нулевых offsets давала
+    // ложный «arc radius mismatch» (ρ_start 0 vs ρ_end ≠ 0) вместо честной
+    // причины. Реальный GRBL = error 2 STATUS_GCODE_ARC_OFFSETS_MISSING:
+    // offsets обязательны в КАЖДОМ дуговом блоке (модального «продолжения
+    // offset'ов» предыдущей дуги у grbl нет), LinuxCNC: «I/J/K word missing
+    // with G2/G3» — оба контроллера отказывают → TRUE-ERR. Формулировка
+    // зеркальна linuxcnc-адаптеру (v021-фикс, тест-пин на подстроку).
+    // Частичная пара (например, только I) сохраняет прежнюю семантику
+    // «отсутствующая ось = 0» (COVERAGE §6.11).
+    if r_val.is_none() && b.word('I').is_none() && b.word('J').is_none() && b.word('K').is_none() {
+        return Err(vec![inval(
+            "дуга без offset-слов: в дуговом блоке нет ни I/J/K, ни R — GRBL error 2 (ARC_OFFSETS_MISSING: offsets обязательны в каждом дуговом блоке), LinuxCNC: „I/J/K word missing with G2/G3“".into(),
+        )]);
+    }
     let d0 = e[a0] - s[a0];
     let d1 = e[a1] - s[a1];
     let chord_plane = (d0 * d0 + d1 * d1).sqrt();
@@ -1303,6 +1433,78 @@ fn update_pos(ctx: &mut Ctx, g53: bool, end: Point3) {
     ctx.pos_unknown = false; // ход с явным end восстановил цепочку (Q11)
 }
 
+/// Якорь-согласование units-switch (v0.21; linuxcnc-зеркало
+/// `convert_units_anchor`): конверсия чтения применяется и к ХРАНИМОМУ end
+/// последнего motion-опа — пара `start_{i+1} == end_i` (замороженный
+/// core-verify, SPEC §2 v0.9 «точное равенство») обязана остаться бит-в-бит
+/// после конверсии, иначе «start != expected» на validate-пути CLI/emit.
+/// Дуга: center/start — та же геометрия (§6), равномерный скейл; каскад
+/// назад по бит-цепочке (start дуги == end предыдущего опа — скейлится и
+/// он), до первого rapid/linear (их start — literal-пара с нескошенным end).
+/// Вызывается ТОЛЬКО когда последний motion — WCS (machine-конец физичен,
+/// конверсии не подлежит).
+fn convert_units_anchor(ctx: &mut Ctx, factor: f64) {
+    let mut idx = match ctx
+        .ops
+        .iter()
+        .rposition(|op| matches!(op, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. }))
+    {
+        Some(i) => i,
+        None => return, // ходов нет — якоря нет
+    };
+    let mut need_end = true;
+    loop {
+        // Каскадная связь с предыдущим опом — ДО масштабирования: start дуги
+        // был бит-равен end предыдущего опа?
+        let cascade = match &ctx.ops[idx] {
+            Op::Arc {
+                start: StartPoint::Known(p),
+                ..
+            } if idx > 0
+                && matches!(
+                    &ctx.ops[idx - 1],
+                    Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. }
+                ) =>
+            {
+                let e = match &ctx.ops[idx - 1] {
+                    Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => e3(end),
+                    _ => unreachable!("проверено выше"),
+                };
+                e == [p.x.value(), p.y.value(), p.z.value()]
+            }
+            _ => false,
+        };
+        {
+            let op = &mut ctx.ops[idx];
+            if need_end {
+                if let Some(end) = match op {
+                    Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => {
+                        Some(end)
+                    }
+                    _ => None,
+                } {
+                    let c = conv_reading(end, factor);
+                    *end = c;
+                }
+            }
+            if let Op::Arc { start, center, .. } = op {
+                let cc = conv_reading(center, factor);
+                *center = cc;
+                if let StartPoint::Known(p) = start {
+                    let sc = conv_reading(p, factor);
+                    *p = sc;
+                }
+            }
+        }
+        if cascade && idx > 0 {
+            idx -= 1;
+            need_end = true;
+        } else {
+            return;
+        }
+    }
+}
+
 fn add3(a: &Point3, b: &Point3) -> Point3 {
     let [x, y, z] = e3(a);
     let [u, v, w] = e3(b);
@@ -1337,10 +1539,22 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 
     // Провенанс F-кадра — по кадру (v0.2 волна 3): сброс на начале блока.
     ctx.feed_restated = false;
+    // Маркер носителя units-switch — по кадру (v0.21): сброс на начале блока.
+    ctx.line_units_switch = false;
 
-    // Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
-    // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
-    // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12); и на RAW-кадре.
+    // Единицы — ревизия SPEC §2.5 принцип 5 v0.21 (инвентаризация Tier C,
+    // снятие N7): реальный grbl исполняет G20/G21 в ЛЮБОЙ позиции (gcode.c
+    // case 20/21 — gc_state.units переключается mid-stream; внутренняя
+    // позиция хранится в mm, конверсия чтений внутренняя) — прежний Err
+    // «одна система на программу» был тем же недоразумением, что G92-mid/
+    // bare-T (директива ревью). Первое ЧИСТОЕ вхождение (до ходов/чтений)
+    // устанавливает заголовок Program.units (inch-файлы легальны, CORPUS
+    // #10); дальнейшие G20/G21 = смена системы чтения, число переключений
+    // НЕ ограничено. Chaining: чтение после переключения = прежнее
+    // физическое положение в НОВОЙ системе — конверсия 25.4 В ПРЕДЕЛАХ
+    // ДОПУСКА (4dp-дрейф ≤2e-5 мм < ε_pos). Носитель смены — line-level
+    // Raw (process_block 7b; опа units в AST v0.2 нет). Повтор той же
+    // системы — легальный no-op.
     for g in &b.g_codes {
         if matches!(g, GCode::UnitsIn | GCode::UnitsMm) {
             let u = if *g == GCode::UnitsIn {
@@ -1348,17 +1562,52 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
             } else {
                 Units::Mm
             };
+            // Чистое первое вхождение: ни ходов, ни чтений ещё нет —
+            // конверсии нечего делать, заголовок = система (linuxcnc-
+            // зеркало v021: «чистое первое вхождение — смена чтения не
+            // нужна»). Пресетка (anchor) или разрыв цепочки делают
+            // вхождение НЕ чистым: чтение существует (в старой системе).
+            let pure_first = !ctx.units_established
+                && ctx.prev_end.is_none()
+                && ctx.anchor.is_none()
+                && !ctx.pos_unknown
+                && ctx.g92_shift == [0.0; 3];
             if u != ctx.units {
-                if ctx.units_established {
-                    return Err(vec![err(
-                        ErrorCode::UnsupportedSemantics,
-                        "unit switch mid-program: one unit system per program (SPEC §2.5)",
-                        &ctx.file,
-                        line,
-                        blen,
-                    )]);
+                if pure_first {
+                    ctx.program_units = Some(u);
+                } else {
+                    // Смена системы чтения (вкл. ПЕРВОЕ вхождение после
+                    // mm-дефолтных ходов: Program.units остаётся дефолт Mm —
+                    // заголовок честен). Конверсия цепочки чтений: prev_end
+                    // (WCS-чтение; machine-конец физичен — конверсии не
+                    // подлежит, linuxcnc-зеркало), anchor-пресетка и
+                    // накопленный g92_shift — всё в СТАРОЙ системе.
+                    let factor = units_factor(ctx.units, u);
+                    if !ctx.prev_is_machine {
+                        if let Some(e) = ctx.prev_end.take() {
+                            ctx.prev_end = Some(conv_reading(&e, factor));
+                        }
+                        // Якорь-согласование core-verify (linuxcnc-зеркало
+                        // v021-fix, N7/eid verify): конверсия применяется и к
+                        // ХРАНИМОМУ end последнего motion-опа (пара
+                        // start_{i+1} == end_i обязана остаться бит-в-бит,
+                        // иначе «start != expected» на validate-пути CLI/emit).
+                        convert_units_anchor(ctx, factor);
+                    }
+                    if let Some((a, w)) = ctx.anchor.take() {
+                        ctx.anchor = Some((conv_reading(&a, factor), w));
+                    }
+                    for s in ctx.g92_shift.iter_mut() {
+                        *s *= factor;
+                    }
+                    ctx.anchor_units = u;
+                    ctx.line_units_switch = true;
                 }
                 ctx.units = u;
+            } else if pure_first {
+                // Первое вхождение системы ПО УМОЛЧАНИЮ (G21 при mm-дефолте):
+                // заголовок = система, смены чтения нет.
+                ctx.program_units = Some(u);
             }
             ctx.units_established = true;
         }
@@ -1511,24 +1760,44 @@ fn apply_g92(ctx: &mut Ctx, b: &Block) -> Result<G92Where, Vec<Diagnostic>> {
             let values = Point3 { x, y, z };
             ctx.g92_values = Some((values.clone(), ctx.wcs));
             ctx.anchor = Some((values, ctx.wcs));
+            ctx.anchor_units = ctx.units; // слова кадра — в текущей системе
         } else {
             // Повторная G92 до ходов: per-axis merge пресетки (зонд 3:
             // неуказанные оси чтение не меняют; машина не двигалась, поэтому
             // replace-по-пересчёту (зонд 2) == merge заданных осей).
-            let mut merged = ctx.g92_values.clone().expect("g92_def_count > 0");
+            // Merge — по ЧТЕНИЮ: anchor живёт в ТЕКУЩИХ единицах чтения
+            // (v0.21: units могли переключиться после первой пресетки —
+            // anchor конвертируется из anchor_units; указанные оси — слова
+            // кадра в текущей системе). Header g92_values — verbatim в
+            // единицах ОПРЕДЕЛЕНИЯ (anchor_units): указанные оси
+            // конвертируются из текущих, неуказанные остаются verbatim.
+            let mut header = ctx.g92_values.clone().expect("g92_def_count > 0");
+            let mut reading = ctx.anchor.clone().expect("g92_def_count > 0 → anchor");
+            let f_cur_to_def = units_factor(ctx.units, ctx.anchor_units);
             for (i, l) in words {
                 if let Some(v) = b.word(l) {
-                    let n = verbatim(v);
+                    let n = verbatim(v); // в ТЕКУЩИХ единицах чтения
                     match i {
-                        0 => merged.0.x = n,
-                        1 => merged.0.y = n,
-                        _ => merged.0.z = n,
+                        0 => {
+                            header.0.x = num_f64(n.value() * f_cur_to_def);
+                            reading.0.x = n;
+                        }
+                        1 => {
+                            header.0.y = num_f64(n.value() * f_cur_to_def);
+                            reading.0.y = n;
+                        }
+                        _ => {
+                            header.0.z = num_f64(n.value() * f_cur_to_def);
+                            reading.0.z = n;
+                        }
                     }
                 }
             }
-            merged.1 = ctx.wcs;
-            ctx.g92_values = Some(merged.clone());
-            ctx.anchor = Some(merged);
+            header.1 = ctx.wcs;
+            reading.1 = ctx.wcs;
+            ctx.g92_values = Some(header);
+            ctx.anchor_units = ctx.units;
+            ctx.anchor = Some(reading);
         }
     } else {
         // MID-программа (зонды 1–3): rebase чтения последующих ходов.
@@ -1773,6 +2042,7 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
             ctx.frame_def_count += 1;
             ctx.l20_count += 1;
             ctx.anchor = Some((delta, wcs_from_p(p)));
+            ctx.anchor_units = ctx.units; // delta — verbatim в текущей системе
             Ok(())
         }
         None => {

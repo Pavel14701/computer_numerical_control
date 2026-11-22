@@ -374,11 +374,400 @@ fn negative_n5_arcs_invalid() {
 }
 
 #[test]
-fn negative_n7_unit_switch_semantics() {
-    assert_eq!(
-        err_code(parse(&corpus("n7_unit_switch_mid"))),
-        ErrorCode::UnsupportedSemantics
+fn v021_arc_offsets_missing_true_err_pin() {
+    // v0.21 (инвентаризация §5, класс #9): дуга-продолжение БЕЗ offset-слов
+    // (ни I/J/K, ни R в блоке) — прежняя подстановка нулевых offsets давала
+    // ЛОЖНЫЙ «arc radius mismatch» (ρ_start 0 vs ρ_end). Реальный GRBL =
+    // error 2 STATUS_GCODE_ARC_OFFSETS_MISSING (offsets обязательны в
+    // КАЖДОМ дуговом блоке — модального «продолжения offset'ов» предыдущей
+    // дуги у grbl нет), LinuxCNC: «I/J/K word missing with G2/G3» → оба
+    // контроллера отказывают: TRUE-ERR, InvalidInput. Формулировка зеркальна
+    // linuxcnc-адаптеру (v021-фикс D) — тест-пин на ТОЧНУЮ подстроку.
+    let d = parse("G21 G90 G94 G17\nG0 X0 Y0 Z0\nG2 X5.0 Y5.0 F100.0\nM2\n").unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
+    assert!(
+        d[0].message.contains(
+            "дуга без offset-слов: в дуговом блоке нет ни I/J/K, ни R — GRBL error 2 (ARC_OFFSETS_MISSING: offsets обязательны в каждом дуговом блоке), LinuxCNC: „I/J/K word missing with G2/G3“"
+        ),
+        "точная зеркальная формулировка: {}",
+        d[0].message
     );
+    // Модальное продолжение дуги (G2-кадр без offset-слов после валидной
+    // дуги) — тот же TRUE-ERR с тем же текстом.
+    let d = parse(
+        "G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG2 X10.0 Y0.0 I-5.0 J0.0 F100.0\nG2 X0.0 Y0.0 F100.0\nM2\n",
+    )
+    .unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
+    assert!(d[0].message.contains("ARC_OFFSETS_MISSING"));
+    assert!(d[0].message.contains("I/J/K word missing with G2/G3"));
+    // Частичная пара (только I; J=0) — семантика §6.11 «отсутствующая ось
+    // = 0» СОХРАНЕНА (пин: не расширялся до «все или error»).
+    let p = parse("G21 G90 G94 G17\nG0 X10.0 Y0.0 Z0.0\nG2 X10.0 Y0.0 I-5.0 F100.0\nM2\n")
+        .expect("частичный I — Ok (§6.11)");
+    match &p.ops[1] {
+        Op::Arc { sweep_deg, .. } => {
+            assert!((sweep_deg.value() - 360.0).abs() <= EPS, "полное кольцо");
+        }
+        other => panic!("op 1 must be Arc, got {other:?}"),
+    }
+}
+
+#[test]
+fn v021_n7_unit_switch_mid_ok_carrier_chaining() {
+    // SPEC §2.5 принцип 5, ревизия v0.21 (инвентаризация Tier C): реальный
+    // grbl исполняет G20/G21 в любой позиции (gcode.c case 20/21 —
+    // gc_state.units переключается mid-stream, внутренняя позиция в mm,
+    // конверсия чтений внутренняя) — прежний Err N7 «одна система на
+    // программу» снят (то же недоразумение, что G92-mid/bare-T — директива
+    // ревью). Смена системы чтения = line-level Raw-носитель (опа units в
+    // AST v0.2 нет, байты lossless same-dialect) + chaining-конверсия 25.4
+    // (start следующего хода = прежнее физическое положение в НОВОЙ системе).
+    // Вектор: G21-заголовок / G0 (0,0,5) mm / G20 / G0 (10,10,5) inch / M2
+    // → [Rapid(unknown), Raw-носитель G20, Rapid(inch), PEND].
+    let out = canonicalize_with_notices(&corpus("n7_unit_switch_mid"), "n7.ngc")
+        .expect("Ok (v0.21: units-switch легален)");
+    let p = &out.program;
+    assert_eq!(
+        p.ops.len(),
+        4,
+        "[Rapid, Raw-носитель G20, Rapid(inch), PEND]: {:?}",
+        p.ops
+    );
+    assert_eq!(p.units, Units::Mm, "первое чистое вхождение = G21");
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(
+                reason.contains("units switch mid-program"),
+                "маркер chaining в reason: {reason}"
+            );
+        }
+        other => panic!("op 1 must be Raw-носитель G20, got {other:?}"),
+    }
+    // Inch-ход: старт = (0,0,5)mm = (0,0,0.1969)in — конверсия 25.4 (4dp).
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 0.0, 0.1969);
+            assert_pt(end, 10.0, 10.0, 5.0);
+            // 4dp-квантование конверсии видно в тексте Num (SPEC §10.2).
+            assert_eq!(s.z.text, "0.1969", "4dp-конверсия 5/25.4");
+        }
+        other => panic!("op 2 must be inch Rapid, got {other:?}"),
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
+    // Ok-путь без notices (носитель — Op::Raw, не notice).
+    assert!(out.notices.is_empty(), "{:?}", out.notices);
+}
+
+#[test]
+fn v021_units_switch_task_pattern_chain_inch() {
+    // N7-паттерн брифа: G21 / G0 X0 Y0 Z5 / G20 / G1 X1. F100 → chaining в
+    // inch: start следующего хода = прежнее физическое положение в НОВОЙ
+    // системе — (0,0,5)mm = (0,0,0.1969)in; неуказанные оси end наследуют
+    // чтение в inch (Y=0, Z=0.1969).
+    let p = parse("G21\nG0 X0 Y0 Z5\nG20\nG1 X1. F100.0\nM2\n").expect("Ok");
+    assert_eq!(p.ops.len(), 4, "[Rapid, Raw G20, Linear(inch), PEND]");
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            state,
+            ..
+        } => {
+            assert_pt(s, 0.0, 0.0, 0.1969);
+            assert_pt(end, 1.0, 0.0, 0.1969);
+            assert_eq!(state.feed.as_ref().map(|n| n.value()), Some(100.0));
+        }
+        other => panic!("op 2 must be inch Linear, got {other:?}"),
+    }
+    assert_eq!(p.units, Units::Mm, "заголовок = первое чистое G21");
+}
+
+#[test]
+fn v021_units_switch_reverse_and_physical_roundtrip() {
+    // Обратный switch (inch→mm) + round-trip mm→inch→mm: физическая цепочка
+    // сохраняется В ПРЕДЕЛАХ ДОПУСКА (SPEC §2.5 v0.21: конверсия «в пределах
+    // допуска», не «точна» — 4dp-дрейф ≤2e-5 мм < ε_pos). Физическая
+    // последовательность 10 → 12.7 → 10 мм (10mm = 0.3937"; 0.5" = 12.7mm).
+    let p = parse(concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10\n",        // mm: (0,0,0) → (10,0,0)
+        "G20\n",           // носитель; чтение 10mm = 0.3937"
+        "G1 X0.5 F10.0\n", // inch: start (0.3937,0,0), end (0.5,0,0)
+        "G21\n",           // носитель; чтение 0.5" = 12.7mm
+        "G1 X10 F10.0\n",  // mm: start (12.7,0,0), end (10,0,0)
+        "M2\n",
+    ))
+    .expect("Ok");
+    // [Rapid, Raw, Linear, Raw, Linear, PEND]
+    assert_eq!(p.ops.len(), 6, "{:?}", p.ops);
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            // 10mm / 25.4 = 0.39370078… → 4dp 0.3937 (дрейф 2e-5 мм < ε_pos)
+            assert_eq!(
+                (s.x.text.as_str(), s.y.text.as_str(), s.z.text.as_str()),
+                ("0.3937", "0", "0")
+            );
+            assert_pt(s, 0.3937, 0.0, 0.0);
+            // end ХРАНИТСЯ в текущей системе чтения: последующий G21-switch
+            // конвертирует якорь (convert_units_anchor, бит-пара
+            // start_{i+1} == end_i core-verify) — 0.5" → 12.7mm, та же
+            // физическая точка.
+            assert_pt(end, 12.7, 0.0, 0.0);
+        }
+        other => panic!("op 2 must be inch Linear, got {other:?}"),
+    }
+    match &p.ops[4] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            // 0.5" × 25.4 = 12.7mm — обратный switch точен (×25.4 без дрейфа)
+            assert_pt(s, 12.7, 0.0, 0.0);
+            assert_pt(end, 10.0, 0.0, 0.0);
+        }
+        other => panic!("op 4 must be mm Linear, got {other:?}"),
+    }
+    assert_eq!(p.units, Units::Mm);
+}
+
+#[test]
+fn v021_units_switch_motion_on_switch_line_carried() {
+    // Ход на switch-строке: grbl исполняет ВЕСЬ блок (units [2], motion [10])
+    // — цепочка чтений продолжается в НОВОЙ системе; оп хода НЕ строится
+    // (байты строки в носителе, носитель первым). Зеркало linuxcnc-теста
+    // v021_units_switch_mid_motion_on_switch_line. Вектор брифа:
+    // G0 X10 mm / G20 G1 X0.5 / G21 G1 X10 / G0 X20 → физическая
+    // последовательность 10 → 12.7 → 10 → 20 мм; конечный ход цепляется
+    // от 10 (последний ход switch-строки).
+    let p = parse("G21 G90 G94 G17\nG0 X10\nG20 G1 X0.5 F10.0\nG21 G1 X10 F10.0\nG0 X20\nM2\n")
+        .expect("Ok");
+    assert_eq!(p.ops.len(), 5, "{:?}", p.ops);
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    for i in [1usize, 2] {
+        match &p.ops[i] {
+            Op::Raw { code, reason, .. } => {
+                assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+                assert!(
+                    reason.contains("units switch mid-program"),
+                    "op {i}: маркер в reason: {reason}"
+                );
+            }
+            other => panic!("op {i} must be Raw-носитель, got {other:?}"),
+        }
+    }
+    match &p.ops[3] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 10.0, 0.0, 0.0);
+            assert_pt(end, 20.0, 0.0, 0.0);
+        }
+        other => panic!("op 3 must be mm Rapid, got {other:?}"),
+    }
+    assert!(matches!(&p.ops[4], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn v021_units_switch_repeated_and_default_mm_header() {
+    // Повтор той же системы — легальный no-op БЕЗ носителя (зеркало
+    // linuxcnc «st.units_mode == u → continue»); ПЕРВОЕ вхождение после
+    // mm-дефолтных ходов — смена чтения, заголовок Program.units остаётся
+    // дефолт Mm (linuxcnc-зеркало v021 «заголовок честен»).
+    let p = parse("G0 X25.4\nG20\nG1 X0.5 F10.0\nG20\nG1 X1.0 F10.0\nM2\n").expect("Ok");
+    assert_eq!(
+        p.units,
+        Units::Mm,
+        "25.4mm-ход до первого G20 — заголовок Mm"
+    );
+    // [Rapid, Raw(G20), Linear, Linear, PEND] — повтор G20 носителя не строит
+    assert_eq!(p.ops.len(), 5, "{:?}", p.ops);
+    match &p.ops[1] {
+        Op::Raw { reason, .. } => assert!(reason.contains("units switch mid-program")),
+        other => panic!("op 1 must be Raw-носитель, got {other:?}"),
+    }
+    // Чтение после no-op-повтора: 0.5" — без конверсии (та же система).
+    match &p.ops[3] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.5, 0.0, 0.0);
+            assert_pt(end, 1.0, 0.0, 0.0);
+        }
+        other => panic!("op 3 must be inch Linear, got {other:?}"),
+    }
+}
+
+#[test]
+fn v021_units_switch_parse_emit_roundtrip() {
+    // Round-trip same-dialect: носители G20/G21 в потоке (иначе семантика
+    // последующих слов потеряна) — emit → reparse: то же число опов и
+    // физическая цепочка (дрейф в пределах ε_pos).
+    let p1 = parse(concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10\n",
+        "G20\n",
+        "G1 X0.5 F10.0\n",
+        "G21\n",
+        "G1 X10 F10.0\n",
+        "M2\n",
+    ))
+    .expect("parse 1");
+    let text = eid_grbl::emit::emit(&p1).expect("emit");
+    assert!(
+        text.lines().any(|l| l.trim() == "G20"),
+        "G20-носитель в эмиттенном потоке:\n{text}"
+    );
+    assert!(
+        text.lines().any(|l| l.trim() == "G21"),
+        "G21-носитель после заголовка:\n{text}"
+    );
+    let p2 = parse(&text).expect("reparse");
+    assert_eq!(p1.ops.len(), p2.ops.len());
+    assert_eq!(p1.units, p2.units);
+    for (a, b) in p1.ops.iter().zip(&p2.ops) {
+        match (a, b) {
+            (
+                Op::Rapid {
+                    start: sa, end: ea, ..
+                }
+                | Op::Linear {
+                    start: sa, end: ea, ..
+                },
+                Op::Rapid {
+                    start: sb, end: eb, ..
+                }
+                | Op::Linear {
+                    start: sb, end: eb, ..
+                },
+            ) => {
+                assert_eq!(std::mem::discriminant(sa), std::mem::discriminant(sb));
+                if let (StartPoint::Known(pa), StartPoint::Known(pb)) = (sa, sb) {
+                    assert_pt(pa, pb.x.value(), pb.y.value(), pb.z.value());
+                }
+                assert_pt(ea, eb.x.value(), eb.y.value(), eb.z.value());
+            }
+            (Op::Raw { .. }, Op::Raw { .. }) => {}
+            (Op::ProgramEnd { .. }, Op::ProgramEnd { .. }) => {}
+            _ => panic!("вид опа разошёлся при reparse: {a:?} vs {b:?}"),
+        }
+    }
+}
+
+#[test]
+fn v021_units_switch_arc_anchor_roundtrip() {
+    // Дуга ПЕРЕД switch (каскад якоря): convert_units_anchor скейлит
+    // end+center+start дуги (та же геометрия §6, равномерный скейл) и end
+    // предыдущего rapid (бит-цепочка start дуги == end rapid); emit-inverse
+    // (geo-факторы) восстанавливает литералы — R1 round-trip + связность.
+    let p1 = parse(concat!(
+        "G21 G90 G94 G17\n",
+        "G0 X10.0 Y0.0 Z0.0\n",
+        "G2 X4.0 Y0.0 I-3.0 J0.0 F100.0\n",
+        "G20\n",
+        "G1 X0.5 F10.0\n",
+        "M2\n",
+    ))
+    .expect("parse 1");
+    // [Rapid, Arc, Raw(G20), Linear(inch), PEND]
+    assert_eq!(p1.ops.len(), 5, "{:?}", p1.ops);
+    // Якорь-согласование: end дуги и end rapid — в inch (та же физическая
+    // точка): 4mm = 0.1575" (4dp), 10mm = 0.3937".
+    match (&p1.ops[0], &p1.ops[1]) {
+        (
+            Op::Rapid { end: r_end, .. },
+            Op::Arc {
+                start: StartPoint::Known(s),
+                center: c,
+                end: a_end,
+                ..
+            },
+        ) => {
+            assert_pt(r_end, 0.3937, 0.0, 0.0);
+            assert_pt(s, 0.3937, 0.0, 0.0);
+            assert_pt(c, 0.2756, 0.0, 0.0); // 7mm = 0.2756"
+            assert_pt(a_end, 0.1575, 0.0, 0.0);
+        }
+        other => panic!("ожидались [Rapid, Arc], got {other:?}"),
+    }
+    let text = eid_grbl::emit::emit(&p1).expect("emit");
+    // Литералы восстановлены: 10/4/I-3 — до-конверсные значения.
+    assert!(
+        text.contains("G0 X10.0000 Y0.0000 Z0.0000"),
+        "rapid-литерал восстановлен:\n{text}"
+    );
+    assert!(
+        text.contains("G2 X4.0000 Y0.0000 Z0.0000 I-3.0000 J0.0000"),
+        "дуговые литералы восстановлены:\n{text}"
+    );
+    assert!(text.lines().any(|l| l.trim() == "G20"), "носитель:\n{text}");
+    let p2 = parse(&text).expect("reparse");
+    assert_eq!(p1.ops.len(), p2.ops.len());
+    for (a, b) in p1.ops.iter().zip(&p2.ops) {
+        match (a, b) {
+            (
+                Op::Rapid {
+                    start: sa, end: ea, ..
+                }
+                | Op::Linear {
+                    start: sa, end: ea, ..
+                },
+                Op::Rapid {
+                    start: sb, end: eb, ..
+                }
+                | Op::Linear {
+                    start: sb, end: eb, ..
+                },
+            ) => {
+                assert_eq!(std::mem::discriminant(sa), std::mem::discriminant(sb));
+                if let (StartPoint::Known(pa), StartPoint::Known(pb)) = (sa, sb) {
+                    assert_pt(pa, pb.x.value(), pb.y.value(), pb.z.value());
+                }
+                assert_pt(ea, eb.x.value(), eb.y.value(), eb.z.value());
+            }
+            (
+                Op::Arc {
+                    start: sa,
+                    center: ca,
+                    end: ea,
+                    sweep_deg: swa,
+                    ..
+                },
+                Op::Arc {
+                    start: sb,
+                    center: cb,
+                    end: eb,
+                    sweep_deg: swb,
+                    ..
+                },
+            ) => {
+                if let (StartPoint::Known(pa), StartPoint::Known(pb)) = (sa, sb) {
+                    assert_pt(pa, pb.x.value(), pb.y.value(), pb.z.value());
+                }
+                assert_pt(ca, cb.x.value(), cb.y.value(), cb.z.value());
+                assert_pt(ea, eb.x.value(), eb.y.value(), eb.z.value());
+                assert!((swa.value() - swb.value()).abs() <= EPS);
+            }
+            (Op::Raw { .. }, Op::Raw { .. }) => {}
+            (Op::ProgramEnd { .. }, Op::ProgramEnd { .. }) => {}
+            _ => panic!("вид опа разошёлся при reparse: {a:?} vs {b:?}"),
+        }
+    }
 }
 
 #[test]
@@ -494,11 +883,10 @@ fn spec_v012_first_units_word_establishes() {
         }
         _ => panic!("op1 не Arc"),
     }
-    // n7 (G21 в шапке → G20 после) по-прежнему Err SEMANTICS.
-    assert_eq!(
-        err_code(parse(&corpus("n7_unit_switch_mid"))),
-        ErrorCode::UnsupportedSemantics
-    );
+    // n7 v0.21 (ревизия §2.5 принцип 5): switch mid-program легален — Ok,
+    // Raw-носитель G20 + chaining-конверсия 25.4 (детально —
+    // v021_n7_unit_switch_mid_ok_carrier_chaining).
+    parse(&corpus("n7_unit_switch_mid")).expect("n7: Ok (v0.21)");
 }
 
 #[test]
@@ -1000,13 +1388,15 @@ fn spec_cov_lex_exponent_is_bad_number() {
 #[test]
 fn spec_cov_lex_stage_parse_vs_canonical_verify() {
     // interface v0.1.2: lexical-диагностика → Stage::Parse;
-    // канонизационный инвариант (unit-switch §2.5) → Stage::Verify.
+    // канонизационный инвариант (§6-геометрия, radius mismatch) →
+    // Stage::Verify. (unit-switch §2.5 с v0.21 легален — Stage-пин несёт
+    // n5a; Verify-stage n7-носителя не существует: носитель — Ok-оп.)
     use eid_core::diag::Stage;
     let d = parse("G21 G90 G94 G17\nG0 X1 Y1 Z1\nG1 &\nM2\n").unwrap_err();
     assert_eq!(d[0].code, ErrorCode::InvalidInput);
     assert_eq!(d[0].stage, Stage::Parse, "lexical должен быть Parse");
-    let d = parse(&corpus("n7_unit_switch_mid/unit_switch_mid.grbl.ngc")).unwrap_err();
-    assert_eq!(d[0].code, ErrorCode::UnsupportedSemantics);
+    let d = parse(&corpus("n5a_arc_radius_mismatch")).unwrap_err();
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
     assert_eq!(
         d[0].stage,
         Stage::Verify,

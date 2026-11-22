@@ -13,7 +13,7 @@
 //! (SPEC §8.2); эмиттер same-dialect только выводит payload как был.
 
 use crate::gcode::GCode;
-use eid_core::ast::{Coolant, Op, Program, Spindle, StartPoint, State, Units, Wcs};
+use eid_core::ast::{Coolant, Num, Op, Point3, Program, Spindle, StartPoint, State, Units, Wcs};
 use eid_core::diag::{Diagnostic, ErrorCode};
 use eid_core::emitter::fmt_num;
 
@@ -358,10 +358,164 @@ pub fn emit_with_warnings(
         ));
     }
 
-    for op in &program.ops {
-        emit_op(&mut ctx, op);
+    // Обратные факторы units-switch (v0.21, N7-снятие): маркеры G20/G21 в
+    // Raw-носителях идут в поток verbatim, репарс повторяет конверсию от тех
+    // же литералов — координаты восстанавливаются до-конверсными (R1).
+    let inv = build_units_inverse(program);
+    for (i, op) in program.ops.iter().enumerate() {
+        emit_op(&mut ctx, op, i, &inv);
     }
     Ok(ctx.out)
+}
+
+// ===========================================================================
+// Units-switch anchor: обратная конверсия на эмиссии (v0.21, N7-снятие;
+// linuxcnc-зеркало `UnitsInverse`). Парсер при смене системы чтения
+// конвертирует ХРАНИМЫЙ end последнего motion-опа
+// (canonicalize::convert_units_anchor) — иначе core-verify видит разрыв
+// пары `start_{i+1} == end_i` («start != expected», N7/eid verify). Эмиттер
+// обязан ВОССТАНОВИТЬ до-конверсные литералы: маркеры G20/G21 идут в потоке
+// verbatim (D9), репарс повторяет конверсию от тех же литералов — R1
+// round-trip по AST. Последовательности факторов применяются в обратном
+// порядке (парсер конвертировал по маркерам вперёд, с 4dp-квантованием на
+// каждом шаге — реплей симметричен).
+// ===========================================================================
+
+#[derive(Debug, Default)]
+struct UnitsInverse {
+    /// op индекс → факторы для end (rapid/linear/arc).
+    end: std::collections::HashMap<usize, Vec<f64>>,
+    /// op индекс → факторы для start+center (arc, §6-геометрия единая).
+    geo: std::collections::HashMap<usize, Vec<f64>>,
+}
+
+fn is_motion_op(op: &Op) -> bool {
+    matches!(op, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. })
+}
+
+fn motion_end_vals(op: &Op) -> Option<[f64; 3]> {
+    match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => {
+            Some([end.x.value(), end.y.value(), end.z.value()])
+        }
+        _ => None,
+    }
+}
+
+impl UnitsInverse {
+    /// Обратное значение Num: факторы в обратном порядке, 4dp-квантование на
+    /// шаге (зеркало parse-конверсии conv_reading/num_f64). Пустой/отсутствующий
+    /// список — как есть.
+    fn num_at(&self, key: &std::collections::HashMap<usize, Vec<f64>>, idx: usize, n: &Num) -> Num {
+        match key.get(&idx) {
+            Some(invs) if !invs.is_empty() => Self::apply(invs, n),
+            _ => n.clone(),
+        }
+    }
+
+    fn pt_at(
+        &self,
+        key: &std::collections::HashMap<usize, Vec<f64>>,
+        idx: usize,
+        p: &Point3,
+    ) -> Point3 {
+        Point3 {
+            x: self.num_at(key, idx, &p.x),
+            y: self.num_at(key, idx, &p.y),
+            z: self.num_at(key, idx, &p.z),
+        }
+    }
+
+    fn apply(invs: &[f64], n: &Num) -> Num {
+        let mut v = n.value;
+        for g in invs.iter().rev() {
+            v = crate::canonicalize::num_f64(v * g).value();
+        }
+        crate::canonicalize::num_f64(v)
+    }
+}
+
+/// Система, объявленная в декодированной строке маркера (последний G20/G21
+/// в блоке; grbl-словарь через crate::block::parse_file).
+fn marker_mode(payload_hex: &str) -> Option<Units> {
+    let bytes: Option<Vec<u8>> = (0..payload_hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&payload_hex[i..i + 2], 16).ok())
+        .collect();
+    let line = String::from_utf8(bytes?).ok()?;
+    let parsed = crate::block::parse_file(&line);
+    parsed.blocks.iter().find_map(|b| {
+        b.g_codes.iter().find_map(|g| match g {
+            GCode::UnitsIn => Some(Units::In),
+            GCode::UnitsMm => Some(Units::Mm),
+            _ => None,
+        })
+    })
+}
+
+/// Построение обратных факторов по маркерам UNITS_SWITCH_REASON_PREFIX
+/// (зеркало parser-конверсии: якорь = последний motion-оп до маркера,
+/// каскад назад по бит-цепочке дуг; порядок маркеров — потоковый).
+fn build_units_inverse(program: &Program) -> UnitsInverse {
+    let mut inv = UnitsInverse::default();
+    let mut mode = program.units;
+    for (i, op) in program.ops.iter().enumerate() {
+        let Op::Raw {
+            payload_hex,
+            reason,
+            ..
+        } = op
+        else {
+            continue;
+        };
+        if !reason.contains(crate::canonicalize::UNITS_SWITCH_REASON_PREFIX) {
+            continue;
+        }
+        let Some(new_mode) = marker_mode(payload_hex) else {
+            continue;
+        };
+        if new_mode == mode {
+            continue; // no-op на репарсе — конверсии не было (зеркало parse)
+        }
+        let f = if new_mode == Units::In {
+            1.0 / 25.4
+        } else {
+            25.4
+        };
+        let g = 1.0 / f;
+        // Якорь = последний motion-оп до маркера; каскад назад по бит-цепочке
+        // (равенство бит инвариантно к равномерному скейлу — связность та же,
+        // что на parse-конверсии convert_units_anchor).
+        let mut cur = (0..i).rev().find(|&j| is_motion_op(&program.ops[j]));
+        let mut need_end = true;
+        while let Some(ci) = cur {
+            if need_end {
+                inv.end.entry(ci).or_default().push(g);
+            }
+            let cascade = match &program.ops[ci] {
+                Op::Arc {
+                    start: StartPoint::Known(p),
+                    ..
+                } => {
+                    inv.geo.entry(ci).or_default().push(g);
+                    match ci.checked_sub(1).map(|j| &program.ops[j]) {
+                        Some(prev) if is_motion_op(prev) => {
+                            matches!(
+                                motion_end_vals(prev),
+                                Some(e) if e == [p.x.value(), p.y.value(), p.z.value()]
+                            )
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            cur = if cascade { Some(ci - 1) } else { None };
+            need_end = true;
+        }
+        mode = new_mode;
+    }
+    inv
 }
 
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5).
@@ -515,7 +669,7 @@ fn decode_hex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-fn emit_op(ctx: &mut Ectx, op: &Op) {
+fn emit_op(ctx: &mut Ectx, op: &Op, idx: usize, inv: &UnitsInverse) {
     match op {
         Op::Rapid {
             end, state, sub, ..
@@ -529,6 +683,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             } else {
                 ""
             };
+            // units-switch anchor (v0.21): end хранится в ТЕКУЩЕЙ системе
+            // чтения — восстановление до-конверсных литералов (R1).
+            let end = inv.pt_at(&inv.end, idx, end);
             let mut line = format!(
                 "{}{} X{} Y{} Z{}",
                 frame,
@@ -583,8 +740,19 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             }
             // I/J/K инкрементальные от СТАРТА: offsets = center − start
             // (in-plane пара: G17→I,J; G18→I,K; G19→J,K; R никогда).
-            let s = start_pt(start);
-            let c = [center.x.value(), center.y.value(), center.z.value()];
+            // units-switch anchor (v0.21): center/start дуги — та же
+            // геометрия §6, равномерный скейл → обратное восстановление
+            // обоих (geo-факторы), offsets инвариантны.
+            let s = match start {
+                StartPoint::Known(p) => {
+                    let p_inv = inv.pt_at(&inv.geo, idx, p);
+                    [p_inv.x.value(), p_inv.y.value(), p_inv.z.value()]
+                }
+                StartPoint::Unknown => [0.0, 0.0, 0.0],
+            };
+            let c_pt = inv.pt_at(&inv.geo, idx, center);
+            let c = [c_pt.x.value(), c_pt.y.value(), c_pt.z.value()];
+            let end_inv = inv.pt_at(&inv.end, idx, end);
             let (w0, ax0, w1, ax1) = arc_pair(&plane);
             let offsets = format!(
                 " {}{} {}{}",
@@ -603,9 +771,9 @@ fn emit_op(ctx: &mut Ectx, op: &Op) {
             } else {
                 format!(
                     " X{} Y{} Z{}",
-                    fmt_num(end.x.value()),
-                    fmt_num(end.y.value()),
-                    fmt_num(end.z.value())
+                    fmt_num(end_inv.x.value()),
+                    fmt_num(end_inv.y.value()),
+                    fmt_num(end_inv.z.value())
                 )
             };
             // target и offsets несут ведущий пробел; полный круг — target
