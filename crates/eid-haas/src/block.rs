@@ -314,16 +314,28 @@ mod tests {
     }
 
     #[test]
-    fn m_codes_stage1_matrix() {
-        let f = parse_file("M3;\nM30;\nM8;\nM9;\nM0;\nM6;\n");
+    fn m_codes_stage2_matrix() {
+        let f = parse_file("M3;\nM30;\nM8;\nM9;\nM0;\nM1;\nM6;\nM16;\n");
         assert_eq!(f.blocks[0].m_codes, vec![MCode::SpindleCw]);
         assert_eq!(f.blocks[1].m_codes, vec![MCode::ProgramEnd]);
         assert_eq!(f.blocks[2].m_codes, vec![MCode::CoolantFlood]);
         assert_eq!(f.blocks[3].m_codes, vec![MCode::CoolantOff]);
-        // M0/M6 — этап 2 → generic-ведро (unsupported).
-        assert!(f.blocks[4].m_codes.is_empty());
-        assert_eq!(f.blocks[4].unsupported_words[0].letter, 'M');
-        assert_eq!(f.blocks[5].unsupported_words[0].letter, 'M');
+        // Этап 2: M0/M1/M6/M16 — в словаре (диспозиции — канонизатор).
+        assert_eq!(f.blocks[4].m_codes, vec![MCode::ProgramStop]);
+        assert_eq!(f.blocks[5].m_codes, vec![MCode::OptionalStop]);
+        assert_eq!(f.blocks[6].m_codes, vec![MCode::ToolChange]);
+        assert_eq!(f.blocks[7].m_codes, vec![MCode::ToolChangeAlt]);
+        // Вендорские M (этап 2) — тоже в словаре: M7-Shower (НЕ mist),
+        // M13-тормоз 5-й оси (≠ Fanuc шпиндель+СОЖ), M29-relay (≠ rigid-tap).
+        let f = parse_file("M7;\nM13;\nM29;\nM98;\n");
+        assert_eq!(f.blocks[0].m_codes, vec![MCode::CoolantShower]);
+        assert_eq!(f.blocks[1].m_codes, vec![MCode::Brake5Release]);
+        assert_eq!(f.blocks[2].m_codes, vec![MCode::OutputRelay]);
+        assert_eq!(f.blocks[3].m_codes, vec![MCode::SubCall]);
+        // M64 — вне словаря Haas → generic-ведро (unsupported).
+        let f = parse_file("M64;\n");
+        assert!(f.blocks[0].m_codes.is_empty());
+        assert_eq!(f.blocks[0].unsupported_words[0].letter, 'M');
     }
 
     #[test]

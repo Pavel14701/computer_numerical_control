@@ -13,6 +13,28 @@
 //! Haas ≠ Fanuc-ruling: F12 = 0.0012 units/min при Setting 77 OFF),
 //! G70/G71/G72 → Raw-болтовые (НЕ units-псевдонимы), G28/G29/G31/G12/G13 →
 //! raw-таблица.
+//! Этап 2: фреймы (G54–G59 → p=1..6; **G110–G112 → p=7..9** — нативная
+//! симметрия EID-слотов #7–#9 = Wcs::G59_1..G59_3 с notice W_WCS_EXTENDED;
+//! G154 P1–P3 → 7..9; G113–G129 → Raw SEM; **G52 → Err** — 2-й жёсткий
+//! отказ; G53 machine-frame §5.3; G10 L2 P1–P6 → wcs_define, **L2 P0 = слот
+//! G52 → Raw RT** (≠ Fanuc external offset), **L20 → Raw RT** (НЕ
+//! wcs_set_here), L1/L10–L13 → Raw RT; G92 пресетка, S-кламп → Raw SEM;
+//! absorb_frame_structs на raw-строках); циклы ×Haas-семантика (G81/G82/
+//! G83/G73/G85/G86/G89 разворачивание §7.7 + клиренс 0.01in unit-scaled
+//! v0.18; **L-повторы — НЕ K** (K = min-пек G83), G91-шаги, **G83: Q ИЛИ
+//! I/J-K** (d1=I, dk=max(K, d_(k−1)−J), mutually exclusive) — полный отвод,
+//! **G73 δ = канон 0.01in/0.254mm** + notice W_CYCLE_PARAM_ASSUMED
+//! (документированный дефолт Setting 22 0.02"/0.5mm ≠ канон — COVERAGE
+//! §6.19), G86 рестарт шпинделя + **P-dot-rule dotted=сек/bare=мс**
+//! (G4/G82/G86/G89), дефолт G99, G98-known-position, G74/G76 (I/J-направ-
+//! ление в тексте)/G77/G84/G156/G174/G184 → Raw SEM, L0 `?` → Raw,
+//! G80 + группа 09-модальность); M-словарь (M0/M1 → program_stop; M6/M16+T
+//! идиома `T01 M06`; одиночное T → Raw SEM; M07 Shower → Raw SEM — НЕ mist;
+//! M10–M13 тормоза 4/5-й осей → Raw SEM; M29 output-relay → Raw SEM — ≠
+//! Fanuc rigid-tap; M19 → Raw; M97/M98/M99/M46/M96 → Raw SYNTAX; M109 → Raw
+//! RUNTIME); компенсации G43/G44/G143 → Raw RT + семейства Haas-состава
+//! G40={G41,G42,G141}, G49={G43,G44,G143}; Macro B → line-level Raw
+//! (система-переменные #500–#699/#109xxx ≠ Fanuc — в диагностике).
 #![allow(dead_code)]
 
 pub mod block;

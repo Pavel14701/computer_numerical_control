@@ -46,7 +46,9 @@
 //!   диагностики → stage_parse_vs_verify.
 
 use eid_core::adapter::Adapter;
-use eid_core::ast::{Coolant, Op, PathMode, Point3, Program, Spindle, StartPoint, Units, Wcs};
+use eid_core::ast::{
+    Coolant, Frame, Op, PathMode, Point3, Program, Spindle, StartPoint, Units, Wcs,
+};
 use eid_core::diag::Diagnostic;
 use eid_core::diag::{ErrorCode, Stage};
 use eid_haas::canonicalize::{canonicalize, canonicalize_with_notices, NoticeKind};
@@ -212,8 +214,7 @@ fn dpi_f_setting77_bare() {
     assert!(
         dpi.iter()
             .any(|n| n.message.contains("Setting 77") && n.message.contains("0.0012")),
-        "notice с текстом Setting 77: {:?}",
-        dpi
+        "notice с текстом Setting 77: {dpi:?}",
     );
 }
 
@@ -820,7 +821,7 @@ fn modal_on_raw_motion_not_continued() {
 #[test]
 fn modal_absorption_on_raw_meta() {
     // SPEC §8.6: units/F/coolant абсорбируются и на raw-кадрах.
-    // (a) G20 на raw-кадре (G43 → generic provisional) БЕЗ предыдущего
+    // (a) G20 на raw-кадре (G43 → Raw{RT}, этап 2) БЕЗ предыдущего
     // units-слова — устанавливает inch (первое вхождение, SPEC §2.5).
     let out = canonicalize_with_notices("G43 H2 G20;\nM30;\n", "t.ngc").expect("Ok + Raw");
     assert_eq!(
@@ -831,7 +832,7 @@ fn modal_absorption_on_raw_meta() {
     assert!(matches!(
         &out.program.ops[0],
         Op::Raw {
-            code: ErrorCode::UnsupportedSyntax,
+            code: ErrorCode::RequiresMachineTable,
             ..
         }
     ));
@@ -939,35 +940,53 @@ fn block_delete_raw_runtime() {
 
 #[test]
 fn unknown_g_generic_raw() {
-    // Вне словаря этапа 1 (фреймы/циклы — этап 2; G107 — этап 12+ ведро) —
+    // Вне словаря Haas NGC (этапы 1–2; фреймы/циклы — этап 2 словарь) —
     // generic-ведро Raw{SYNTAX}, не молча (COVERAGE §2.7).
-    for (src, code) in [
-        ("G107;", ErrorCode::UnsupportedSyntax),
-        ("G54;", ErrorCode::UnsupportedSyntax),  // фреймы — этап 2
-        ("G81 X5. Z-2. R1. F50.;", ErrorCode::UnsupportedSyntax), // циклы — этап 2
-        ("G52 X1.;", ErrorCode::UnsupportedSyntax), // G52-ERR — этап 2 (provisional)
-    ] {
+    for src in ["G88.8;", "G999;", "G45.5;"] {
         let src = format!("G21 G90;\n{src}\nM30;\n");
         let p = parse(&src).expect("ok");
         assert!(
-            matches!(&p.ops[0], Op::Raw { code: c, .. } if *c == code),
+            matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }),
             "{src}"
         );
     }
+    // G107/G103/G187/G167 — в raw-таблице этапа 2 (фиксированные коды
+    // COVERAGE §2.6/§2.7), не generic.
+    let p = parse("G21 G90;\nG107;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }
+    ));
+    let p = parse("G21 G90;\nG167 P30 Q5.;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::RuntimeState, .. }
+    ));
 }
 
 #[test]
-fn unknown_m13_generic_provisional() {
-    // M13 (5-я ось тормоз! НЕ «шпиндель+СОЖ» — гипотеза опровергнута §0.1)
-    // — этап 2 вендорское ведро; на этапе 1 generic provisional SYNTAX.
-    let p = parse("G21 G90;\nM13;\nM30;\n").expect("ok");
-    assert!(matches!(
-        &p.ops[0],
-        Op::Raw {
-            code: ErrorCode::UnsupportedSyntax,
-            ..
+fn m13_brake_collision_pin() {
+    // M13 = release 5-й оси ТОРМОЗ (НЕ «шпиндель+СОЖ» — Fanuc-гипотеза
+    // опровергнута research'ом §0.1; коллизия номеров диалектов — Raw SEM).
+    let (p, notices) = notices_of("G21 G90;\nM13;\nG1 X5. F100.;\nM30;\n");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("NOT spindle+coolant"), "{reason}");
         }
-    ));
+        other => panic!("ops[0] не Raw: {other:?}"),
+    }
+    // Шпиндель M13 НЕ запускает (≠ Fanuc-идиома): на следующем линейном опе
+    // шпиндель Off, СОЖ не включена.
+    match &p.ops[1] {
+        Op::Linear { state, .. } => {
+            assert_eq!(state.spindle, Spindle::Off);
+            assert!(!state.coolant.flood);
+            assert!(!state.coolant.mist);
+        }
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+    let _ = notices;
 }
 
 #[test]
@@ -1069,9 +1088,1362 @@ fn adapter_parse_and_notices() {
     assert!(notices.iter().any(|n| n.kind == NoticeKind::DpiAssumed));
     // M30 присутствует — auto-PEND notice нет; отдельная проверка ниже.
     assert!(!notices.iter().any(|n| n.kind == NoticeKind::MissingProgramEnd));
-    let p2 = adapter.parse("G21 G90;\nG0 X5.;\n", "b.ngc").expect("ok");
+    let _p2 = adapter.parse("G21 G90;\nG0 X5.;\n", "b.ngc").expect("ok");
     let n2 = adapter.take_notices();
     assert!(n2.iter().any(|n| n.kind == NoticeKind::MissingProgramEnd));
     let r = adapter.emit(&p);
     assert!(r.is_err(), "эмиссия — этап 3");
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — Фреймы: G54–G59 p=1..6; G110–G112 → p=7..9 (нативная симметрия
+// слотов #7–#9, notice); G113+ → Raw; G154 Pn; G52-ERR; G10-формы; G92; G53
+// ---------------------------------------------------------------------------
+
+#[test]
+fn g54_g59_wcs_select() {
+    // Группа 12: G54–G59 → state.wcs p=1..6 (1:1; дефолт G54 — power-on).
+    // После переключения WCS ходы с ПОЛНЫМ end (точка разрыва (b): без
+    // in-text origins связывание неизвестно — частичный end → RT).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG55;\nG1 X5. Y5. Z5. F100.;\nG58;\nG1 X6. Y6. Z5.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[0] {
+        Op::Rapid { state, .. } => assert_eq!(state.wcs, Wcs::G54),
+        other => panic!("ops[0] не Rapid: {other:?}"),
+    }
+    match &p.ops[1] {
+        Op::Linear { state, .. } => assert_eq!(state.wcs, Wcs::G55),
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+    match &p.ops[2] {
+        Op::Linear { state, .. } => assert_eq!(state.wcs, Wcs::G58),
+        other => panic!("ops[2] не Linear: {other:?}"),
+    }
+    // Частичный end сразу после переключения WCS без in-text origins — RT
+    // (точка разрыва (b): start неизвестен).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG0 X0. Y0. Z5.;\nG55;\nG1 X5. Y5. F100.;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState
+    );
+    // Два кода группы 12 в блоке — нарушение.
+    assert_eq!(
+        err_code(parse("G21 G90;\nG54 G55;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g110_g112_extended_p7_9_notice() {
+    // Бриф этапа 2: G110–G112 → EID p=7..9 (нативная симметрия слотов #7–#9
+    // = Wcs::G59_1..G59_3) с notice W_WCS_EXTENDED — эмиссия этапа 3 отдаст
+    // G110–G112. COVERAGE Haas-колонка v0.9 фиксирует RAW — расхождение
+    // колонки и брифа задокументировано notice'ом (не молча).
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG110;\nG1 X5. Y5. Z5. F100.;\nG111;\nG112;\nM30;\n",
+    );
+    match &p.ops[1] {
+        Op::Linear { state, .. } => {
+            assert_eq!(state.wcs, Wcs::G59_1, "G110 → p7");
+        }
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+    let ext: Vec<_> = notices
+        .iter()
+        .filter(|n| n.kind == NoticeKind::WcsExtended)
+        .collect();
+    assert_eq!(ext.len(), 3, "G110/G111/G112 — три notice: {ext:?}");
+    for (n, code) in ext.iter().zip(["G110", "G111", "G112"]) {
+        assert!(n.message.contains(code), "{}: {}", code, n.message);
+        assert!(
+            n.message.contains("p7") || n.message.contains("p8") || n.message.contains("p9")
+        );
+        assert!(n.message.contains("slot"));
+    }
+    // Порядок: notice G110 прицеплен к Linear (первый op после G110).
+    assert_eq!(ext[0].op_index, 1);
+}
+
+#[test]
+fn g113_g129_outside_p_domain_raw() {
+    // G113–G129 = слоты #10–#26 — вне EID p-домена (p ≤ 9) → Raw{SEM}.
+    for code in ["G113", "G120", "G129"] {
+        let src = format!("G21 G90;\n{code};\nM30;\n");
+        let p = parse(&src).expect("ok");
+        match &p.ops[0] {
+            Op::Raw { code: c, reason, .. } => {
+                assert_eq!(*c, ErrorCode::UnsupportedSemantics, "{code}");
+                assert!(reason.contains("p-domain"), "{code}: {reason}");
+            }
+            other => panic!("{code} не Raw: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn g154_p1_p3_p7_9_and_out_of_domain() {
+    // G154 Pn: P1–P3 = алиасы G110–G112 → p=7..9 (P1 = слот #7); P4+ → Raw.
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG154 P2;\nG1 X5. Y5. Z5. F100.;\nM30;\n",
+    );
+    match &p.ops[1] {
+        Op::Linear { state, .. } => assert_eq!(state.wcs, Wcs::G59_2, "G154 P2 → p8"),
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::WcsExtended && n.message.contains("G154")),
+        "notice W_WCS_EXTENDED для G154"
+    );
+    // P4 — вне расширенного слот-домена 1..3 → Raw{SEM}.
+    let p = parse("G21 G90;\nG154 P4;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }
+    ));
+    // Без P — сломанный вход (Err).
+    assert_eq!(
+        err_code(parse("G21 G90;\nG154;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g52_hard_err_second_reject() {
+    // G52 → Err(E_UNSUPPORTED_SEMANTICS) — 2-й вендорский жёсткий отказ
+    // (SPEC §8 правило 5): позиционная смена фрейма mid-program. Отмена-
+    // форма G52 X0 Y0 Z0 — тоже Err (консервативно, Setting 129/33 `?`).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG0 X1. Y1. Z1.;\nG52 X0. Y0. Z0.;\nM30;\n"
+        )),
+        ErrorCode::UnsupportedSemantics
+    );
+    let Err(d) = parse("G21 G90;\nG52 X1.;\n") else {
+        panic!("ожидался Err")
+    };
+    assert!(d[0].message.contains("hard ERR"));
+    assert!(d[0].message.contains("2nd vendor hard-reject"));
+}
+
+#[test]
+fn g10_l2_wcs_define_full_and_incremental() {
+    // G10 L2 P1–P6 → NODE(wcs_define); G90/G91 — абсолют/инкремент записи
+    // (§5.3; Haas-пример `G10 L2 P1 G91 X60.` — официальный).
+    let p = parse(
+        "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG10 L2 P1 G91 X5. Y0 Z0;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[0] {
+        Op::WcsDefine { p, origin, .. } => {
+            assert_eq!(*p, 1);
+            assert_pt(origin, 1.0, 2.0, 3.0);
+        }
+        other => panic!("ops[0] не WcsDefine: {other:?}"),
+    }
+    match &p.ops[1] {
+        Op::WcsDefine { p, origin, .. } => {
+            assert_eq!(*p, 1);
+            assert_pt(origin, 6.0, 2.0, 3.0);
+        }
+        other => panic!("ops[1] не WcsDefine: {other:?}"),
+    }
+    // P6 — верх домена.
+    let p = parse("G21 G90;\nG10 L2 P6 G90 X1. Y1. Z1.;\nM30;\n").expect("ok");
+    assert!(matches!(&p.ops[0], Op::WcsDefine { p: 6, .. }));
+}
+
+#[test]
+fn g10_l2_partial_raw_rt() {
+    // Partial G10 L2: невыписанные оси хранят табличные значения (вне
+    // текста) → Raw{RT}.
+    let p = parse("G21 G90;\nG10 L2 P3 G90 X1.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
+            assert!(reason.contains("partial"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn g10_l2_p0_g52_slot_collision_pin() {
+    // КОЛЛИЗИЯ vs Fanuc: G10 L2 P0 у Haas = запись слота G52 (Haas UK
+    // «P0 G52 references work coordinate»), НЕ external/common-offset →
+    // Raw{RT} с различающимся диагностическим текстом.
+    let p = parse("G21 G90;\nG10 L2 P0 G90 X1. Y1. Z1.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
+            assert!(reason.contains("G52 work-coordinate slot"), "{reason}");
+            assert!(
+                reason.contains("NOT the Fanuc external/common offset"),
+                "{reason}"
+            );
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn g10_l20_not_wcs_set_here() {
+    // Ловушка №2b (та же, что Fanuc): L20 = запись origin доп. СК
+    // (G110–G129/G154), НЕ wcs_set_here — маппить запрещено (COVERAGE §2.3).
+    let p = parse("G21 G90;\nG10 L20 P2 G90 X100. Y80.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
+            assert!(reason.contains("NOT wcs_set_here"), "{reason}");
+            assert!(reason.contains("trap #2b"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+    // WcsSetHere-опа в программе нет.
+    assert!(
+        p.ops.iter().all(|op| !matches!(op, Op::WcsSetHere { .. })),
+        "L20 → wcs_set_here запрещён"
+    );
+}
+
+#[test]
+fn g10_tool_table_forms_raw_rt() {
+    // G10 L1/L10–L13 = записи таблиц инструментов (R = значение; официальный
+    // пример `G10 L10 G90 P5 R250.`) → Raw{RT}; R-слово в Frame-плане
+    // потреблено (не «слово без потребителя»).
+    let p = parse("G21 G90;\nG10 L10 G90 P5 R250.;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::RequiresMachineTable, .. }
+    ));
+}
+
+#[test]
+fn g10_broken_forms() {
+    // Без L / L2 без P — Err(INVALID); P вне домена 0..6 — Raw{SYNTAX}.
+    assert_eq!(
+        err_code(parse("G21 G90;\nG10 G90 X1. Y1. Z1.;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse("G21 G90;\nG10 L2 G90 X1. Y1. Z1.;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+    let p = parse("G21 G90;\nG10 L2 P7 G90 X1. Y1. Z1.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSyntax);
+            assert!(reason.contains("outside Haas wcs domain"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn g92_preset_and_first_motion_anchor() {
+    // G92 → frame_preset (META); первый motion-оп после пресетки — start
+    // Known(values) (та же WCS).
+    let p = parse("G21 G90 G94;\nG92 X1. Y2. Z3.;\nG0 X5. Y5. Z5.;\nM30;\n").expect("ok");
+    let pr = p.frame_preset.as_ref().expect("frame_preset");
+    assert_pt(&pr.values, 1.0, 2.0, 3.0);
+    assert_eq!(pr.wcs, Wcs::G54);
+    match &p.ops[0] {
+        Op::Rapid { start, .. } => match start {
+            StartPoint::Known(s) => assert_pt(s, 1.0, 2.0, 3.0),
+            StartPoint::Unknown => panic!("start должен быть Known после пресетки"),
+        },
+        other => panic!("ops[0] не Rapid: {other:?}"),
+    }
+    // G92 без осевых слов — сломанный вход.
+    assert_eq!(
+        err_code(parse("G21 G90;\nG92;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g92_position_restrictions() {
+    // После первого motion-опа — Err (только пресетка, §3); второй G92 — Err.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG0 X1. Y1. Z1.;\nG92 X0. Y0. Z0.;\nM30;\n"
+        )),
+        ErrorCode::UnsupportedSemantics
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG92 X1. Y1. Z1.;\nG92 X2. Y2. Z2.;\nM30;\n"
+        )),
+        ErrorCode::UnsupportedSemantics
+    );
+}
+
+#[test]
+fn g92_s_clamp_raw_sem() {
+    // S-кламп-формы в словаре Haas НЕТ (кламп — Setting `?`); S при G92 —
+    // не frame_preset → Raw{SEM} (COVERAGE §2.6, паритет Fanuc-строки).
+    let p = parse("G21 G90;\nG92 S5000;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("not frame_preset"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+    assert!(p.frame_preset.is_none(), "S при G92 — НЕ пресетка");
+}
+
+#[test]
+fn g53_machine_frame_move() {
+    // G53 → state.frame = Machine (правило §5.3: origin активной WCS обязан
+    // быть in-text; reading_M = W + O_wcs).
+    let p = parse(
+        "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG0 X5. Y5. Z5.;\nG53 G0 X0 Y0 Z0;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(p.ops.len(), 4);
+    match &p.ops[2] {
+        Op::Rapid {
+            start,
+            end,
+            state,
+            ..
+        } => {
+            // reading_M = (5,5,5) + (1,2,3) = (6,7,8).
+            match start {
+                StartPoint::Known(s) => assert_pt(s, 6.0, 7.0, 8.0),
+                _ => panic!("start Known"),
+            }
+            assert_pt(end, 0.0, 0.0, 0.0);
+            assert_eq!(state.frame, Frame::Machine);
+        }
+        other => panic!("ops[2] не Rapid: {other:?}"),
+    }
+    // Возврат в WCS после machine-хода (точка разрыва (d)):
+    // reading_wcs = M − O_wcs = (0,0,0) − (1,2,3) = (−1,−2,−3).
+    let p = parse(
+        "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG0 X5. Y5. Z5.;\nG53 G0 X0 Y0 Z0;\nG0 X1. Y1. Z1.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[3] {
+        Op::Rapid { start, state, .. } => {
+            match start {
+                StartPoint::Known(s) => assert_pt(s, -1.0, -2.0, -3.0),
+                _ => panic!("start Known"),
+            }
+            assert_eq!(state.frame, Frame::Wcs);
+        }
+        other => panic!("ops[3] не Rapid: {other:?}"),
+    }
+}
+
+#[test]
+fn g53_strictness() {
+    // Явный G0/G1 обязателен; дуги в machine-frame невыразимы; частичный end
+    // → RT (нуль в machine-координатах не наследуется, §2 v0.13); без
+    // in-text origin — RT (§5.3b); machine-ход при активной пресетке —
+    // невыразим (§5.3a).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG10 L2 P1 G90 X0. Y0. Z0.;\nG0 X1. Y1. Z1.;\nG53 X0 Y0 Z0;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput,
+        "G53 без явного G0/G1"
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG10 L2 P1 G90 X0. Y0. Z0.;\nG0 X1. Y1. Z1.;\nG53 G2 X0 Y0 Z0 I1. J0.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput,
+        "G53-дуга"
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG10 L2 P1 G90 X0. Y0. Z0.;\nG0 X1. Y1. Z1.;\nG53 G0 X0;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState,
+        "частичный machine-end"
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG0 X1. Y1. Z1.;\nG53 G0 X0 Y0 Z0;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState,
+        "origin G54 не in-text"
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG92 X1. Y1. Z1.;\nG10 L2 P1 G90 X0. Y0. Z0.;\nG53 G0 X0 Y0 Z0;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState,
+        "machine-ход при активной пресетке (§5.3a)"
+    );
+}
+
+#[test]
+fn wcs_switch_linking_difference_criterion() {
+    // Точка разрыва (b): критерий РАЗНОСТИ — reading = pos + O_prev − O_cur;
+    // обе системы in-text. Частичный end без второй — RT.
+    let p = parse(
+        "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG10 L2 P2 G90 X10. Y20. Z30.;\nG0 X5. Y5. Z5.;\nG55;\nG1 X6. Y6. Z6. F100.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[3] {
+        Op::Linear { start, .. } => match start {
+            StartPoint::Known(s) => {
+                // (5,5,5) + (1,2,3) − (10,20,30) = (−4,−13,−22).
+                assert_pt(s, -4.0, -13.0, -22.0);
+            }
+            _ => panic!("start Known (обе системы in-text)"),
+        },
+        other => panic!("ops[3] не Linear: {other:?}"),
+    }
+    // G55 origin не in-text → частичный end при разрыве — RT.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG0 X5. Y5. Z5.;\nG55;\nG1 X6.;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — Циклы ×Haas-семантика: L-повторы (НЕ K), P-dot dwell, G83 Q ИЛИ
+// I/J-K (полный отвод), G73 δ=канон + notice §6.19, G86 рестарт, G98/G99
+// ---------------------------------------------------------------------------
+
+#[test]
+fn g81_unroll_basic_template() {
+    // §7.7 шаблон: traverse (на текущем Z) → approach R → feed дно →
+    // retract R (G99-дефолт); feed кадра активен на ВСЕХ производных опах;
+    // sub 1..4.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(p.ops.len(), 6); // Rapid + 4 производных + PEND
+    // 1: traverse к отверстию на текущем Z (не слит с подходом).
+    match &p.ops[1] {
+        Op::Rapid { end, sub, .. } => {
+            assert_eq!(known(&p.ops[1]), [0.0, 0.0, 5.0]);
+            assert_pt(end, 10.0, 10.0, 5.0);
+            assert_eq!(*sub, Some(1));
+        }
+        other => panic!("ops[1] не Rapid-traverse: {other:?}"),
+    }
+    // 2: approach к R.
+    match &p.ops[2] {
+        Op::Rapid { end, sub, .. } => {
+            assert_pt(end, 10.0, 10.0, 2.0);
+            assert_eq!(*sub, Some(2));
+        }
+        other => panic!("ops[2] не Rapid-approach: {other:?}"),
+    }
+    // 3: feed на дно.
+    match &p.ops[3] {
+        Op::Linear { end, sub, .. } => {
+            assert_pt(end, 10.0, 10.0, -5.0);
+            assert_eq!(*sub, Some(3));
+        }
+        other => panic!("ops[3] не Linear: {other:?}"),
+    }
+    // 4: retract на R (G99).
+    match &p.ops[4] {
+        Op::Rapid { end, sub, .. } => {
+            assert_pt(end, 10.0, 10.0, 2.0);
+            assert_eq!(*sub, Some(4));
+        }
+        other => panic!("ops[4] не Rapid-retract: {other:?}"),
+    }
+    // feed-снапшот на traverse/approach/retract (§7.7 v0.15.1).
+    assert_eq!(feed_of(&p.ops[1]), Some(100.0));
+    assert_eq!(feed_of(&p.ops[2]), Some(100.0));
+    assert_eq!(feed_of(&p.ops[3]), Some(100.0));
+    assert_eq!(feed_of(&p.ops[4]), Some(100.0));
+    // DPI F-домен-регресс (Setting 77): bare F100 в кадре цикла → 100 ×
+    // 0.0001 = 0.01 units/min на производных опах — НЕ verbatim 100
+    // (Haas F-домен ≠ Fanuc integer-mm/min ruling).
+    let p2 = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100;\nM30;\n",
+    )
+    .expect("ok");
+    assert!(
+        (feed_of(&p2.ops[3]).unwrap() - 0.01).abs() <= 1e-9,
+        "bare F в цикле — Setting 77 ×0.0001, got {}",
+        feed_of(&p2.ops[3]).unwrap()
+    );
+}
+
+#[test]
+fn g81_l_repeat_g90_same_position() {
+    // L-повторы (НЕ K!): G90 — L = повторы на той же позиции; вырожденные
+    // traverse/approach/retract повторов → drop+notice (SPEC §3).
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100. L3;\nG80;\nM30;\n",
+    );
+    // Позиционирующий Rapid + 1-я итерация (4 опа) + 2 повтора (feed +
+    // retract, вырожденные ходы — drop) + PEND = 1 + 4 + 2 + 2 + 1 = 10.
+    assert_eq!(p.ops.len(), 10);
+    let bottoms = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Linear { .. }))
+        .count();
+    assert_eq!(bottoms, 3, "три сверловки");
+    let zero_drops = notices
+        .iter()
+        .filter(|n| n.kind == NoticeKind::ZeroLengthMotion)
+        .count();
+    assert_eq!(zero_drops, 4, "вырожденные traverse+approach × 2 повтора");
+}
+
+#[test]
+fn g81_g91_xy_step_l() {
+    // G91: X/Y-слова = шаг между отверстиями; Z = инкремент от R-плоскости;
+    // позиции в AST — абсолютные (§7.3). R0: r_cur = initial Z (без дрейфа),
+    // z_bottom = 5 − 8 = −3, X-шаг +10.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG91;\nG99 G81 X10. Z-8. R0 F100. L3;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let mut holes = Vec::new();
+    for op in &p.ops {
+        if let Op::Linear { end, .. } = op {
+            let v = pt3(end);
+            if (v[2] + 3.0).abs() <= EPS {
+                holes.push([v[0], v[1]]);
+            }
+        }
+    }
+    assert_eq!(holes.len(), 3, "три отверстия: {holes:?}");
+    assert!((holes[0][0] - 10.0).abs() <= EPS && (holes[0][1] - 0.0).abs() <= EPS);
+    assert!((holes[1][0] - 20.0).abs() <= EPS);
+    assert!((holes[2][0] - 30.0).abs() <= EPS);
+}
+
+#[test]
+fn g81_modal_repeat_xy_blocks() {
+    // Группа 09 модальна: последующие X/Y-блоки без G8x = новые отверстия.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100.;\nX20. Y20.;\nX30.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(p.ops.len(), 12); // Rapid + 3×4 + PEND
+    let holes: Vec<[f64; 2]> = p
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Linear { end, .. } => {
+                let v = pt3(end);
+                if (v[2] + 5.0).abs() <= EPS {
+                    Some([v[0], v[1]])
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(holes.len(), 3);
+    assert!((holes[0][0] - 10.0).abs() <= EPS && (holes[0][1] - 10.0).abs() <= EPS);
+    assert!((holes[1][0] - 20.0).abs() <= EPS && (holes[1][1] - 20.0).abs() <= EPS);
+    assert!((holes[2][0] - 30.0).abs() <= EPS && (holes[2][1] - 20.0).abs() <= EPS);
+}
+
+#[test]
+fn g80_and_motion_cancel_cycle() {
+    // G80 — отмена cycle-моды (IGNORED_SAFE); явный код группы 01 тоже
+    // отменяет: следующий ход — движение, не цикл.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100.;\nG80;\nG0 X1. Y1. Z1.;\nM30;\n",
+    )
+    .expect("ok");
+    // Позиционирующий Rapid + G81 (4 производных) + G0 (1 оп, НЕ цикл) + PEND.
+    assert_eq!(p.ops.len(), 7);
+    match &p.ops[5] {
+        Op::Rapid { end, sub, .. } => {
+            assert_pt(end, 1.0, 1.0, 1.0);
+            assert_eq!(*sub, None, "обычное движение — без sub");
+        }
+        other => panic!("ops[5] не Rapid: {other:?}"),
+    }
+    // Явный G1 после цикла (без G80) — тоже отмена.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Y10. Z-5. R2. F100.;\nG1 X20. Y20. F100.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[5] {
+        Op::Linear { end, sub, .. } => {
+            assert_pt(end, 20.0, 20.0, 2.0);
+            assert_eq!(*sub, None);
+        }
+        other => panic!("ops[5] не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn g82_dwell_p_dot_rule_both_directions() {
+    // P-DOT RULE (уникальное Haas-правило): bare P = МИЛЛИСЕКУНДЫ, dotted P
+    // = СЕКУНДЫ; bare — с notice (DPI-домен мс-гранулярности).
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G82 X10. Z-5. R2. P500 F100.;\nM30;\n",
+    );
+    let dwells: Vec<_> = p
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Dwell { seconds, .. } => Some(seconds.value()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dwells, vec![0.5], "bare P500 = 500 мс = 0.5 s");
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::DpiAssumed
+            && n.message.contains("P-dot rule")
+            && n.message.contains("500")),
+        "notice P-dot для bare P"
+    );
+    // Dotted P0.5 → 0.5 s verbatim, БЕЗ P-dot-notice.
+    let (p2, notices2) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G82 X10. Z-5. R2. P0.5 F100.;\nM30;\n",
+    );
+    let dwells2: Vec<_> = p2
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Dwell { seconds, .. } => Some(seconds.value()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dwells2, vec![0.5], "dotted P0.5 = 0.5 s verbatim");
+    assert!(
+        notices2
+            .iter()
+            .all(|n| n.kind != NoticeKind::DpiAssumed),
+        "dotted P — без DPI-notice"
+    );
+}
+
+#[test]
+fn g82_without_p_invalid() {
+    // G82 без P — сломанный вход.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G82 X10. Z-5. R2. F100.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g86_dwell_required_spindle_restart() {
+    // G86 (SPEC §7.4a v0.18): feed → DWELL → STOP_SPINDLE → RAPID-out →
+    // рестарт в прежнем направлении (Q9 — в state последующих опов).
+    let p = parse(
+        "G21 G90 G94;\nS1000;\nM3;\nG0 X0. Y0. Z5.;\nG99 G86 X10. Z-5. R2. P500 F100.;\nG1 X20.;\nM30;\n",
+    )
+    .expect("ok");
+    // Linear + traverse + approach + feed + dwell + rapid(off) + Linear(restart) + PEND.
+    assert_eq!(p.ops.len(), 8);
+    let dwell = match &p.ops[4] {
+        Op::Dwell { seconds, .. } => seconds.value(),
+        other => panic!("ops[4] не Dwell: {other:?}"),
+    };
+    assert!((dwell - 0.5).abs() <= EPS, "P500 bare → 0.5 s");
+    match &p.ops[5] {
+        Op::Rapid { state, .. } => {
+            assert_eq!(state.spindle, Spindle::Off, "шпиндель off на rapid-out");
+        }
+        other => panic!("ops[5] не Rapid: {other:?}"),
+    }
+    match &p.ops[6] {
+        Op::Linear { state, .. } => {
+            assert_eq!(
+                state.spindle,
+                Spindle::Cw(eid_core::ast::Num::new("1000".into(), 1000.0)),
+                "рестарт в прежнем направлении/оборотах (Q9)"
+            );
+        }
+        other => panic!("ops[6] не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn g86_without_p_rs274_message() {
+    // SPEC v0.18: G86 без P — rs274 отказывает; сообщение зеркалируется
+    // дословно (зонд e2e48).
+    let Err(d) = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G86 X10. Z-5. R2. F100.;\nM30;\n",
+    ) else {
+        panic!("ожидался Err")
+    };
+    assert_eq!(d[0].code, ErrorCode::InvalidInput);
+    assert_eq!(d[0].message, "Dwell time p word missing with g86");
+}
+
+#[test]
+fn g83_q_full_retract_sequence_and_clearance() {
+    // G83 Q-форма: полный отвод к R каждый пек; клиренс канон §7.4a v0.18 =
+    // 0.01in unit-scaled (0.254 mm в G21). R1, Z−6, Q2 → депеки
+    // [−1,−3,−5,−6].
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z3.;\nG99 G83 X10. Z-6. R1. Q2. F50.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    // Позиционирующий Rapid + traverse + approach + 4×feed + 3×(rapid R +
+    // rapid appr) + retract = 14 (+ PEND = 15).
+    assert_eq!(p.ops.len(), 15);
+    let ends: Vec<[f64; 3]> = p.ops[1..13].iter().map(end_of3).collect();
+    let expected: Vec<[f64; 3]> = vec![
+        [10.0, 0.0, 3.0],    // traverse (текущий Z)
+        [10.0, 0.0, 1.0],    // approach R
+        [10.0, 0.0, -1.0],   // пек 1
+        [10.0, 0.0, 1.0],    // полный отвод R
+        [10.0, 0.0, -0.746], // approach d+δ (δ = 0.254 mm!)
+        [10.0, 0.0, -3.0],   // пек 2
+        [10.0, 0.0, 1.0],
+        [10.0, 0.0, -2.746],
+        [10.0, 0.0, -5.0], // пек 3
+        [10.0, 0.0, 1.0],
+        [10.0, 0.0, -4.746],
+        [10.0, 0.0, -6.0], // дно
+    ];
+    for (i, (got, want)) in ends.iter().zip(&expected).enumerate() {
+        assert!(
+            got.iter().zip(want.iter()).all(|(a, b)| (a - b).abs() <= EPS),
+            "op {}: {got:?} vs {want:?}",
+            i + 1
+        );
+    }
+    // Финальный retract G99 → R.
+    match &p.ops[13] {
+        Op::Rapid { end, .. } => assert_pt(end, 10.0, 0.0, 1.0),
+        other => panic!("ops[13] не retract: {other:?}"),
+    }
+}
+
+#[test]
+fn g83_clearance_inch_unit_scaled() {
+    // Клиренс 0.01in unit-scaled: в G20 — ровно 0.0100 in (зонд rs274
+    // g83_inch; SPEC §7.4a v0.18; профиль константу НЕ переопределяет).
+    let p = parse(
+        "G20 G90 G94 G17;\nG0 X0. Y0. Z0.5;\nG99 G83 X1. Z-0.6 R0.1 Q0.2 F5.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let ends: Vec<[f64; 3]> = p.ops[1..13].iter().map(end_of3).collect();
+    let appr = ends[4][2];
+    assert!(
+        (appr - (-0.1 + 0.01)).abs() <= EPS,
+        "клиренс = 0.0100 in в G20, got {appr}"
+    );
+}
+
+#[test]
+fn g83_ijk_variable_pecking() {
+    // Переменный пекинг (Haas-расширение §5.3): d1 = I, dk = max(K,
+    // d_(k−1) − J); дно клампится на z_bottom; полный отвод между пеками.
+    // R1, Z−7, I2, J0.5, K1 → шаги d: 2, 1.5, 1, 1, … → депеки
+    // [−1, −2.5, −3.5, −4.5, −5.5, −6.5, −7].
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z3.;\nG99 G83 X10. Z-7. R1. I2. J0.5 K1. F50.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let bottoms: Vec<f64> = p
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Linear { end, sub: Some(_), .. } => {
+                let v = pt3(end);
+                if v[0] > 5.0 && v[2] < 0.9 {
+                    Some(v[2])
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    let want = [-1.0, -2.5, -3.5, -4.5, -5.5, -6.5, -7.0];
+    assert_eq!(bottoms.len(), want.len(), "{bottoms:?}");
+    for (g, w) in bottoms.iter().zip(&want) {
+        assert!((g - w).abs() <= EPS, "{bottoms:?}");
+    }
+    // K = min-пек: третий шаг ограничен K=1 (d_3 = max(1, 1.5−0.5) = 1.0 →
+    // депек −3.5, не −4.0).
+    assert!((bottoms[2] - (-3.5)).abs() <= EPS, "K=1 ограничивает пек: {bottoms:?}");
+}
+
+#[test]
+fn g83_q_and_ijk_mutually_exclusive() {
+    // «Do not use a Q value when programming with I, J, and K» — Err.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G83 X10. Z-6. R1. Q2. I2. J0.5 K1. F50.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g83_without_q_or_ijk() {
+    // Ни Q, ни I/J-K — сломанный вход.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G83 X10. Z-6. R1. F50.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g73_chip_break_single_rapid_delta_canon() {
+    // G73 (v0.18): ОДИН промежуточный rapid d+δ на пек (модели min(R,d+Q)
+    // НЕТ); δ = канон 0.254mm (Setting 22 вне текста → notice
+    // W_CYCLE_PARAM_ASSUMED с текстом диалектного расхождения §6.19).
+    let (p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z3.;\nG99 G73 X10. Z-6. R1. Q2. F50.;\nG80;\nM30;\n",
+    );
+    // Позиционирующий Rapid + traverse + approach + 4×feed + 3×rapid(d+δ) +
+    // retract = 11 (+ PEND = 12).
+    assert_eq!(p.ops.len(), 12);
+    let ends: Vec<[f64; 3]> = p.ops[1..11].iter().map(end_of3).collect();
+    let expected: Vec<[f64; 3]> = vec![
+        [10.0, 0.0, 3.0],
+        [10.0, 0.0, 1.0],
+        [10.0, 0.0, -1.0],
+        [10.0, 0.0, -0.746], // одиночный rapid d1+δ
+        [10.0, 0.0, -3.0],
+        [10.0, 0.0, -2.746],
+        [10.0, 0.0, -5.0],
+        [10.0, 0.0, -4.746],
+        [10.0, 0.0, -6.0],
+        [10.0, 0.0, 1.0], // финал G99 → R
+    ];
+    for (i, (got, want)) in ends.iter().zip(&expected).enumerate() {
+        assert!(
+            got.iter().zip(want.iter()).all(|(a, b)| (a - b).abs() <= EPS),
+            "op {}: {got:?} vs {want:?}",
+            i + 1
+        );
+    }
+    // Промежуточных полных отводов на R НЕТ (после approach — только финал).
+    let r_visits = ends.iter().filter(|e| (e[2] - 1.0).abs() <= EPS).count();
+    assert_eq!(r_visits, 2, "approach + финальный retract, без полных отводов");
+    let cpa: Vec<_> = notices
+        .iter()
+        .filter(|n| n.kind == NoticeKind::CycleParamAssumed)
+        .collect();
+    assert_eq!(cpa.len(), 1, "notice W_CYCLE_PARAM_ASSUMED: {notices:?}");
+    assert!(cpa[0].message.contains("Setting 22"));
+    assert!(cpa[0].message.contains("0.254"), "канон-константа в тексте");
+    assert!(cpa[0].message.contains("6.19"), "диалектное расхождение");
+}
+
+#[test]
+fn g73_ijk_variable_peck_raw_sem() {
+    // G73 с I/J-K — переменный пекинг не сверен на mill (`?` COVERAGE §6,
+    // реестр §10(4)) → Raw{SEM}, не разворачивается.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G73 X10. Z-6. R1. I2. J0.5 K1. F50.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("unverified on Haas mill"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn g85_g89_feed_out_retract() {
+    // G85/G89: отвод на ПОДАЧЕ (§7.4 SPEC v0.14); G89 — dwell перед отводом.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G85 X10. Z-5. R2. F100.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[4] {
+        Op::Linear { end, .. } => assert_pt(end, 10.0, 0.0, 2.0), // feed-out
+        other => panic!("ops[4] не Linear-retract: {other:?}"),
+    }
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G89 X10. Z-5. R2. P0.25 F100.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[4] {
+        Op::Dwell { seconds, .. } => assert!((seconds.value() - 0.25).abs() <= EPS),
+        other => panic!("ops[4] не Dwell: {other:?}"),
+    }
+    match &p.ops[5] {
+        Op::Linear { end, .. } => assert_pt(end, 10.0, 0.0, 2.0), // feed-out после dwell
+        other => panic!("ops[5] не Linear-retract: {other:?}"),
+    }
+}
+
+#[test]
+fn g98_initial_z_and_g99_default() {
+    // G98 → отвод в initial Z; отсутствие G98/G99 → дефолт G99 (SPEC §7.5a).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG98 G81 X10. Z-5. R2. F100.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[4] {
+        Op::Rapid { end, .. } => assert_pt(end, 10.0, 0.0, 5.0),
+        other => panic!("ops[4] не retract: {other:?}"),
+    }
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG81 X10. Z-5. R2. F100.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[4] {
+        Op::Rapid { end, .. } => assert_pt(end, 10.0, 0.0, 2.0),
+        other => panic!("ops[4] не retract: {other:?}"),
+    }
+}
+
+#[test]
+fn g98_first_motion_op_rt() {
+    // SPEC §7.6: цикл первым motion-опом — позиция не определена → RT.
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG99 G81 X10. Z-5. R2. F100.;\nM30;\n"
+        )),
+        ErrorCode::RuntimeState
+    );
+}
+
+#[test]
+fn cycle_l0_raw_sem() {
+    // L0 `?` — «запись данных без исполнения»: до сверки не разворачивать
+    // (COVERAGE §2.5; ≠ Fanuc K0-G90-noop ruling).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Z-5. R2. F100. L0;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("L0"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+    assert_eq!(p.ops.len(), 3, "развёртки нет");
+}
+
+#[test]
+fn cycle_k_is_not_repeat() {
+    // K — НЕ повтор цикла на Haas (min-пек G83 / угловой шаг G12): K3 в
+    // G81-блоке НЕ порождает повторов (перенос Fanuc-K-семантики запрещён,
+    // §1.2); L3 — разворачивается (L/K-различение).
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Z-5. R2. K3 F100.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let bottoms = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Linear { sub: Some(_), .. }))
+        .count();
+    assert_eq!(bottoms, 1, "K3 не разворачивается — одна сверловка");
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Z-5. R2. L3 F100.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let bottoms = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Linear { sub: Some(_), .. }))
+        .count();
+    assert_eq!(bottoms, 3, "L3 → три сверловки");
+}
+
+#[test]
+fn cycle_missing_params() {
+    // Без R / без Z / без F — Err (паритет «It is an error if…»).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG81 X10. Z-5. F100.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG81 X10. R2. F100.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG81 X10. Z-5. R2.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn cycle_refusals_raw_sem_modal_on_raw() {
+    // Циклы-отказы → Raw{SEM} + (с осями) W_MODAL_ON_RAW: motion/цикл не
+    // продолжаются; следующие ходы не интерпретируются молча.
+    for code in ["G84", "G74", "G76", "G77", "G156", "G174", "G184"] {
+        let (p, notices) = notices_of(&format!(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\n{code} X10. Z-5. R2. F50.;\nM30;\n"
+        ));
+        match &p.ops[1] {
+            Op::Raw { code: c, reason, .. } => {
+                assert_eq!(*c, ErrorCode::UnsupportedSemantics, "{code}");
+                assert!(!reason.is_empty());
+            }
+            other => panic!("{code} не Raw: {other:?}"),
+        }
+        assert!(
+            notices.iter().any(|n| n.kind == NoticeKind::ModalOnRaw),
+            "{code}: нет W_MODAL_ON_RAW"
+        );
+    }
+    // Тексты-коллизии: G76 — I/J-направление В ТЕКСТЕ (3-й смысл кода,
+    // §7.16); G84 — rigid внутренне (Setting 57), без M29.
+    let p = parse(
+        "G21 G90;\nG0 X0. Y0. Z5.;\nG76 X10. Z-5. R2. Q0.1 I0.05 J0. F50.;\nM30;\n",
+    )
+    .expect("ok");
+    match &p.ops[1] {
+        Op::Raw { reason, .. } => assert!(reason.contains("I/J words IN TEXT"), "{reason}"),
+        other => panic!("G76 не Raw: {other:?}"),
+    }
+    let p = parse("G21 G90;\nG0 X0. Y0. Z5.;\nG84 X10. Z-5. R2. F50.;\nM30;\n").expect("ok");
+    match &p.ops[1] {
+        Op::Raw { reason, .. } => assert!(reason.contains("no M29"), "{reason}"),
+        other => panic!("G84 не Raw: {other:?}"),
+    }
+    // После raw-цикла с осями голый X — отказ (режим не продолжается).
+    assert_eq!(
+        err_code(parse(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG84 X10. Z-5. R2. F50.;\nX20.;\nM30;\n"
+        )),
+        ErrorCode::InvalidInput
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — M-словарь: M0/M1, M6/M16+T, вендорское ведро (коллизии-пины)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn m0_m1_program_stop() {
+    let p = parse("G21 G90;\nM0;\nM1;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::ProgramStop { optional, .. } => assert!(!optional, "M0 — не optional"),
+        other => panic!("ops[0] не ProgramStop: {other:?}"),
+    }
+    match &p.ops[1] {
+        Op::ProgramStop { optional, .. } => assert!(*optional, "M1 — optional (Q8)"),
+        other => panic!("ops[1] не ProgramStop: {other:?}"),
+    }
+}
+
+#[test]
+fn m6_m16_tool_change_idiom() {
+    // Идиома `T01 M06` → ToolChange; tool в state последующих опов; M16 —
+    // альтернативный код смены (то же).
+    for (src, want_tool) in [
+        ("G21 G90;\nT01 M06;\nG1 X5. F100.;\nM30;\n", 1u32),
+        ("G21 G90;\nT5 M16;\nG1 X5. F100.;\nM30;\n", 5u32),
+    ] {
+        let p = parse(src).expect("ok");
+        match &p.ops[0] {
+            Op::ToolChange { tool, .. } => assert_eq!(*tool, want_tool),
+            other => panic!("ops[0] не ToolChange: {other:?}"),
+        }
+        match &p.ops[1] {
+            Op::Linear { state, .. } => assert_eq!(state.tool, Some(want_tool)),
+            other => panic!("ops[1] не Linear: {other:?}"),
+        }
+    }
+    // M6/M16 без T — сломанный вход.
+    assert_eq!(
+        err_code(parse("G21 G90;\nM6;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse("G21 G90;\nM16;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn t_alone_preload_raw_sem() {
+    // Одиночное T = предвыбор next-tool (SMTC) → Raw{SEM}, candidate
+    // `selected_tool`; state.tool НЕ меняется.
+    let p = parse("G21 G90;\nT5;\nG1 X5. F100.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("preload"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+    match &p.ops[1] {
+        Op::Linear { state, .. } => assert_eq!(state.tool, None, "предвыбор — не установка"),
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn m07_shower_collision_pin() {
+    // КОЛЛИЗИЯ vs Fanuc: M07 = Shower — ВТОРОЙ канал СОЖ, НЕ mist (Fanuc
+    // M07 = mist-ABSORB) → Raw{SEM}; coolant.mist НЕ устанавливается.
+    let p = parse("G21 G90;\nM07;\nG1 X5. F100.;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("NOT mist"), "{reason}");
+            assert!(reason.contains("second coolant channel"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+    match &p.ops[1] {
+        Op::Linear { state, .. } => {
+            assert!(!state.coolant.mist, "M07 ≠ mist (≠ Fanuc)");
+            assert!(!state.coolant.flood);
+        }
+        other => panic!("ops[1] не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn m10_m12_brakes_raw_sem() {
+    // M10/M11 — тормоз 4-й оси, M12/M13 — 5-й оси (гипотеза «M13 =
+    // шпиндель+СОЖ» опровергнута research'ом) → Raw{SEM};
+    // M13-пин — m13_brake_collision_pin.
+    for code in ["M10", "M11", "M12"] {
+        let p = parse(&format!("G21 G90;\n{code};\nM30;\n")).expect("ok");
+        assert!(
+            matches!(
+                &p.ops[0],
+                Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }
+            ),
+            "{code}"
+        );
+    }
+}
+
+#[test]
+fn m29_relay_collision_pin() {
+    // КОЛЛИЗИЯ vs Fanuc: M29 = output relay с M-Fin, НЕ rigid-tap mode
+    // (rigid tap Haas = Setting 57 + G84 внутренне, без M29).
+    let p = parse("G21 G90;\nM29;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("NOT rigid-tap"), "{reason}");
+            assert!(reason.contains("output relay"), "{reason}");
+        }
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn m19_subs_m46_m96_m109_raw() {
+    let p = parse("G21 G90;\nM19;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }
+    ));
+    // M97 (Haas-специфика — P = N-номер)/M98/M99/M46/M96 → Raw SYNTAX.
+    for code in ["M97 P10 L2", "M98 P0010 L3", "M99", "M46", "M96 P20 Q3"] {
+        let p = parse(&format!("G21 G90;\n{code};\nM30;\n")).expect("ok");
+        match &p.ops[0] {
+            Op::Raw { code: c, reason, .. } => {
+                assert_eq!(*c, ErrorCode::UnsupportedSyntax, "{code}");
+                assert!(!reason.is_empty());
+            }
+            other => panic!("{code} не Raw: {other:?}"),
+        }
+    }
+    // M97 — Haas-специфика в тексте (≠ Fanuc, где M97 нет).
+    let p = parse("G21 G90;\nM97 P10;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { reason, .. } => assert!(reason.contains("Haas-specific"), "{reason}"),
+        other => panic!("не Raw: {other:?}"),
+    }
+    // M109 — ожидание ввода оператора → Raw{RUNTIME_STATE}.
+    let p = parse("G21 G90;\nM109;\nM30;\n").expect("ok");
+    assert!(matches!(&p.ops[0], Op::Raw { code: ErrorCode::RuntimeState, .. }));
+    // Неизвестный M64 — generic SYNTAX.
+    let p = parse("G21 G90;\nM64;\nM30;\n").expect("ok");
+    assert!(matches!(
+        &p.ops[0],
+        Op::Raw { code: ErrorCode::UnsupportedSyntax, .. }
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — Компенсации: G43/G44/G143 → RT; семейства Haas-состава
+// ---------------------------------------------------------------------------
+
+#[test]
+fn comp_active_codes_raw() {
+    // G41/G42 (+D) / G141 → Raw{SEM} (comp-геометрия; G141 — Haas 3D+);
+    // G43/G44/G143 → Raw{RT} (TLO из таблицы); G234 → Raw{SEM} (TCPC).
+    for (code, want) in [
+        ("G41 D5", ErrorCode::UnsupportedSemantics),
+        ("G42 D5", ErrorCode::UnsupportedSemantics),
+        ("G141", ErrorCode::UnsupportedSemantics),
+        ("G43 H2", ErrorCode::RequiresMachineTable),
+        ("G44 H2", ErrorCode::RequiresMachineTable),
+        ("G143 H2", ErrorCode::RequiresMachineTable),
+        ("G234", ErrorCode::UnsupportedSemantics),
+    ] {
+        let p = parse(&format!("G21 G90;\n{code};\nM30;\n")).expect("ok");
+        match &p.ops[0] {
+            Op::Raw { code: c, .. } => assert_eq!(*c, want, "{code}"),
+            other => panic!("{code} не Raw: {other:?}"),
+        }
+    }
+    // G141 — член Haas-семейства G40 в тексте диагностики.
+    let p = parse("G21 G90;\nG141;\nM30;\n").expect("ok");
+    match &p.ops[0] {
+        Op::Raw { reason, .. } => assert!(reason.contains("G40-family"), "{reason}"),
+        other => panic!("не Raw: {other:?}"),
+    }
+}
+
+#[test]
+fn comp_cancel_ignored_safe_without_family() {
+    // G40/G49 без активных кодов семейств в файле — IGNORED_SAFE (опа нет).
+    let p = parse("G21 G90;\nG40;\nG49;\nG0 X1. Y1. Z1.;\nM30;\n").expect("ok");
+    assert_eq!(p.ops.len(), 2); // Rapid + PEND; cancel-кодов в ops нет
+}
+
+#[test]
+fn comp_cancel_with_active_family_raw() {
+    // Правило семейств §1.3 (HAAS-СОСТАВЫ ≠ Fanuc): G40 при живой семье
+    // {G41,G42,G141} → Raw{SEM}; G49 при {G43,G44,G143} → Raw{RT}.
+    let p = parse("G21 G90;\nG41 D5;\nG40;\nM30;\n").expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("family rule"), "{reason}");
+            assert!(reason.contains("G141"), "Haas-состав в тексте");
+        }
+        other => panic!("G40 не Raw: {other:?}"),
+    }
+    let p = parse("G21 G90;\nG143 H3;\nG49;\nM30;\n").expect("ok");
+    match &p.ops[1] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
+            assert!(reason.contains("G143"), "Haas-состав в тексте");
+        }
+        other => panic!("G49 не Raw: {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — Macro B: bucket + система-переменные ≠ Fanuc в диагностике
+// ---------------------------------------------------------------------------
+
+#[test]
+fn macro_b_system_var_ranges_in_diag() {
+    // Система-переменные Haas ≠ Fanuc (#500–#699 non-volatile vs #500–#999;
+    // #109xxx NGC-расширения) — в диагностике (бриф этапа 2, не молча).
+    let p = parse("G21 G90;\n#500 = 5;\nIF [#10930 GT 0] GOTO 9;\nM30;\n").expect("ok");
+    for op in &p.ops[0..2] {
+        match op {
+            Op::Raw { code, reason, .. } => {
+                assert_eq!(*code, ErrorCode::UnsupportedSyntax);
+                assert!(reason.contains("#500–#699"), "{reason}");
+                assert!(reason.contains("#109xxx"), "{reason}");
+                assert!(reason.contains("mapping table"), "{reason}");
+            }
+            other => panic!("не Raw: {other:?}"),
+        }
+    }
+    // Соседние статические ходы парсятся (правило двух классов).
+    let p = parse("G21 G90;\n#100 = 1;\nG1 X5. F100.;\nM30;\n").expect("ok");
+    assert!(matches!(&p.ops[1], Op::Linear { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// ЭТАП 2 — G4 dwell: P-dot rule; X/U-форм НЕТ; P0 → drop; цикл не отменяет
+// ---------------------------------------------------------------------------
+
+#[test]
+fn g4_p_dot_rule_both_directions() {
+    // Dotted P = секунды verbatim; bare P = миллисекунды + notice.
+    let (p, notices) = notices_of("G21 G90 G94;\nG4 P2.5;\nM30;\n");
+    match &p.ops[0] {
+        Op::Dwell { seconds, .. } => assert!((seconds.value() - 2.5).abs() <= EPS),
+        other => panic!("ops[0] не Dwell: {other:?}"),
+    }
+    assert!(notices.iter().all(|n| n.kind != NoticeKind::DpiAssumed));
+    let (p, notices) = notices_of("G21 G90 G94;\nG4 P500;\nM30;\n");
+    match &p.ops[0] {
+        Op::Dwell { seconds, .. } => {
+            assert!((seconds.value() - 0.5).abs() <= EPS, "P500 bare = 500 мс")
+        }
+        other => panic!("ops[0] не Dwell: {other:?}"),
+    }
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::DpiAssumed && n.message.contains("P-dot rule")),
+        "notice P-dot rule для bare P"
+    );
+}
+
+#[test]
+fn g4_x_u_forms_absent() {
+    // X/U-форм dwell у Haas НЕТ (§1.2): G4 X1. / U1. — слово без
+    // потребителя → Err(INVALID); G4 без dwell-слова → Err.
+    assert_eq!(
+        err_code(parse("G21 G90;\nG4 X1.;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse("G21 G90;\nG4 U1.;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+    assert_eq!(
+        err_code(parse("G21 G90;\nG4;\nM30;\n")),
+        ErrorCode::InvalidInput
+    );
+}
+
+#[test]
+fn g4_p0_drop_notice() {
+    // `G04 P0` — no-op → drop + notice (SPEC §5.2).
+    let (p, notices) = notices_of("G21 G90 G94;\nG4 P0;\nG1 X5. F100.;\nM30;\n");
+    assert!(p.ops.iter().all(|op| !matches!(op, Op::Dwell { .. })));
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::ZeroLengthDwell)
+    );
+}
+
+#[test]
+fn g4_does_not_cancel_cycle() {
+    // G4 — one-shot группа 00: модальный цикл группы 09 НЕ отменяется —
+    // следующий X/Y-блок = повтор сверления.
+    let p = parse(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG99 G81 X10. Z-5. R2. F100.;\nG4 P0.5;\nX20.;\nG80;\nM30;\n",
+    )
+    .expect("ok");
+    let bottoms = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Linear { sub: Some(_), .. }))
+        .count();
+    assert_eq!(bottoms, 2, "цикл пережил G4");
+    let dwells = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Dwell { .. }))
+        .count();
+    assert_eq!(dwells, 1, "G4 между отверстиями — один Dwell-оп");
 }
