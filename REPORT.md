@@ -9,6 +9,11 @@
 
 **Транслятор 5 живых диалектов через канонический EID/L1**: grbl-1.1, linuxcnc, fanuc, haas, eid-l1 (pending: grblHAL, FluidNC — COVERAGE-колонки готовы). **Архитектурный claim «N+2, не N²» — эмпирическое доказательство**: 5 парсеров + 5 эмиттеров = 10 адаптеров вместо 20 P2P-конвертеров; добавление 6-го диалекта = 2 новые поверхности (не 10 конвертеров) — факт, не гипотеза: три диалекта добавлены после MVP (fanuc/haas/eid-l1-модификации) без изменения ядра.
 
+**Named evidence — 3-axis vs 4/5-axis граница на диких файлах** (верифицировано CLI-пробами, 2026-11-22):
+- **`mit_tball_tball.gcode` (61KB, 2680 опов, чистое 3-осевое)**: полный кросс grbl→linuxcnc→grbl — обратный файл **байт-идентичен первому раунду** (fixed-point; трёх-AST эквивалентность на диком CAM-файле).
+- **`vis_SmilinJack_*.tap` (3.5MB, 118 562 опов)** — **файл фактически 4-осевой** (флип-рез: A-слова, «ROTARY REQUIRED» в шапке): parse + same-dialect fixed-point ✓, 3 Raw на ротационных словах → кросс-отказ честен (SPEC §8.2).
+- **`ncm_g434_rtcp_5x` (44 618 опов)** — 5-осевая семантика: **44 609 Raw (99.98%)** — same-dialect verbatim, any-to-any не применим BY DESIGN; Raw — правильная диспозиция для непредставимого, не дыра.
+
 Каждый адаптер: парсер с канонизацией (modal state → resolved-state AST), детерминированный эмиттер с legality-таблицей, **развёртывание canned cycles по §7.7** (4 поверхности развёртки на единых v0.18-константах, rs274-референс 0 divergences), RAW двух классов (same-dialect verbatim / кросс-диалект отказ), verify-проход со stage-атрибуцией, semantic_diff по допускам EQUIVALENCE §4; runner R1–R4; Tier A 68 векторов + Tier B 157 файлов; CLI (translate/verify, живой режим); профили с emission-опциями; **sim real (LinuxCNC 2.9 rs274 в Docker) + sim mock**.
 
 **Числа:** **1115 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.19 (16+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
