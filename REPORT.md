@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-22 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9.2→v0.9.3 (Fanuc + Haas колонки; haas-приёмка партией) · CORPUS v0.7.1 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
+**Версии:** SPEC v0.20 (+§2.5-принцип 5 ревизия v0.21) · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.12 (6 диалект-колонок) · CORPUS v0.7.1 · PLAN v0.1.3 · interface v0.2.0 · **manifest: 68 векторов + 157 Tier B (70 published / 87 local-dev); 17 fanuc + 13 haas-dialect → live через зарегистрированные адаптеры**
 
 ---
 
@@ -16,7 +16,7 @@
 
 Каждый адаптер: парсер с канонизацией (modal state → resolved-state AST), детерминированный эмиттер с legality-таблицей, **развёртывание canned cycles по §7.7** (4 поверхности развёртки на единых v0.18-константах, rs274-референс 0 divergences), RAW двух классов (same-dialect verbatim / кросс-диалект отказ), verify-проход со stage-атрибуцией, semantic_diff по допускам EQUIVALENCE §4; runner R1–R4; Tier A 68 векторов + Tier B 157 файлов (свип Ok 116/157 после v0.20-волны); CLI (translate/verify, живой режим); профили с emission-опциями; **sim real (LinuxCNC 2.9 rs274 в Docker) + sim mock**.
 
-**Числа:** **1161 тест passed / 0 failed** · 100+ коммитов · SPEC v0.20 (20+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
+**Числа:** **1183 теста passed / 0 failed** · 100+ коммитов · SPEC v0.20 (20+ ревизий; §2.5-принцип 5 ревизия v0.21 — units-switch mid-program легален) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0, свип Ok 116/157 после волны-2** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
 
 **Временная формулировка (честная):** финальный push — итерации 7–10 за 4 дня; проект — от пустой директории до 1115 тестов через 16+ ревизий спеки, 4 СТОП-протокола (агент→оркестратор, все корректные) и 10 формально закрытых итераций — быстро, но не за счёт пропущенных шагов.
 
@@ -191,8 +191,19 @@ Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUs
 2. **NaN-swallow классифицирован**: известное ограничение, не блокер (§4: лексер физически не производит NaN, арифметика ограничена; is_finite-гейт — кандидат v0.3.x).
 3. **Формулировки**: §1 N+2 эмпирический claim + честная временная формулировка; **§6.71 закрыт** (129e639) + emission-гейт emit_r_arcs (200e53c, находка D); **корпус-аудит 157** (9391b85): 131 чисто 3-осевых (83.4%), 26 именованных скрытых классов; named evidence переписан в три раздельных claim'а с новыми пробами (bricka 49-Z fixed-point, shpk кросс байт-идентичен).
 
-**Workspace: 1161/0.** COVERAGE v0.11, SPEC v0.20.
+**Workspace: 1183/0.** COVERAGE v0.12, SPEC v0.20 (§2.5-ревизия v0.21).
+
+### 11.1 Итерация 12 — волна 1 (v0.20) + волна 2 (Macro-B/chain-continuity/units) — ЗАВЕРШЕНА
+
+Волна 1 (SPEC v0.20, зонды 1–8, COVERAGE v0.11): G92-mid/bare-T/end-not-last во всех 4 адаптерах, ERR-инвентаризация 81 класса (потенциал 48/81), workspace был 1161/0.
+
+Волна 2 (закрытие итерации 12):
+- **linuxcnc** (13e3e13; тесты 174→182): **Macro-B line-level Raw** (`#`-параметры/`[expr]`/IF/GOTO/THEN/O-слова — зеркало fanuc-политики v0.16; 38+ файлов Err→Ok+Raw; Curva dead-assignment = Raw не drop); **units-switch mid-program легален** (SPEC §2.5-принцип 5 ревизия v0.21 — Raw-носитель + конверсия 25.4 в пределах допуска; **anchor-баг-находка+фикс**: convert_units_anchor — хранимый end последнего motion-опа конвертируется синхронно с last_motion.end на смене системы (дуга-якорь) — N7 exit=0); G2.2/G3.2 NURBS-открывашки → spline_active-семья; `M1.`-трейлинг-точка; `G4 X`-dwell legacy; E-слово легально только в G76.
+- **grbl** (fc01bb9 + db894d6; тесты 138→145): **chain-continuity через Raw-блоки** (Raw с осями → chain-break unknown-start: ложные «невозможная дуга/radius mismatch» устранены на 5 файлах → честные RUNTIME_STATE); **protocol-strip** `c<=' '` вне комментариев (находка control-байта \x01 в mit_cws_fresa; зонд-конвергенция с rs274); units-switch (Err «one unit system» снят — convert_units_anchor + UnitsInverse, независимая реализация сошлась с D); ARC_OFFSETS_MISSING текст побайтно зеркален linuxcnc; **единственный Ok→Err флип = RTCP-файл** (бесчестный chaining сквозь rotary → честный partial-end; RTCP = этап 12).
+- **Свип Ok 81→116/157** (артефакты 43ad7c9); harness класс-листы N7 → line-class 30/30 (6a6e3cb); manifest N7 ревизия v0.21 (e4520da).
 
 ## 12. Дальше (этап 12 L2 + отложенное)
 
-**Этап 12 (L2 — параметрика/исполнение):** Macro B исполнение (стек #1–33/#100–500/GOTO — Q10-следствие), NURBS-декомпозиция vs хранение, трансформации (G68/G51 — «хранение, не запекание», climb/conventional), G54.1-домен. **Мелкое отложенное:** §6.71-смежное (R в Fanuc Frame-плане — применено), NaN-is_finite-гейт v0.3.x, Haas `?`-остатки (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку, intra-file парсинг (Амдал-хвост R10), emission-профили grblHAL/FluidNC при адаптерах. **Ревью-очередь пуста** — все решения ревью реализованы (NURBS/Q10 v0.19, NaN-классификация, формулировки).
+**Итерация 12 закрыта целиком** (волна 1 SPEC v0.20: G92-mid/bare-T/end-not-last во всех 4 адаптерах по зонд-фактам rs274+grbl-source; волна 2: Macro-B-linuxcnc / chain-continuity / units-switch v0.21 — свип Ok 116/157, workspace **1183/0**, COVERAGE v0.12; ревью-очередь пуста). Единственный Ok→Err флип волны 2 — RTCP-файл: честный partial-end вместо бесчестного chaining'а сквозь rotary (RTCP = этап 12).
+
+**Этап 12 (L2 — параметрика/исполнение):** Macro B исполнение (стек #1–33/#100–500/GOTO — Q10-следствие), NURBS-декомпозиция vs хранение, трансформации (G68/G51 — «хранение, не запекание», climb/conventional), G54.1-домен, RTCP/rotary-chaining (флип волны 2 — честный partial-end до этапа 12). **Мелкое отложенное:** §6.71-смежное (R в Fanuc Frame-плане — применено), NaN-is_finite-гейт v0.3.x, Haas `?`-остатки (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку, intra-file парсинг (Амдал-хвост R10), emission-профили grblHAL/FluidNC при адаптерах, fanuc/haas зеркала units-switch v0.21. **Ревью-очередь пуста** — все решения ревью реализованы (NURBS/Q10 v0.19, NaN-классификация, формулировки).

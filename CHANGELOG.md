@@ -217,11 +217,47 @@ CORPUS §1.2 v0.5). Изменение управляемое: поле конс
 
 Полная машина: lexer (слова/комментарии/N-skip/$-config/block-delete, регистронезависимо) → canonicalize (modal state → resolved-state AST; дуги IJK/R по §6 — все плоскости×режимы×знаки; квантование входа §10.6; циклы-сырьё → Raw; двухклассовый RAW: line-level vs структурный Err) → emit (legality-таблица ConversionTarget-паттерна: legal 10 / illegal 9 с кодами; единый путь отказа через `code_of`; coolant 10 переходов; полный круг без end-слов). **+32 теста** (102/102): специ-пары по правилам спеки (`spec_*` именование), modal-конфликты ×6 групп, frames §5.3, G74/76/84/87/88 SEMANTICS-класс (ruling), legality ×8 условий. **cargo-mutants**: 676 мутантов, kill-rate 74% → **82.2%** (55 убито усилением тестов), 88 выживших классифицированы (~30 эквивалентных порогов, ~10 core-gated, ~40 arc-3D ждут R1-эталонных значений — итерация 6, 6 timeout = детекция висания лексера).
 
+### волна 2 v0.20 — 2026-11-23 (итерация 12; код без бампа версии крейта)
+
+- **chain-continuity через Raw-блоки** (fc01bb9): Ctx.pos_unknown +
+  block_has_motion_axis_words — детекция по словам, не байтам
+  (коммент-буквы не рвут цепочку — тест-пин); RAPID/LINEAR полный end →
+  Ok start=Unknown, ARC → честный E_RUNTIME_STATE; ложные «невозможная
+  дуга/radius mismatch» сняты на 5 файлах; единственный Ok→Err флип =
+  RTCP-файл (бесчестный chaining сквозь rotary → честный partial-end;
+  RTCP = этап 12).
+- **protocol-strip** префильтр `c <= ' '` вне комментариев (зеркало
+  protocol.c; находка control-байта \x01 в mit_cws_fresa; X1 2→X12
+  end-to-end; колонки диагностики сохранены параллельным массивом).
+- **units-switch mid-program** (db894d6): Err «one unit system» снят
+  (gcode.c case 20/21 — реальный grbl исполняет mid-stream; конверсия
+  25.4 в пределах допуска); convert_units_anchor + UnitsInverse (зеркало
+  D — независимая реализация сошлась); N7 verify exit=0;
+  ARC_OFFSETS_MISSING текст побайтно зеркален linuxcnc (частичная пара
+  I-only — семантика §6.11 запинена).
+- 138→145 тестов.
+
 ## EID-LINUXCNC (crates/eid-linuxcnc)
 
 ### v0.4 — 2026-11-21 (итерации 2–5: полная машина + циклы §7.7 + legality + метаморфные инварианты)
 
 Полная машина: lexer (регистронезависимый, whitespace-вариативный, жёсткие классы `#`/O-code) → canonicalize (G90.1/G91.1 ABSORB побитово-эквивалентный тест; циклы §7.7-шаблон: 7 типов, d_k-геометрия, G86-рестарт, G98/G99, L/K + лимит blowup) → emit (legality-таблица: legal 11 / illegal 8; полный круг без end-слов — зеркало C-фикса). **Метаморфные инварианты**: comment/whitespace/N-word → идентичный AST (semantic_diff-компаратор; 10 ложных срабатываний derive(PartialEq) с SrcSpan расследованы — артефакт компаратора, не парсера). Stage-транзит v0.1.2 применён (11 мест). **94 → 106 тестов**.
+
+### волна 2 v0.20 — 2026-11-23 (итерация 12; код без бампа версии крейта)
+
+- **Macro-B line-level Raw{SYNTAX}** (13e3e13): `#`-параметры /
+  `[ ]`-выражения / IF/GOTO/THEN / WHILE/DO/END — зеркало fanuc-политики
+  v0.16 (COVERAGE §4); O-слова — как прежде; Curva dead-assignment =
+  Raw не drop; 38+ файлов Err→Ok+Raw.
+- **units-switch mid-program легален** (SPEC §2.5-принцип 5 ревизия
+  v0.21): line-level Raw-носитель + конверсия 25.4 в пределах допуска;
+  convert_units_anchor + emit UnitsInverse (маркеры вербатим → репарс
+  повторяет конверсию → AST байт-в-байт, R1 цел); N7 verify exit=0.
+- Мелкое: G2.2/G3.2 NURBS-открывашки → spline_active-семья G5.x;
+  `M1.`-трейлинг-точка (номера кодов как real); `G4 X`-dwell legacy
+  (rs274 convert_dwell P→X); E-слово легально только в G76 (вне G76 —
+  вне словаря rs274 → Err, TRUE-ERR #13).
+- 174→182 тестов.
 
 ## EID-INTEGRATION + EID-CLI
 
@@ -598,6 +634,53 @@ WCS давали бы неразличимые EID с разной геомет�
 ---
 
 ## COVERAGE
+
+### v0.12 — 2026-11-23 (волна 2 итерации 12: Macro-B-linuxcnc + units-switch v0.21 + chain-continuity)
+
+Зона COVERAGE+CHANGELOG (Agent C; крейты/manifest/SPEC не тронуты, коммита
+нет). Источники — коммиты волны 2: 13e3e13 (linuxcnc units-anchor + Macro-B,
+тесты 174→182), fc01bb9 (grbl chain-continuity/protocol-strip, 138→145),
+db894d6 (grbl units + arc-offsets текст), 0566db5 (SPEC §2.5-принцип 5
+ревизия v0.21), e4520da (manifest N7 v0.21); артефакты свипа 43ad7c9
+(ok=116/157).
+
+1. **§2.2 G20/G21 units-switch mid-program**: Err «переключение в
+   середине → E_UNSUPPORTED_SEMANTICS» снят → **легально** (SPEC §2.5-
+   принцип 5 ревизия v0.21 — LinuxCNC исполняет G20/G21 в любой позиции;
+   grbl gcode.c case 20/21 mid-stream, внутренняя позиция mm). Носитель
+   смены = line-level Raw{SEM} + chaining через конверсию 25.4 **в
+   пределах допуска** (4dp-дрейф ≤2e-5 мм < ε_pos — SPEC прямо
+   оговаривает: не «точна»); первое чистое вхождение = Program.units
+   (v0.13, в силе); повтор той же системы = no-op. Реализовано v0.21 на
+   linuxcnc/grbl (anchor-конверсия convert_units_anchor — дуга-якорь;
+   emit UnitsInverse — репарс повторяет конверсию, R1 цел; **N7 verify
+   exit=0 оба диалекта**); fanuc/haas — **v0.21 зеркала в полёте**.
+2. **§4 +строка Macro B-семейство (LinuxCNC)**: line-level
+   Raw{E_UNSUPPORTED_SYNTAX} ×все (`#`/`[ ]`/IF/GOTO/THEN/WHILE/DO/END;
+   O-слова — ruling итерации 6 как прежде) — зеркало Fanuc-политики
+   v0.16; **38+ корпусных файлов Err→Ok+Raw** (свип **Ok 81→116/157**);
+   Curva dead-assignment = Raw, не drop; точки разрыва → unknown.
+3. **§1.3 +правило chain-continuity (v0.12)**: Raw с motion-осями
+   (детекция по словам, не байтам — коммент-буквы не рвут цепочку) →
+   chain-break, следующий motion-оп start=unknown (Q11-механизм);
+   RAPID/LINEAR → Ok start=Unknown, ARC → честный E_RUNTIME_STATE —
+   ложные «невозможная дуга/radius mismatch» сняты на 5 файлах.
+   Реализовано v0.21 на grbl (`Ctx.pos_unknown`); единственный Ok→Err
+   флип волны = RTCP-файл (бесчестный chaining сквозь rotary → честный
+   partial-end; RTCP = этап 12).
+4. **§1.1 +паритет диагностик**: ARC_OFFSETS_MISSING-текст побайтно
+   общий grbl/linuxcnc (частичная пара I-only — семантика §6.11 SPEC
+   запинена; зонд-конвергенция rs274).
+5. **Sync-ячейки волны**: §2.1 G02.2/G03.2 — LinuxCNC-ячейка N/A →
+   Raw{SEM} (NURBS-открывашки, spline_active-семья G5.2/G5.3 — дикие
+   Curva-файлы); §2.6 G4 — LinuxCNC X-форма dwell (rs274
+   convert_dwell P→X, deprecated-легальна); §3 M1 — `M1.`-трейлинг-
+   точка (номера кодов как real); §4 E-слово — LinuxCNC G76-домен
+   (вне G76 → Err «вне словаря rs274» — TRUE-ERR #13); §6.68 —
+   аннотация волны 2: находка control-байта \x01 в mit_cws_fresa
+   подтверждает protocol-strip-конвергенцию (eid-grbl префильтр
+   реализован, колонки диагностики — параллельный массив).
+6. Шапка: **v0.12**; биндинг SPEC v0.20 + пометка §2.5-ревизии v0.21.
 
 ### v0.11 — 2026-11-22 (приёмка SPEC v0.20: зонд-сверка rs274+grbl-source, итерация 12 «исправь недоразумение»)
 
