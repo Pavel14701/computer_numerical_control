@@ -1,79 +1,272 @@
-//! EID/L2 — интерпретатор D0–D2 + минимальный Pass-1 lowering (этап 12.1).
+//! EID/L2 — интерпретатор D0–D3 + полный Pass-1 lowering (этап 12.2, агент A).
 //!
-//! УРОВНИ (§4 дока EID-L2-DESIGN v0.1; D3–D5 — фазы 12.2/12.3):
-//! * **D0** — прямолинейное исполнение: `Assign`, `Move` (Rapid/Linear),
-//!   `L1Op`-passthrough;
-//! * **D1** — ветвления: `IfThen` (одиночный then_stmt, без else — Macro B;
-//!   cond: ≠0, `IF [#0]` — Null как 0.0 → false); `IfGoto{target_label}` —
-//!   только носитель RAW (таблица меток N — 12.2);
-//! * **D2** — циклы и подпрограммы: `While` (do_id-парность — на парсере,
-//!   лимит шагов — здесь, T5), `CallSub` со стеком кадров #1–#33
-//!   (args A→#1..Z→#26) и repeat, `RtcpMode`/`WithTransform` — носители RAW.
+//! УРОВНИ РАЗРЕШИМОСТИ (§4 дока EID-L2-DESIGN v0.1; D4–D5 — фаза 12.3, smt.rs):
+//! * **D0** — константная свёртка/распространение: `Assign` (копирование
+//!   Null), `Move` с ПОЛНЫМ разрешением слов ([`pose_resolve`]: слово со
+//!   значением Null = слово отсутствует — семантика адресных слов,
+//!   таблица 2.1; наследование координат по модальным словам — трекинг
+//!   программной позиции), `L1Op`-passthrough. Параметрический ход теперь
+//!   РАЗРЕШАЕТСЯ (§3 строка 1: `#100 = 5, G0 X#100` → `Op::Rapid X5.0000`),
+//!   числа — single-final-rounding 4dp (SPEC §10.5, [`mk_num4`]).
+//! * **D1** — локальные кадры G65/M98/M97: стек вызовов ГЛУБИНА 9
+//!   ([`L2Config::max_call_depth`], дизайн §5 12.2; превышение →
+//!   [`L2ExecError::CallDepthExceeded`] = E_LIMIT_EXCEEDED), args
+//!   A→#1..Z→#26 с пробросом Null (таблица 2.1), repeat L/K-развёртка,
+//!   возврат M99 ([`L2Stmt::Return`]) → pop кадра; О-конец без M99 —
+//!   неявный return. Modal G66 — КАРКАС: регистрация + триггер «после
+//!   motion» (см. ниже контракт G67).
+//! * **D2** — детерминированные WHILE/IF-GOTO: CFG-исполнитель с таблицей
+//!   меток ([`crate::lowering::collect_labels`] по узлам [`L2Stmt::Label`]
+//!   и [`crate::ast::L2Program::labels`] парсера — контракт B2/D2),
+//!   do_id ∈ 1..=3, cond через `eval` (Null-cond = false), лимит
+//!   `max_loop_steps` НА КАЖДЫЙ цикл (T5) + общий бюджет интерпретатора
+//!   (`max_eval_steps`).
+//! * **D3** — мёртвые ветки/тривиальные условия: cond, вычислившийся в
+//!   константу (IF [1 EQ 1]), разрешается CFG-исполнителем на месте —
+//!   мёртвая ветка НЕ ВЫЧИСЛЯЕТСЯ вовсе (в т.ч. SysVar-чтения в ней не
+//!   дают ложных остановов — синергия с D4, §4).
 //!
-//! LOWERING (§3 матрица, МИНИМАЛЬНО для 12.1; полный Pass-1 — фаза 12.2
-//! в `crate::lowering`):
-//! * константные Rapid/Linear (ни одной переменной, без ротационных осей,
-//!   все X/Y/Z присутствуют) → L1-опы [`Op::Rapid`]/[`Op::Linear`]
-//!   (start = Unknown, state — дефолт фазы 12.1; спан — src оператора);
-//! * всё с переменными / осями A–C / дуги / трансформации → носитель
-//!   [`RawTailItem`] (`Op::Raw` + маркер [`RawMarker`]);
-//! * G31 / чтение SkipPos/AbsMachinePos (любой Sys-переменной) при
-//!   неизвестном состоянии станка → останов `E_RUNTIME_STATE`
-//!   ([`L2Error::RuntimeError`], §3 последняя строка матрицы).
+//! LOWERING (§3 матрица, полная — механика в [`crate::lowering`]):
+//! * параметрические Rapid/Linear → L1-опы с наследованием координат и
+//!   трекингом позиции (start Known/Unknown — точки разрыва SPEC §2);
+//! * дуги IJK/R → [`Op::Arc`] (канон eid-core: sweep (0°,360°], нормаль
+//!   +axis плоскости, pitch = внеплоскостная компонента хода);
+//! * ротационные оси (A/B/C) → [`Op::Raw`] с payload-кадром
+//!   `G0 X15.0000 A15.0000\n` (T4 ДОСЛОВНО, hex с терминатором), код
+//!   E_UNSUPPORTED_SEMANTICS (§3 строка 5);
+//! * G43.4/G49 RTCP, G68.2 TWP → Raw с подставленными переменными
+//!   (§3 строка 6; TWP-тело подавлено);
+//! * G31 / чтение SkipPos/AbsMachinePos/WorkPos → останов
+//!   E_RUNTIME_STATE ([`L2ExecError::Eval`]), программа остаётся в L2;
+//!   чтение WcsOffset → E_REQUIRES_MACHINE_TABLE
+//!   ([`L2ExecError::MachineTableRequired`]); ModalGroup → снапшот
+//!   модальностей ([`Modals`], разрешим статически);
+//! * G68/G51 → аффинные трансформации ([`crate::lowering::Affine3`]) с
+//!   умножением координат и центров дуг (векторы IJK — линейной частью);
+//!   G51.1/G101 зеркало — дефолт-отказ E_UNSUPPORTED_SEMANTICS /
+//!   `allow_mirror_bake` = true → инверсия + Cw↔Ccw + Notice (T6).
 //!
-//! ГВАРД (T5): бюджет вычислений `L2Config::max_eval_steps` (дефолт 10000)
-//! тикается на каждом узле выражения, операторе и итерации цикла —
-//! бесконечный WHILE завершается ошибкой `MaxEvalSteps`
-//! (класс `E_LIMIT_EXCEEDED`).
+//! КОНТРАКТ-ПРОБЕЛЫ (честно, для диспетчера/парсеров):
+//! * G67 (отмена модального вызова) не имеет узла AST в §2.4 — каркас G66
+//!   держит вызов активным до конца программы; парсерный контракт
+//!   (например, аддитивный узел) — предмет интеграции;
+//! * модальная плоскость G17/G18/G19 не имеет узла AST — снапшот держит
+//!   power-on дефолт G17 (дуги в G18/G19 — после парсерного контракта);
+//! * S-слово хода не пишется в `State.spindle` (направление Cw/Ccw
+//!   требует M3/M4-контекста, которого в AST §2.4 нет) — 12.1-решение.
 //!
-//! Примечание (12.2 TODO): носители RAW в 12.1 несут hex debug-дампа
-//! оператора; §3/T4 ожидает payload вида `G0 A5.0000\n` (исходный кадр с
-//! подставленными значениями) — появится вместе с частичным lowering осей.
+//! ГВАРДЫ (T5): `max_eval_steps` — общий бюджет (узлы выражений +
+//! операторы + итерации), `max_loop_steps` — на КАЖДУЮ сессию цикла
+//! WHILE; бесконечный WHILE детерминированно → E_LIMIT_EXCEEDED.
+//!
+//! ПРИМЕЧАНИЕ (гонка волн, для диспетчера): mechanical-фиксы агента D2
+//! в этом файле (no-op arm'ы Label/Return, labels: Default::default()
+//! в тестах 12.1) ПОГЛОЩЕНЫ полной реализацией 12.2 — семантика
+//! возврата/CFG-переходов здесь, как и было оговорено в их комментариях.
 
-use crate::ast::{Expr, ExprPose, L2Program, L2Stmt, MoveKind, SubTarget};
+use crate::ast::{
+    Axis, Expr, ExprPose, L2Program, L2Stmt, MoveKind, Plane, SubTarget, SysVar, TransformKind,
+    Val, VarRef,
+};
 use crate::eval::{eval_expr, write_var, L2Env, L2Error};
-use eid_core::ast::{Num, Op, Point3, StartPoint, State};
+use crate::lowering::{
+    arc_from_ijk, arc_from_r, format_frame, plane_linear, raw_frame_op, resolve_labels,
+    sub_target_name, Affine3, ArcGeomError,
+};
+use eid_core::ast::{Dir, Num, Op, Point3, StartPoint, State};
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
+use std::collections::{BTreeMap, HashMap};
 
 // ===========================================================================
-// Конфиг и результат
+// Конфиг и ошибки
 // ===========================================================================
 
-/// Конфигурация интерпретатора (этап 12.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Конфигурация интерпретатора/Pass-1 lowering (этап 12.2).
+#[derive(Debug, Clone, PartialEq)]
 pub struct L2Config {
-    /// Бюджет шагов вычисления (узлы выражений + операторы + итерации
-    /// циклов). Дефолт 10000 — T5: бесконечный WHILE → E_LIMIT_EXCEEDED.
+    /// Общий бюджет шагов вычисления (узлы выражений + операторы).
+    /// Дефолт 10000 — T5: бесконечный WHILE → E_LIMIT_EXCEEDED.
     pub max_eval_steps: u64,
+    /// Бюджет вычислений условия НА КАЖДУЮ сессию цикла WHILE (T5:
+    /// «лимит max_eval_steps на КАЖДЫЙ цикл»). Дефолт 10000.
+    pub max_loop_steps: u64,
+    /// Глубина стека вызовов G65/M98/M97 (дизайн §5 12.2: до 9).
+    /// Превышение → [`L2ExecError::CallDepthExceeded`] (E_LIMIT_EXCEEDED).
+    pub max_call_depth: usize,
+    /// G51.1/G101 зеркало: false (дефолт) → отказ E_UNSUPPORTED_SEMANTICS;
+    /// true → инверсия координат + Cw↔Ccw + Notice (T6). Конфиг-структура
+    /// lowering (НЕ MachineProfile — по заданию 12.2).
+    pub allow_mirror_bake: bool,
+    /// Известная начальная позиция станка (MachineProfile/симулятор-хоум).
+    /// None (дефолт) → первый ход с неполными словами не lowered
+    /// (E_RUNTIME_STATE-носитель); Some — наследование координат с кадра 1.
+    pub initial_pos: Option<[f64; 3]>,
 }
 
 impl Default for L2Config {
     fn default() -> Self {
         Self {
             max_eval_steps: 10_000,
+            max_loop_steps: 10_000,
+            max_call_depth: 9,
+            allow_mirror_bake: false,
+            initial_pos: None,
         }
     }
 }
 
-/// Маркер носителя RAW: что за L2-конструкция не lowered в Pass-1 (12.1)
-/// и зачем. Полный разбор носителей — фаза 12.2 ([`crate::lowering`]).
+/// Ошибка исполнения/Pass-1 lowering L2. Обёртка над [`L2Error`] + уровневые
+/// коды 12.2 (eval.rs заморожен волной 12.1/12.3 — новые коды здесь,
+/// аддитивно).
+#[derive(Debug, Clone, PartialEq)]
+pub enum L2ExecError {
+    /// Ошибка вычисления/семантики #0 (`crate::eval`): деление на Null,
+    /// LN[#0], исчерпание общего бюджета (`MaxEvalSteps` → T5) и прочее
+    /// рантайм-отклонение → классы E_INVALID_INPUT / E_LIMIT_EXCEEDED /
+    /// E_RUNTIME_STATE.
+    Eval(L2Error),
+    /// Глубина стека вызовов G65/M98/M97 превысила лимит (9, дизайн §5
+    /// 12.2) → класс E_LIMIT_EXCEEDED.
+    CallDepthExceeded { limit: usize },
+    /// Бюджет условия одной сессии WHILE исчерпан (T5 per-loop) →
+    /// класс E_LIMIT_EXCEEDED.
+    LoopLimitExceeded { limit: u64 },
+    /// Семантика не представима в L1 (§3): зеркало G51.1/G101 без флага,
+    /// носители RTCP/TWP → класс E_UNSUPPORTED_SEMANTICS.
+    UnsupportedSemantics(String),
+    /// Чтение таблицы WCS ([`SysVar::WcsOffset`]) требует таблицы станка
+    /// (§3 семейство состояний станка) → класс E_REQUIRES_MACHINE_TABLE.
+    MachineTableRequired(String),
+}
+
+impl L2ExecError {
+    /// Класс диагностики SPEC §8.
+    pub fn error_code(&self) -> ErrorCode {
+        match self {
+            Self::Eval(e) => e.error_code(),
+            Self::CallDepthExceeded { .. } | Self::LoopLimitExceeded { .. } => {
+                ErrorCode::LimitExceeded
+            }
+            Self::UnsupportedSemantics(_) => ErrorCode::UnsupportedSemantics,
+            Self::MachineTableRequired(_) => ErrorCode::RequiresMachineTable,
+        }
+    }
+
+    /// Человекочитаемое сообщение (для Diagnostic.message).
+    pub fn message(&self) -> String {
+        match self {
+            Self::Eval(e) => e.message(),
+            Self::CallDepthExceeded { limit } => {
+                format!("subprogram call stack depth exceeded limit {limit} (design §5 12.2)")
+            }
+            Self::LoopLimitExceeded { limit } => {
+                format!("WHILE loop step budget exhausted (per-loop limit {limit})")
+            }
+            Self::UnsupportedSemantics(m) | Self::MachineTableRequired(m) => m.clone(),
+        }
+    }
+}
+
+impl From<L2Error> for L2ExecError {
+    fn from(e: L2Error) -> Self {
+        Self::Eval(e)
+    }
+}
+
+// ===========================================================================
+// Снапшот модальностей (SysVar::ModalGroup — статически разрешим из state)
+// ===========================================================================
+
+/// Снапшот модальных групп (§2.2 `SysVar::ModalGroup(u8)`, Fanuc #4001..):
+/// power-on дефолты Fanuc mill для МОДЕЛИРУЕМОГО подмножества (честно:
+/// только то, что lowering реально трекает); обновляется lowering'ом.
+/// Немоделируемая группа при чтении → останов E_RUNTIME_STATE (§3).
+///
+/// | группа | дефолт | смысл               | обновление |
+/// |--------|--------|---------------------|------------|
+/// | 1      | 0      | motion G0/G1/G2/G3  | lowering ходов |
+/// | 2      | 17     | плоскость G17/18/19 | НЕ трекается (нет узла AST — контракт-пробел, шапка) |
+/// | 3      | 90     | G90/G91             | не трекается |
+/// | 4      | 94     | G94/G95 feed        | не трекается |
+/// | 6      | 21     | units G20/G21       | не трекается |
+/// | 7      | 40     | G40/41/42           | не трекается |
+/// | 8      | 49     | G43/49 length       | не трекается |
+/// | 9      | 80     | canned cancel       | не трекается |
+/// | 14     | 54     | WCS G54..59         | не трекается |
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Modals {
+    groups: BTreeMap<u8, u32>,
+}
+
+impl Default for Modals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Modals {
+    /// Power-on снапшот Fanuc mill (моделируемое подмножество).
+    pub fn new() -> Self {
+        let groups: BTreeMap<u8, u32> = [
+            (1u8, 0u32), // G0
+            (2, 17),     // G17
+            (3, 90),     // G90
+            (4, 94),     // G94
+            (6, 21),     // G21 (mm)
+            (7, 40),     // G40
+            (8, 49),     // G49
+            (9, 80),     // G80
+            (14, 54),    // G54
+        ]
+        .into_iter()
+        .collect();
+        Self { groups }
+    }
+
+    /// Значение группы (Fanuc-код: #4001 → 0/1/2/3, #4002 → 17/18/19, …);
+    /// немоделируемая → None (читатель даёт останов E_RUNTIME_STATE).
+    pub fn value(&self, g: u8) -> Option<u32> {
+        self.groups.get(&g).copied()
+    }
+
+    /// Активная плоскость (группа 2).
+    pub fn plane(&self) -> Plane {
+        match self.value(2) {
+            Some(18) => Plane::ZX,
+            Some(19) => Plane::YZ,
+            _ => Plane::XY,
+        }
+    }
+
+    /// Обновить группу motion (lowering хода: G0→0, G1→1, G2→2, G3→3).
+    fn set_motion(&mut self, code: u32) {
+        self.groups.insert(1, code);
+    }
+}
+
+// ===========================================================================
+// Носители RAW (маркеры 12.1 — совместимы; семантика 12.2 в шапке)
+// ===========================================================================
+
+/// Маркер носителя RAW: что за L2-конструкция не lowered в Pass-1 и зачем.
+/// (12.2: `ControlFlow`/`Parametric` — ЛЕГАТЫ 12.1: с полным CFG/D0 носители
+/// этих классов больше не строятся; варианты оставлены для совместимости API.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawMarker {
-    /// Ход зависит от переменных (параметрический).
+    /// ЛЕГАТ 12.1 (D0 полный: параметрика разрешается). Не конструируется.
     Parametric,
-    /// Ротационная ось A/B/C в позе (без RTCP-контекста в L1).
+    /// Ротационная ось A/B/C в кадре (§3 строка 5, T4-payload).
     RotaryAxis,
-    /// Дуга — геометрия (center/normal/sweep) не считалась в 12.1.
+    /// Дуга не lowered (геометрия не задана/позиция неизвестна).
     ArcUnlowered,
-    /// Константный ход, но поза неполная (отсутствующее/Null-слово —
-    /// «слово игнорируется», координата неизвестна).
+    /// Ход не lowered: слово отсутствует/Null при неизвестной текущей
+    /// позиции (адресная семантика 2.1 — координата наследуется).
     IncompletePose,
-    /// Трансформация (§2.3) — тело блока НЕ исполняется (иначе ходы
-    /// эмитились бы без трансформации — неверная геометрия).
+    /// Трансформация не lowered (TWP §3 строка 6) — тело подавлено.
     Transform,
-    /// IF-GOTO: нужна таблица меток N (12.2).
+    /// ЛЕГАТ 12.1 (D2: IfGoto исполняется CFG). Не конструируется.
     ControlFlow,
-    /// Модальный вызов подпрограммы (G66) — привязан к ходам (12.2).
+    /// Модальный вызов G66 — каркас (регистрация; триггер после motion).
     SubCall,
     /// RTCP-режим (G43.4/G43.5/G49).
     Rtcp,
@@ -95,8 +288,8 @@ impl RawMarker {
 }
 
 /// Носитель не-lowered L2-конструкции: маркер + `Op::Raw` (lossless
-/// payload — детерминированный debug-дамп оператора, причина, код
-/// `E_RUNTIME_STATE`, спан оператора из AST).
+/// payload — hex ASCII-кадра с подставленными значениями [`format_frame`],
+/// причина, честный код, спан оператора из AST).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawTailItem {
     pub marker: RawMarker,
@@ -104,30 +297,50 @@ pub struct RawTailItem {
     pub op: Op,
 }
 
-/// Результат Pass-1 (заготовка фазы 12.1; полный lowering — 12.2).
+/// Результат Pass-1 (lowering L2 → L1, §3).
 #[derive(Debug, Clone, Default)]
 pub struct LoweringResult {
     /// Успешно lowered L1-опы (в т.ч. passthrough `L2Stmt::L1Op`).
     pub l1_ops: Vec<Op>,
     /// Хвост носителей RAW (маркер + Op::Raw) — порядок исполнения.
     pub raw_tail: Vec<RawTailItem>,
-    /// Диагностики пасса (Stage::Canonicalize; E_RUNTIME_STATE-носители,
-    /// остановы уже отражены в Err-возврате `run`).
+    /// Диагностики пасса (Stage::Canonicalize; носители + Notice'и —
+    /// например, запечённое зеркало T6). Остановы (Err) отражены в
+    /// возврате [`L2Evaluator::run`], программа остаётся в L2 (§3).
     pub diagnostics: Vec<Diagnostic>,
 }
 
 impl LoweringResult {
-    fn push_raw(&mut self, marker: RawMarker, stmt: &L2Stmt, detail: &str) {
+    /// Носитель RAW + диагностика. `payload` — ТЕКСТ кадра с подставленными
+    /// значениями (§3/T4; hex-кодирование в [`raw_frame_op`]); None →
+    /// легаси debug-дамп оператора.
+    fn push_raw(
+        &mut self,
+        marker: RawMarker,
+        code: ErrorCode,
+        payload: Option<String>,
+        stmt: &L2Stmt,
+        detail: &str,
+    ) {
+        let src = stmt
+            .src()
+            .cloned()
+            .unwrap_or_else(crate::ast::placeholder_span);
         let reason = format!("L2 pass-1 [{}]: {detail}", marker.as_str());
-        self.raw_tail.push(RawTailItem {
-            marker,
-            op: raw_carrier_op(&reason, stmt),
-        });
+        let op = match payload {
+            Some(text) => raw_frame_op(&text, reason.clone(), code, src),
+            None => Op::Raw {
+                payload_hex: payload_hex_of_debug(stmt),
+                reason: reason.clone(),
+                code,
+                src,
+            },
+        };
+        self.raw_tail.push(RawTailItem { marker, op });
         self.diagnostics.push(Diagnostic {
-            code: ErrorCode::RuntimeState,
+            code,
             stage: Stage::Canonicalize,
             message: reason,
-            // Спан оператора из AST (§2.4: src у всех управляющих вариантов).
             src: stmt.src().cloned(),
             options: Vec::new(),
             limit: None,
@@ -135,28 +348,20 @@ impl LoweringResult {
     }
 }
 
-/// Op::Raw-носитель: hex детерминированного debug-дампа оператора,
-/// спан — из оператора (плейсхолдер для без-spanных — L1Op сюда не
-/// попадает; fallback сохранён для устойчивости).
-fn raw_carrier_op(reason: &str, stmt: &L2Stmt) -> Op {
+/// Легаси-fallback (12.1): hex детерминированного debug-дампа оператора.
+fn payload_hex_of_debug(stmt: &L2Stmt) -> String {
     let dump = format!("{stmt:?}");
-    let payload_hex: String = dump.as_bytes().iter().map(|b| format!("{b:02X}")).collect();
-    Op::Raw {
-        payload_hex,
-        reason: reason.to_string(),
-        code: ErrorCode::RuntimeState,
-        src: stmt
-            .src()
-            .cloned()
-            .unwrap_or_else(crate::ast::placeholder_span),
+    let mut hex = String::with_capacity(dump.len() * 2);
+    for b in dump.as_bytes() {
+        hex.push_str(&format!("{b:02X}"));
     }
+    hex
 }
 
-/// Состояние по умолчанию для синтезированных L1-опов (фаза 12.1 не
-/// ведёт модель станка: spindle/coolant/tool — как в грамматике D3 до
-/// первого слова; S-слово (spindle Expr) в 12.1 только влияет на
-/// константность — направление Cw/Ccw требует M3/M4-контекста, 12.2).
-fn l1_default_state(feed: Option<Num>) -> State {
+/// Состояние по умолчанию для синтезированных L1-опов (12.1-решение:
+/// spindle/coolant/tool — как в грамматике D3 до первого слова; S-слово
+/// хода не пишется — направление Cw/Ccw требует M3/M4-контекста, шапка).
+fn l1_default_state(feed: Option<Num>, feed_in_frame: bool) -> State {
     State {
         feed,
         spindle: eid_core::ast::Spindle::Off,
@@ -164,20 +369,41 @@ fn l1_default_state(feed: Option<Num>) -> State {
         tool: None,
         frame: eid_core::ast::Frame::Wcs,
         wcs: eid_core::ast::Wcs::G54,
-        feed_restated: false,
+        // Провенанс «F-слово было в кадре-источнике» (INTERFACE-V0.2 §2.4):
+        // ход lowering'а — сам кадр-источник → флаг = наличие F-слова.
+        feed_restated: feed_in_frame,
     }
 }
 
-/// f64 → Num с детерминированным текстом (кратчайший Display; verbatim
-/// текст для L2-ходов недоступен — в 12.1 не критично).
-fn mk_num(v: f64) -> Num {
-    Num::new(format!("{v}"), v)
+/// f64 → Num: single-final-rounding 4dp (SPEC §10.5) + канонический текст
+/// (детерминированный, `-0.0000` → `0.0000`).
+fn mk_num4(v: f64) -> Num {
+    let mut q = (v * 10_000.0).round() / 10_000.0;
+    if q == 0.0 {
+        q = 0.0; // канонизация -0.0 → +0.0 (бит-паттерн)
+    }
+    Num::new(eid_core::emitter::fmt_num(q), q)
+}
+
+/// Наследование трёх осей: слово Some → значение; None → текущая позиция
+/// (модальная ось); позиция тоже неизвестна → None.
+fn inherit_axes(words: [Option<f64>; 3], cur: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    match (words[0].or(cur.map(|p| p[0])), words[1].or(cur.map(|p| p[1])), words[2].or(cur.map(|p| p[2]))) {
+        (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+        _ => None,
+    }
+}
+
+fn pt3(p: [f64; 3]) -> Point3 {
+    Point3 {
+        x: mk_num4(p[0]),
+        y: mk_num4(p[1]),
+        z: mk_num4(p[2]),
+    }
 }
 
 // ===========================================================================
-// pose_resolve: ExprPose → ResolvedPose (Null-компонента → None = слово
-// игнорируется; ошибки выражений, включая Sys-чтение → E_RUNTIME_STATE,
-// пробрасываются и ОСТАНАВЛИВАЮТ исполнение)
+// pose_resolve (D0): Null-компонента → слово отсутствует (таблица 2.1)
 // ===========================================================================
 
 /// Поза с разрешёнными значениями слов: None — слова нет или оно Null
@@ -192,8 +418,11 @@ pub struct ResolvedPose {
     pub c: Option<f64>,
 }
 
-/// Вычислить все слова позы (Приложение, таблица 2.1: слово с Null
-/// игнорируется — «как будто не написано»).
+/// Вычислить все слова позы в ЧИСТОМ окружении (без снапшота модальностей):
+/// слово с Null игнорируется — «как будто не написано» (таблица 2.1);
+/// Sys-чтение → E_RUNTIME_STATE-останов (§3). Для lowering с снапшотом
+/// модальностей интерпретатор разрешает слова через `eval_resolved`
+/// (см. [`L2Evaluator`]).
 pub fn pose_resolve(pose: &ExprPose, env: &mut L2Env) -> Result<ResolvedPose, L2Error> {
     let mut word = |e: &Option<Expr>| -> Result<Option<f64>, L2Error> {
         match e {
@@ -211,25 +440,41 @@ pub fn pose_resolve(pose: &ExprPose, env: &mut L2Env) -> Result<ResolvedPose, L2
     })
 }
 
-/// Выражение константно (нет Var-ссылок)? Const-арифметика/Null — да.
-fn expr_is_const(e: &Expr) -> bool {
-    match e {
-        Expr::Const(_) | Expr::Null => true,
-        Expr::Var(_) => false,
-        Expr::Unary(_, inner) => expr_is_const(inner),
-        Expr::Binary(_, a, b) => expr_is_const(a) && expr_is_const(b),
-    }
+// ===========================================================================
+// L2Evaluator (D0–D3 + полный Pass-1)
+// ===========================================================================
+
+/// Сигнал потока управления внутри одного тела (body-scope): Jump возвращает
+/// только [`L2Stmt::IfGoto`] и поглощается [`L2Evaluator::exec_block`];
+/// Return пузырится до точки вызова подпрограммы.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Normal,
+    Jump(usize),
+    Return,
 }
 
-// ===========================================================================
-// L2Evaluator
-// ===========================================================================
-
-/// Интерпретатор L2, уровни D0–D2 (см. модульную шапку).
+/// Интерпретатор L2, уровни D0–D3, с полным Pass-1 lowering (§3).
 #[derive(Debug, Clone)]
 pub struct L2Evaluator {
     config: L2Config,
     env: L2Env,
+    /// Программная позиция (значения адресных слов; наследование осей).
+    /// Базовая СК = `xform.apply_point(pos_prog)` (трансформации §3).
+    pos_prog: Option<[f64; 3]>,
+    /// Снапшот модальностей (SysVar::ModalGroup — статически разрешим).
+    modals: Modals,
+    /// Активная аффинная трансформация (композиция стека G68/G51/G51.1).
+    xform: Affine3,
+    xform_stack: Vec<Affine3>,
+    /// Модальный вызов G66 (каркас): цель + ЗАПИСАННЫЕ значения аргументов
+    /// (индексы локальных #1..#26 + значения; вычислены в момент
+    /// регистрации, контекст вызывающего).
+    modal_call: Option<(SubTarget, Vec<(u32, Val)>)>,
+    out: LoweringResult,
+    /// Per-body таблицы меток (D2): адрес тела → N-метка → индекс.
+    body_labels: HashMap<usize, BTreeMap<u32, usize>>,
+    main_labels: BTreeMap<u32, usize>,
 }
 
 impl L2Evaluator {
@@ -237,7 +482,18 @@ impl L2Evaluator {
     pub fn new(config: L2Config) -> Self {
         let mut env = L2Env::new();
         env.set_budget(config.max_eval_steps);
-        Self { config, env }
+        Self {
+            config,
+            env,
+            pos_prog: None,
+            modals: Modals::new(),
+            xform: Affine3::identity(),
+            xform_stack: Vec::new(),
+            modal_call: None,
+            out: LoweringResult::default(),
+            body_labels: HashMap::new(),
+            main_labels: BTreeMap::new(),
+        }
     }
 
     /// Окружение (переменные после исполнения — для тестов/диагностики).
@@ -250,119 +506,413 @@ impl L2Evaluator {
         &self.config
     }
 
-    /// Исполнить программу (D0–D2) и собрать Pass-1. Любая `L2Error`
-    /// (например Sys-чтение при неизвестном станке → E_RUNTIME_STATE,
-    /// исчерпание бюджета → E_LIMIT_EXCEEDED) ОСТАНАВЛИВАЕТ исполнение.
-    pub fn run(&mut self, program: &L2Program) -> Result<LoweringResult, L2Error> {
-        self.env.set_budget(self.config.max_eval_steps);
-        let mut out = LoweringResult::default();
-        self.exec_block(&program.stmts, program, &mut out)?;
-        Ok(out)
+    /// Исполнить программу (D0–D3) и собрать Pass-1 (§3). Любая ошибка
+    /// ([`L2ExecError`]) ОСТАНАВЛИВАЕТ исполнение — программа остаётся в L2
+    /// (§3 последняя строка матрицы: G31/позиции/таблицы — честный останов).
+    ///
+    /// Состояние интерпретатора СБРАСЫВАЕТСЯ на каждый прогон
+    /// (переменные/позиция/модальности/трансформации) — прогон
+    /// детерминирован и повторяем.
+    pub fn run(&mut self, program: &L2Program) -> Result<LoweringResult, L2ExecError> {
+        let mut env = L2Env::new();
+        env.set_budget(self.config.max_eval_steps);
+        self.env = env;
+        self.pos_prog = self.config.initial_pos;
+        self.modals = Modals::new();
+        self.xform = Affine3::identity();
+        self.xform_stack.clear();
+        self.modal_call = None;
+        self.out = LoweringResult::default();
+        // D2: предвычисление per-body таблиц меток (главный блок + subs +
+        // тела While/WithTransform на любой глубине).
+        self.body_labels.clear();
+        precompute_labels(&program.stmts, &mut self.body_labels);
+        for sub in &program.subs {
+            precompute_labels(&sub.body, &mut self.body_labels);
+        }
+        self.main_labels = resolve_labels(program);
+        let labels = self.main_labels.clone();
+        match self.exec_block(program, &program.stmts, &labels)? {
+            Flow::Normal => {}
+            // Защита: Return доходит до корня только при ошибке баланса
+            // кадров (сам Return проверяет глубину) — сообщаем честно.
+            Flow::Return => {
+                return Err(L2ExecError::Eval(L2Error::RuntimeError(
+                    "M99/RETURN escaped to program root (frame imbalance)".to_string(),
+                )))
+            }
+            Flow::Jump(_) => unreachable!("Jump must be absorbed by exec_block"),
+        }
+        Ok(std::mem::take(&mut self.out))
     }
 
-    /// Блок операторов (последовательный; Err — останов).
+    // ----- служебные -------------------------------------------------------
+
+    /// Вычислить выражение с снапшотом модальностей: SysVar::ModalGroup
+    /// разрешается статически из state (§3); WcsOffset →
+    /// E_REQUIRES_MACHINE_TABLE; позиции → E_RUNTIME_STATE-останов.
+    fn eval_resolved(&mut self, e: &Expr) -> Result<Val, L2ExecError> {
+        let resolved = self.resolve_sys(e)?;
+        eval_expr(&resolved, &mut self.env).map_err(L2ExecError::Eval)
+    }
+
+    /// Переписать Sys-ссылки в выражении (§3 SysVar-маппинг):
+    /// ModalGroup → Const(значение снапшота); WcsOffset → останов
+    /// E_REQUIRES_MACHINE_TABLE; позиции/вендорские → останов
+    /// E_RUNTIME_STATE (программа остаётся в L2 — §3 последняя строка).
+    fn resolve_sys(&self, e: &Expr) -> Result<Expr, L2ExecError> {
+        match e {
+            Expr::Const(_) | Expr::Null => Ok(e.clone()),
+            Expr::Var(VarRef::Sys(sv)) => match sv {
+                SysVar::ModalGroup(g) => match self.modals.value(*g) {
+                    Some(v) => Ok(Expr::num(v as f64)),
+                    None => Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "modal group #{g} is not modeled in the L2 modal snapshot — E_RUNTIME_STATE stop (§3)"
+                    )))),
+                },
+                SysVar::WcsOffset { p, axis } => Err(L2ExecError::MachineTableRequired(format!(
+                    "WCS offset table read #WCS[{}.{}] requires machine table — E_REQUIRES_MACHINE_TABLE (§3)",
+                    p,
+                    axis.letter()
+                ))),
+                sv_pos @ (SysVar::AbsMachinePos(_)
+                | SysVar::WorkPos(_)
+                | SysVar::SkipPos(_)
+                | SysVar::VendorSpecific(_)) => Err(L2ExecError::Eval(L2Error::RuntimeError(
+                    format!(
+                        "system variable {} requires machine runtime state (unknown in Pass-1) — E_RUNTIME_STATE stop; program remains in L2 (§3)",
+                        sys_var_display(sv_pos)
+                    ),
+                ))),
+            },
+            Expr::Var(_) => Ok(e.clone()),
+            Expr::Unary(op, inner) => Ok(Expr::Unary(*op, Box::new(self.resolve_sys(inner)?))),
+            Expr::Binary(op, a, b) => Ok(Expr::Binary(
+                *op,
+                Box::new(self.resolve_sys(a)?),
+                Box::new(self.resolve_sys(b)?),
+            )),
+        }
+    }
+
+    /// Разрешить слова позы (eval_resolved: Null → None = слово игнорируется).
+    fn pose_resolved(&mut self, pose: &ExprPose) -> Result<ResolvedPose, L2ExecError> {
+        let mut word = |e: &Option<Expr>| -> Result<Option<f64>, L2ExecError> {
+            match e {
+                None => Ok(None),
+                Some(expr) => Ok(self.eval_resolved(expr)?.resolve_word()),
+            }
+        };
+        Ok(ResolvedPose {
+            x: word(&pose.x)?,
+            y: word(&pose.y)?,
+            z: word(&pose.z)?,
+            a: word(&pose.a)?,
+            b: word(&pose.b)?,
+            c: word(&pose.c)?,
+        })
+    }
+
+    /// Таблица меток тела (предвычислена в [`L2Evaluator::run`]).
+    fn labels_of(&self, stmts: &[L2Stmt]) -> BTreeMap<u32, usize> {
+        self.body_labels
+            .get(&(stmts.as_ptr() as usize))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Базовая СК-позиция как StartPoint для lowered хода.
+    fn pos_start(&self) -> StartPoint {
+        match self.pos_prog {
+            Some(p) => StartPoint::Known(pt3(self.xform.apply_point(p))),
+            None => StartPoint::Unknown,
+        }
+    }
+
+    // ----- исполнение ------------------------------------------------------
+
+    /// Блок операторов (последовательный CFG; Jump поглощается, Return
+    /// пузырится).
     fn exec_block(
         &mut self,
-        stmts: &[L2Stmt],
         program: &L2Program,
-        out: &mut LoweringResult,
-    ) -> Result<(), L2Error> {
-        for stmt in stmts {
-            self.exec_stmt(stmt, program, out)?;
+        stmts: &[L2Stmt],
+        labels: &BTreeMap<u32, usize>,
+    ) -> Result<Flow, L2ExecError> {
+        let mut i = 0usize;
+        while i < stmts.len() {
+            match self.exec_stmt(program, &stmts[i], labels)? {
+                Flow::Normal => i += 1,
+                Flow::Jump(idx) => i = idx,
+                Flow::Return => return Ok(Flow::Return),
+            }
         }
-        Ok(())
+        Ok(Flow::Normal)
     }
 
     /// Один оператор.
     fn exec_stmt(
         &mut self,
-        stmt: &L2Stmt,
         program: &L2Program,
-        out: &mut LoweringResult,
-    ) -> Result<(), L2Error> {
+        stmt: &L2Stmt,
+        labels: &BTreeMap<u32, usize>,
+    ) -> Result<Flow, L2ExecError> {
         self.env.tick()?;
         match stmt {
             // ---------- D0 ----------
             L2Stmt::Assign { target, value, .. } => {
-                let v = eval_expr(value, &mut self.env)?;
+                let v = self.eval_resolved(value)?;
                 // Присваивание копирует Null (таблица 2.1: `#100 = #0` —
                 // переменная становится Val::Null, НЕ 0.0).
                 write_var(target, v, &mut self.env)?;
-                Ok(())
+                Ok(Flow::Normal)
             }
-            L2Stmt::Move { .. } => self.exec_move(stmt, program, out),
+            L2Stmt::Move { .. } => self.exec_move(program, stmt),
             L2Stmt::L1Op(op) => {
-                out.l1_ops.push(op.clone());
-                Ok(())
+                self.out.l1_ops.push(op.clone());
+                Ok(Flow::Normal)
             }
+            L2Stmt::Label { .. } => Ok(Flow::Normal), // no-op (позиция GOTO)
 
             // ---------- D1 ----------
             L2Stmt::IfThen {
                 cond, then_stmt, ..
             } => {
                 // cond: ≠0 → true; IF [#0] — Null как 0.0 → false.
-                let c = eval_expr(cond, &mut self.env)?;
+                // D3: константный cond разрешается здесь же — мёртвая ветка
+                // (и Sys-чтения в ней) не вычисляется вовсе.
+                let c = self.eval_resolved(cond)?;
                 if c.truthy() {
-                    self.exec_stmt(then_stmt, program, out)?;
+                    // then_stmt живёт в ОБОЛОЧКЕ текущего тела (GOTO внутри
+                    // THEN — переход в пространстве меток этого тела).
+                    self.exec_stmt(program, then_stmt, labels)
+                } else {
+                    Ok(Flow::Normal)
                 }
-                Ok(())
             }
-            L2Stmt::IfGoto { .. } => {
-                // D1-минимум: переход требует таблицы меток N (12.2).
-                out.push_raw(
-                    RawMarker::ControlFlow,
-                    stmt,
-                    "label table not built in phase 12.1",
-                );
-                Ok(())
+            L2Stmt::Return { .. } => {
+                if self.env.frame_depth() > 1 {
+                    Ok(Flow::Return) // M99 → pop кадра делает call-site
+                } else {
+                    Err(L2ExecError::Eval(L2Error::RuntimeError(
+                        "M99/RETURN outside subprogram call (frame stack root)".to_string(),
+                    )))
+                }
             }
 
-            // ---------- D2 ----------
-            L2Stmt::While { cond, body, .. } => {
-                // Итерация тикается дважды: на операторе и на cond —
-                // бесконечный цикл гарантированно исчерпывает бюджет (T5).
+            // ---------- D2 (CFG) ----------
+            L2Stmt::IfGoto {
+                cond, target_label, ..
+            } => {
+                let c = self.eval_resolved(cond)?;
+                if c.truthy() {
+                    match labels.get(target_label) {
+                        Some(&idx) => Ok(Flow::Jump(idx)),
+                        None => Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                            "GOTO target N{target_label} not found (label table; contract: parser fills L2Program::labels or emits L2Stmt::Label)"
+                        )))),
+                    }
+                } else {
+                    Ok(Flow::Normal)
+                }
+            }
+            L2Stmt::While {
+                cond,
+                do_id,
+                body,
+                ..
+            } => {
+                // DO/END-парность — на парсере; do_id 1..3 проверяется и здесь.
+                if !(1..=3).contains(do_id) {
+                    return Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "WHILE DO{do_id}: do_id must be 1..=3"
+                    ))));
+                }
+                let body_labels = self.labels_of(body);
+                let mut loop_steps = 0u64;
                 loop {
+                    // Бюджет КАЖДОЙ сессии цикла (T5): cond-вычисления
+                    // считаются отдельно от общего бюджета.
+                    loop_steps += 1;
+                    if loop_steps > self.config.max_loop_steps {
+                        return Err(L2ExecError::LoopLimitExceeded {
+                            limit: self.config.max_loop_steps,
+                        });
+                    }
                     self.env.tick()?;
-                    let c = eval_expr(cond, &mut self.env)?;
+                    let c = self.eval_resolved(cond)?;
                     if !c.truthy() {
                         break;
                     }
-                    self.exec_block(body, program, out)?;
+                    // Return внутри тела — легальный ранний выход из
+                    // подпрограммы: пузырится до call-site.
+                    if let Flow::Return = self.exec_block(program, body, &body_labels)? {
+                        return Ok(Flow::Return);
+                    }
                 }
-                Ok(())
+                Ok(Flow::Normal)
             }
-            L2Stmt::CallSub { .. } => self.exec_call_sub(stmt, program, out),
+            L2Stmt::CallSub { .. } => self.exec_call_sub(program, stmt),
 
-            // ---------- носители RAW (12.2) ----------
-            L2Stmt::WithTransform { .. } => {
-                // Тело НЕ исполняется: без применения трансформации ходы
-                // дали бы неверную геометрию (см. RawMarker::Transform).
-                out.push_raw(
-                    RawMarker::Transform,
-                    stmt,
-                    "body suppressed until transform application (12.2)",
-                );
-                Ok(())
+            // ---------- §3: носители/трансформации ----------
+            L2Stmt::WithTransform { transform, body, .. } => {
+                self.exec_with_transform(program, transform, body, stmt)
             }
-            L2Stmt::RtcpMode { .. } => {
-                out.push_raw(
+            L2Stmt::RtcpMode {
+                enabled,
+                tool_length_h,
+                ..
+            } => {
+                // §3 строка 6: RTCP в Pass-1 не опускается → Raw с
+                // подставленными значениями (H — u32-номер, не выражение).
+                let text = match (enabled, tool_length_h) {
+                    (true, Some(h)) => format!("G43.4 H{h}\n"),
+                    (true, None) => "G43.4\n".to_string(),
+                    (false, _) => "G49\n".to_string(),
+                };
+                self.out.push_raw(
                     RawMarker::Rtcp,
+                    ErrorCode::UnsupportedSemantics,
+                    Some(text),
                     stmt,
-                    "RTCP lowering deferred to phase 12.2",
+                    "RTCP kinematics not lowered in Pass 1 (§3)",
                 );
-                Ok(())
+                Ok(Flow::Normal)
             }
         }
     }
 
-    /// Move: разрешение позы и минимальный lowering (§3 матрица 12.1).
-    /// Принимает оператор ЦЕЛИКОМ — носитель RAW обязан быть lossless.
-    fn exec_move(
+    /// WithTransform (§2.3/§3 строки 3-4): G68/G51 → аффинная матрица на
+    /// тело; G51.1/G101 → дефолт-отказ / bake-флаг; TWP → Raw-носитель с
+    /// подавленным телом.
+    fn exec_with_transform(
         &mut self,
+        program: &L2Program,
+        transform: &TransformKind,
+        body: &[L2Stmt],
         stmt: &L2Stmt,
-        _program: &L2Program,
-        out: &mut LoweringResult,
-    ) -> Result<(), L2Error> {
+    ) -> Result<Flow, L2ExecError> {
+        match transform {
+            TransformKind::Rotate2D {
+                center,
+                angle_deg,
+                plane,
+            } => {
+                let c0 = self.eval_resolved(&center[0])?.as_num();
+                let c1 = self.eval_resolved(&center[1])?.as_num();
+                let ang = self.eval_resolved(angle_deg)?.as_num();
+                if !ang.is_finite() {
+                    return Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "G68 angle not finite: {ang}"
+                    ))));
+                }
+                let t = Affine3::rotate_plane(*plane, [c0, c1], ang);
+                self.push_transform(t);
+                let body_labels = self.labels_of(body);
+                let res = self.exec_block(program, body, &body_labels);
+                self.pop_transform();
+                res
+            }
+            TransformKind::Scale { center, factor } => {
+                let c = [
+                    self.eval_resolved(&center[0])?.as_num(),
+                    self.eval_resolved(&center[1])?.as_num(),
+                    self.eval_resolved(&center[2])?.as_num(),
+                ];
+                let f = self.eval_resolved(factor)?.as_num();
+                if !f.is_finite() || f == 0.0 {
+                    return Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "G51 degenerate scale factor: {f}"
+                    ))));
+                }
+                let t = Affine3::scale_uniform(c, f);
+                self.push_transform(t);
+                let body_labels = self.labels_of(body);
+                let res = self.exec_block(program, body, &body_labels);
+                self.pop_transform();
+                res
+            }
+            TransformKind::Mirror { axis, pivot } => {
+                // T6 / §3 строка 4: дефолт — отказ (climb↔conventional
+                // семантика не представима ходами молча).
+                if !self.config.allow_mirror_bake {
+                    return Err(L2ExecError::UnsupportedSemantics(
+                        "G51.1/G101 mirror changes climb↔conventional — not representable by default (E_UNSUPPORTED_SEMANTICS, T6); set allow_mirror_bake=true to bake".to_string(),
+                    ));
+                }
+                let ax = mirror_axis_index(axis)?;
+                let pv = self.eval_resolved(pivot)?.as_num();
+                let t = Affine3::mirror_axis(ax, pv);
+                self.push_transform(t);
+                // Notice: запечённое зеркало (T6) — смена семантики
+                // направления фрезерования честно отражена диагностикой.
+                self.out.diagnostics.push(Diagnostic {
+                    code: ErrorCode::UnsupportedSemantics,
+                    stage: Stage::Canonicalize,
+                    message: "mirror baked into coordinates (allow_mirror_bake): axis inverted, Cw↔Ccw flipped; climb↔conventional semantics changed (T6)".to_string(),
+                    src: stmt.src().cloned(),
+                    options: vec!["allow_mirror_bake".to_string()],
+                    limit: None,
+                });
+                let body_labels = self.labels_of(body);
+                let res = self.exec_block(program, body, &body_labels);
+                self.pop_transform();
+                res
+            }
+            TransformKind::TiltedWorkPlane { origin, euler } => {
+                // §3 строка 6: TWP не опускается; тело подавлено (ходы без
+                // TWP дали бы неверную геометрию). Raw с подставленными
+                // значениями (синтетический порядок слов X Y Z A B C —
+                // вендорские синтаксисы G68.2 расходятся; корпусного
+                // драйвера нет — ценз B).
+                let o = [
+                    self.eval_resolved(&origin[0])?.as_num(),
+                    self.eval_resolved(&origin[1])?.as_num(),
+                    self.eval_resolved(&origin[2])?.as_num(),
+                ];
+                let e = [
+                    self.eval_resolved(&euler[0])?.as_num(),
+                    self.eval_resolved(&euler[1])?.as_num(),
+                    self.eval_resolved(&euler[2])?.as_num(),
+                ];
+                let text = format_frame(
+                    "G68.2",
+                    &[
+                        ('X', o[0]),
+                        ('Y', o[1]),
+                        ('Z', o[2]),
+                        ('A', e[0]),
+                        ('B', e[1]),
+                        ('C', e[2]),
+                    ],
+                );
+                self.out.push_raw(
+                    RawMarker::Transform,
+                    ErrorCode::UnsupportedSemantics,
+                    Some(text),
+                    stmt,
+                    "tilted work plane (G68.2) not lowered in Pass 1 (§3) — body suppressed",
+                );
+                Ok(Flow::Normal)
+            }
+        }
+    }
+
+    fn push_transform(&mut self, t: Affine3) {
+        let composed = self.xform.compose(&t);
+        self.xform_stack.push(self.xform);
+        self.xform = composed;
+    }
+
+    fn pop_transform(&mut self) {
+        self.xform = self.xform_stack.pop().unwrap_or_else(Affine3::identity);
+    }
+
+    // ----- Move (§3: строки 1, 5, 7 + дуги) ---------------------------------
+
+    /// Move: разрешение слов, наследование координат, трансформация,
+    /// lowering в L1-оп/носитель.
+    fn exec_move(&mut self, program: &L2Program, stmt: &L2Stmt) -> Result<Flow, L2ExecError> {
         let (kind, target, feed, spindle) = match stmt {
             L2Stmt::Move {
                 kind,
@@ -373,111 +923,263 @@ impl L2Evaluator {
             } => (kind, target, feed, spindle),
             _ => unreachable!("exec_move called on non-Move"),
         };
-        // 1) Разрешение слов (ошибки выражений и Sys-чтения — останов).
-        //    Даже для RAW-носителя: G31/SkipPos при неизвестном — останов
-        //    E_RUNTIME_STATE, а не молчаливый RAW (§3 последняя строка).
-        let rp = pose_resolve(target, &mut self.env)?;
-
-        // 2) Константность statement'а (поза + feed + spindle + параметры дуги).
-        let target_const = pose_exprs(target).iter().all(|e| expr_is_const(e));
-        let feed_const = feed.as_ref().map(expr_is_const).unwrap_or(true);
-        let spindle_const = spindle.as_ref().map(expr_is_const).unwrap_or(true);
-        let arc_const = match kind {
-            MoveKind::Arc { ijk, r, .. } => {
-                ijk.iter()
-                    .all(|e| e.as_ref().map(expr_is_const).unwrap_or(true))
-                    && r.as_ref().map(expr_is_const).unwrap_or(true)
-            }
-            _ => true,
+        // 1) Разрешение слов (ошибки выражений и Sys-чтений — останов §3).
+        //    Даже для носителя: G31/SkipPos при неизвестном — останов
+        //    E_RUNTIME_STATE, а не молчаливый RAW.
+        let rp = self.pose_resolved(target)?;
+        let feed_v = match feed {
+            Some(e) => self.eval_resolved(e)?.resolve_word(), // Null-F → слова нет
+            None => None,
         };
+        // S-слово: не пишется в State (нет M3/M4-контекста в AST §2.4 —
+        // решение 12.1, шапка); параметричность/константность S НЕ блокирует
+        // lowering (12.2). Значение вычисляется только ради ошибок/Sys-останов.
+        if let Some(e) = spindle {
+            self.eval_resolved(e)?;
+        }
 
-        // 3) Маршрут lowering (§3).
         match kind {
             MoveKind::Rapid | MoveKind::Linear => {
-                if !target_const || !feed_const || !spindle_const {
-                    out.push_raw(RawMarker::Parametric, stmt, "move depends on variables");
-                    return Ok(());
-                }
-                if target.has_rotary() {
-                    out.push_raw(RawMarker::RotaryAxis, stmt, "rotary axis A/B/C present");
-                    return Ok(());
-                }
-                match (rp.x, rp.y, rp.z) {
-                    (Some(x), Some(y), Some(z)) => {
-                        // 4) Константный ход → L1-оп (start Unknown — модели
-                        //    станка в D0–D2 нет; связывание — канонизатор;
-                        //    спан — src оператора).
-                        let feed_num = match feed {
-                            Some(e) => {
-                                let v = eval_expr(e, &mut self.env)?;
-                                v.resolve_word().map(mk_num)
-                            }
-                            None => None,
-                        };
-                        let end = Point3 {
-                            x: mk_num(x),
-                            y: mk_num(y),
-                            z: mk_num(z),
-                        };
-                        let op = match kind {
-                            MoveKind::Rapid => Op::Rapid {
-                                start: StartPoint::Unknown,
-                                end,
-                                state: l1_default_state(feed_num),
-                                src: stmt
-                                    .src()
-                                    .cloned()
-                                    .unwrap_or_else(crate::ast::placeholder_span),
-                                sub: None,
-                            },
-                            _ => Op::Linear {
-                                start: StartPoint::Unknown,
-                                end,
-                                state: l1_default_state(feed_num),
-                                src: stmt
-                                    .src()
-                                    .cloned()
-                                    .unwrap_or_else(crate::ast::placeholder_span),
-                                sub: None,
-                            },
-                        };
-                        out.l1_ops.push(op);
-                        Ok(())
+                let gcode = match kind {
+                    MoveKind::Rapid => "G0",
+                    _ => "G1",
+                };
+                // 2) Ротационная ось → носитель T4 (§3 строка 5): кадр с
+                //    подставленными значениями, слова Null опущены (2.1).
+                if rp.a.is_some() || rp.b.is_some() || rp.c.is_some() {
+                    let mut words = frame_words(&rp);
+                    if let Some(f) = feed_v {
+                        words.push(('F', f));
                     }
-                    _ => {
-                        // Слово отсутствует или Null → игнорируется,
-                        // координата неизвестна → носитель (таблица 2.1).
-                        out.push_raw(
-                            RawMarker::IncompletePose,
-                            stmt,
-                            "X/Y/Z word missing or Null (word ignored)",
-                        );
-                        Ok(())
-                    }
+                    let text = format_frame(gcode, &words);
+                    self.out.push_raw(
+                        RawMarker::RotaryAxis,
+                        ErrorCode::UnsupportedSemantics,
+                        Some(text),
+                        stmt,
+                        "rotary axis A/B/C not representable in L1 (§3 partial lowering, T4 payload)",
+                    );
+                    self.update_pos_prog(&rp);
+                    return Ok(Flow::Normal);
                 }
-            }
-            MoveKind::Arc { .. } => {
-                out.push_raw(
-                    RawMarker::ArcUnlowered,
-                    stmt,
-                    if arc_const {
-                        "arc geometry (center/normal/sweep) deferred to 12.2"
-                    } else {
-                        "parametric arc deferred to 12.2"
-                    },
+                // 3) Наследование: слово отсутствует/Null → координата без
+                //    изменения (модальные оси); неизвестная позиция +
+                //    отсутствующее слово → носитель (E_RUNTIME_STATE —
+                //    зависит от состояния станка).
+                let cur = self.pos_prog;
+                let end_prog = inherit_axes(
+                    [rp.x, rp.y, rp.z],
+                    cur,
                 );
-                Ok(())
+                if let Some(ep) = end_prog {
+                    // 4) D0-полный: константный И параметрический ход lowered
+                    //    (§3 строка 1); координаты — базовая СК (G68/G51).
+                    let end_base = self.xform.apply_point(ep);
+                    let feed_num = feed_v.map(mk_num4);
+                    let state = l1_default_state(feed_num, feed_v.is_some());
+                    let src = stmt
+                        .src()
+                        .cloned()
+                        .unwrap_or_else(crate::ast::placeholder_span);
+                    let op = match kind {
+                        MoveKind::Rapid => Op::Rapid {
+                            start: self.pos_start(),
+                            end: pt3(end_base),
+                            state,
+                            src,
+                            sub: None,
+                        },
+                        _ => Op::Linear {
+                            start: self.pos_start(),
+                            end: pt3(end_base),
+                            state,
+                            src,
+                            sub: None,
+                        },
+                    };
+                    self.out.l1_ops.push(op);
+                    self.pos_prog = Some(ep);
+                    self.modals
+                        .set_motion(match kind {
+                            MoveKind::Rapid => 0,
+                            _ => 1,
+                        });
+                    // G66-каркас: триггер модального вызова ПОСЛЕ motion.
+                    self.trigger_modal_call(program)?;
+                } else {
+                    let mut words = frame_words(&rp);
+                    if let Some(f) = feed_v {
+                        words.push(('F', f));
+                    }
+                    let text = format_frame(gcode, &words);
+                    self.out.push_raw(
+                        RawMarker::IncompletePose,
+                        ErrorCode::RuntimeState,
+                        Some(text),
+                        stmt,
+                        "target position unknown: missing/Null axis word with unknown current position (address-word semantics, table 2.1)",
+                    );
+                    // Позиция не обновляется: ход не lowered.
+                }
+                Ok(Flow::Normal)
             }
+            MoveKind::Arc { ijk, r, dir } => self.exec_arc(program, stmt, ijk, r, *dir, &rp, feed_v),
         }
     }
 
-    /// CallSub: стек кадров #1–#33, маппинг args A→#1..Z→#26, repeat.
-    fn exec_call_sub(
+    /// Дуга → [`Op::Arc`] (канон eid-core) или честный носитель.
+    /// (allow: 8 параметров — сигнатура повторяет структуру кадра дуги
+    /// §2.4; группировка в структуру добавила бы аллокацию на ход.)
+    #[allow(clippy::too_many_arguments)]
+    fn exec_arc(
         &mut self,
-        stmt: &L2Stmt,
         program: &L2Program,
-        out: &mut LoweringResult,
-    ) -> Result<(), L2Error> {
+        stmt: &L2Stmt,
+        ijk: &[Option<Expr>; 3],
+        r: &Option<Expr>,
+        dir: Dir,
+        rp: &ResolvedPose,
+        feed_v: Option<f64>,
+    ) -> Result<Flow, L2ExecError> {
+        // Старт в базовой СК обязателен: центр IJK = старт + смещения.
+        let Some(sp) = self.pos_prog else {
+            let words = arc_frame_words(rp, feed_v);
+            self.out.push_raw(
+                RawMarker::ArcUnlowered,
+                ErrorCode::RuntimeState,
+                Some(format_frame("G2", &words)),
+                stmt,
+                "arc start position unknown — geometry not derivable",
+            );
+            return Ok(Flow::Normal);
+        };
+        let start_base = self.xform.apply_point(sp);
+        // Конец с наследованием.
+        let end_prog = inherit_axes([rp.x, rp.y, rp.z], Some(sp));
+        let Some(ep) = end_prog else {
+            let words = arc_frame_words(rp, feed_v);
+            self.out.push_raw(
+                RawMarker::ArcUnlowered,
+                ErrorCode::RuntimeState,
+                Some(format_frame("G2", &words)),
+                stmt,
+                "arc end position unknown (missing/Null word with unknown current position)",
+            );
+            return Ok(Flow::Normal);
+        };
+        let end_base = self.xform.apply_point(ep);
+        // Слова I/J/K (отсутствующее/Null слово = 0.0, канон RS274).
+        let al = plane_linear(self.modals.plane());
+        let mut offs = [0.0f64; 3];
+        let mut has_in_plane = false;
+        for (idx, e) in ijk.iter().enumerate() {
+            if let Some(e) = e {
+                if let Some(v) = self.eval_resolved(e)?.resolve_word() {
+                    offs[idx] = v;
+                    if idx != al {
+                        has_in_plane = true;
+                    }
+                }
+            }
+        }
+        let r_v = match r {
+            Some(e) => self.eval_resolved(e)?.resolve_word(),
+            None => None,
+        };
+        // Зеркало/отрицательный масштаб (det < 0) → Cw↔Ccw (T6/§3 строка 4).
+        let det = self.xform.det();
+        let dir_eff = if det < 0.0 {
+            match dir {
+                Dir::Cw => Dir::Ccw,
+                Dir::Ccw => Dir::Cw,
+            }
+        } else {
+            dir
+        };
+        let plane = self.modals.plane();
+        let geom = if let Some(rv) = r_v {
+            // Радиус масштабируется линейной частью (|det|^(1/3) для
+            // uniform-scale; поворот — 1).
+            let s = det.abs().cbrt();
+            arc_from_r(start_base, end_base, rv * s, plane, dir_eff)
+        } else if has_in_plane {
+            // Смещения — ВЕКТОРЫ: поворот/масштаб/зеркало без переноса.
+            arc_from_ijk(start_base, end_base, self.xform.apply_vec(offs), plane, dir_eff)
+        } else {
+            Err(ArcGeomError::NoGeometry)
+        };
+        match geom {
+            Ok(g) => {
+                let feed_num = feed_v.map(mk_num4);
+                let state = l1_default_state(feed_num, feed_v.is_some());
+                let src = stmt
+                    .src()
+                    .cloned()
+                    .unwrap_or_else(crate::ast::placeholder_span);
+                let op = Op::Arc {
+                    start: StartPoint::Known(pt3(start_base)),
+                    end: pt3(end_base),
+                    center: pt3(g.center),
+                    normal: pt3(g.normal),
+                    dir: dir_eff,
+                    sweep_deg: mk_num4(g.sweep_deg),
+                    pitch: mk_num4(g.pitch),
+                    state,
+                    src,
+                    sub: None,
+                };
+                self.out.l1_ops.push(op);
+                self.pos_prog = Some(ep);
+                self.modals.set_motion(match dir_eff {
+                    Dir::Cw => 2,
+                    Dir::Ccw => 3,
+                });
+                self.trigger_modal_call(program)?;
+            }
+            Err(reason) => {
+                let words = arc_frame_words(rp, feed_v);
+                let detail = match &reason {
+                    ArcGeomError::NoGeometry => {
+                        "arc without in-plane IJK/R words — geometry not derivable".to_string()
+                    }
+                    ArcGeomError::OffPlaneComponent { letter, value } => format!(
+                        "perpendicular arc-center component {letter}{value} — center must lie in start plane (SPEC §6)"
+                    ),
+                    ArcGeomError::ChordTooLarge { chord, r } => format!(
+                        "arc chord {chord:.4} > 2R {r}: impossible arc (SPEC §6)"
+                    ),
+                    ArcGeomError::RAmbiguousFullCircle => {
+                        "R-arc with coincident in-plane start/end: ambiguous center (SPEC §6)"
+                            .to_string()
+                    }
+                };
+                self.out.push_raw(
+                    RawMarker::ArcUnlowered,
+                    ErrorCode::InvalidInput,
+                    Some(format_frame("G2", &words)),
+                    stmt,
+                    &detail,
+                );
+                // Позиция не обновляется (ход не lowered — носитель).
+            }
+        }
+        Ok(Flow::Normal)
+    }
+
+    /// Обновить программную позицию словами носителя ротационного хода
+    /// (линейная компонента меняет координаты даже в RAW-ходе).
+    fn update_pos_prog(&mut self, rp: &ResolvedPose) {
+        let cur = self.pos_prog;
+        if let Some(p) = inherit_axes([rp.x, rp.y, rp.z], cur) {
+            self.pos_prog = Some(p);
+        }
+    }
+
+    // ----- CallSub (D1) -----------------------------------------------------
+
+    /// CallSub: стек кадров глубина 9, args A→#1..Z→#26 (Null пробрасывается),
+    /// repeat L/K, modal G66 — каркас.
+    fn exec_call_sub(&mut self, program: &L2Program, stmt: &L2Stmt) -> Result<Flow, L2ExecError> {
         let (target, repeat, args, modal) = match stmt {
             L2Stmt::CallSub {
                 target,
@@ -488,82 +1190,196 @@ impl L2Evaluator {
             } => (target, repeat, args, modal),
             _ => unreachable!("exec_call_sub called on non-CallSub"),
         };
-        // G66 (модальный вызов) исполняется на каждом ходе — вне D0–D2.
+        // G66 (модальный вызов) — каркас: регистрация цели и ЗНАЧЕНИЙ
+        // аргументов (вычислены здесь, контекст вызывающего); триггер —
+        // после каждого lowered motion-опа. G67 (отмена) не имеет узла
+        // AST §2.4 — контракт-пробел (шапка).
         if *modal {
-            out.push_raw(
-                RawMarker::SubCall,
-                stmt,
-                "modal call (G66) binding to moves deferred to 12.2",
+            let mut bound = Vec::with_capacity(args.len());
+            for (letter, value) in args {
+                let idx = crate::ast::call_arg_local_index(*letter).ok_or_else(|| {
+                    L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "CALL argument letter must be ASCII A..Z, got {letter:#x}"
+                    )))
+                })?;
+                let v = self.eval_resolved(value)?;
+                bound.push((idx, v));
+            }
+            self.modal_call = Some((target.clone(), bound));
+            let detail = format!(
+                "modal call (G66) registered: {} ({} args); trigger after motion; G67 cancel has no AST node yet (skeleton)",
+                sub_target_name(target),
+                args.len()
             );
-            return Ok(());
+            self.out.push_raw(
+                RawMarker::SubCall,
+                ErrorCode::UnsupportedSemantics,
+                Some("G66\n".to_string()),
+                stmt,
+                &detail,
+            );
+            return Ok(Flow::Normal);
         }
-        let sub = program.find_sub(target).ok_or_else(|| {
-            L2Error::RuntimeError(format!(
-                "subprogram target not found: {}",
-                match target {
-                    SubTarget::ONumber(n) => format!("O{n}"),
-                    SubTarget::NLabel(n) => format!("N{n}"),
-                }
-            ))
-        })?;
         // Число повторений (L/K-слово; Null/отсутствует → 1).
         let times = match repeat {
             Some(e) => {
-                let v = eval_expr(e, &mut self.env)?;
+                let v = self.eval_resolved(e)?;
                 let n = v.as_num();
-                if n < 0.0 {
-                    return Err(L2Error::RuntimeError(format!(
-                        "negative CALL repeat count: {n}"
-                    )));
+                if !n.is_finite() || n < 0.0 {
+                    return Err(L2ExecError::Eval(L2Error::RuntimeError(format!(
+                        "negative/non-finite CALL repeat count: {n}"
+                    ))));
                 }
                 n.trunc() as u64
             }
             None => 1,
         };
         // Аргументы вычисляются в КОНТЕКСТЕ ВЫЗЫВАЮЩЕГО (в т.ч. Null —
-        // таблица 2.1: опциональный аргумент пробрасывается как Null),
-        // затем кадр пушится и значения пишутся в локальные #1..#26 нового
-        // кадра.
+        // таблица 2.1: опциональный аргумент пробрасывается как Null).
         let mut bound = Vec::with_capacity(args.len());
         for (letter, value) in args {
             let idx = crate::ast::call_arg_local_index(*letter).ok_or_else(|| {
-                L2Error::RuntimeError(format!(
+                L2ExecError::Eval(L2Error::RuntimeError(format!(
                     "CALL argument letter must be ASCII A..Z, got {letter:#x}"
-                ))
+                )))
             })?;
-            let v = eval_expr(value, &mut self.env)?;
+            let v = self.eval_resolved(value)?;
             bound.push((idx, v));
         }
         for _ in 0..times {
-            self.env.push_frame();
-            for (idx, v) in &bound {
-                self.env.write_direct(*idx, *v)?;
-            }
-            let res = self.exec_block(&sub.body, program, out);
-            self.env.pop_frame()?;
-            res?;
+            self.call_frame(program, target, &bound)?;
         }
-        Ok(())
+        Ok(Flow::Normal)
+    }
+
+    /// Один вызов: guard глубины 9 → push кадра → привязка args → тело
+    /// (неявный return на конце тела ИЛИ явный M99/Return) → pop.
+    fn call_frame(
+        &mut self,
+        program: &L2Program,
+        target: &SubTarget,
+        bound: &[(u32, Val)],
+    ) -> Result<(), L2ExecError> {
+        let sub = program.find_sub(target).ok_or_else(|| {
+            L2ExecError::Eval(L2Error::RuntimeError(format!(
+                "subprogram target not found: {}",
+                sub_target_name(target)
+            )))
+        })?;
+        // Дизайн §5 12.2: глубина стека вызовов до 9 (корневой кадр не
+        // считается вызовом: 9 АКТИВНЫХ вызовов допустимы, 10-й — ошибка).
+        if self.env.frame_depth() > self.config.max_call_depth {
+            return Err(L2ExecError::CallDepthExceeded {
+                limit: self.config.max_call_depth,
+            });
+        }
+        let body_labels = self.labels_of(&sub.body);
+        self.env.push_frame();
+        for (idx, v) in bound {
+            self.env.write_direct(*idx, *v)?;
+        }
+        let res = self.exec_block(program, &sub.body, &body_labels);
+        self.env.pop_frame()?;
+        // Return (M99) поглощается на границе вызова; конец тела без M99 —
+        // неявный return (та же семантика pop).
+        match res? {
+            Flow::Normal | Flow::Return => Ok(()),
+            Flow::Jump(_) => unreachable!("Jump must be absorbed by exec_block"),
+        }
+    }
+
+    /// G66-триггер после lowered motion-опа (каркас §5 12.2).
+    fn trigger_modal_call(&mut self, program: &L2Program) -> Result<(), L2ExecError> {
+        let Some((target, bound)) = self.modal_call.clone() else {
+            return Ok(());
+        };
+        self.call_frame(program, &target, &bound)
     }
 }
 
-/// Все выражения позы (для проверки константности).
-fn pose_exprs(pose: &ExprPose) -> Vec<&Expr> {
-    [&pose.x, &pose.y, &pose.z, &pose.a, &pose.b, &pose.c]
-        .into_iter()
-        .flatten()
-        .collect()
+// ===========================================================================
+// Вспомогательные функции
+// ===========================================================================
+
+/// Слова кадра для payload-носителя (порядок X Y Z A B C; только
+/// присутствующие и не-Null — адресная семантика 2.1; T4: «X.. A..»).
+fn frame_words(rp: &ResolvedPose) -> Vec<(char, f64)> {
+    let mut w = Vec::new();
+    for (letter, v) in [
+        ('X', rp.x),
+        ('Y', rp.y),
+        ('Z', rp.z),
+        ('A', rp.a),
+        ('B', rp.b),
+        ('C', rp.c),
+    ] {
+        if let Some(v) = v {
+            w.push((letter, v));
+        }
+    }
+    w
+}
+
+/// Слова кадра дуги для payload-носителя: X..C + F. NOTE: значения IJK/R
+/// намеренно не повторяются в payload (геометрия уже проанализирована,
+/// честная причина — в reason носителя; lossless-дамп оператора доступен
+/// через легаси-путь push_raw).
+fn arc_frame_words(rp: &ResolvedPose, feed: Option<f64>) -> Vec<(char, f64)> {
+    let mut w = frame_words(rp);
+    if let Some(f) = feed {
+        w.push(('F', f));
+    }
+    w
+}
+
+/// Отображение Axis → индекс компоненты 0..3 для зеркала (X/Y/Z);
+/// ротационные/доп. оси — ошибка (не аффинны в 3D-модели Pass-1).
+fn mirror_axis_index(axis: &Axis) -> Result<usize, L2ExecError> {
+    match axis {
+        Axis::X => Ok(0),
+        Axis::Y => Ok(1),
+        Axis::Z => Ok(2),
+        other => Err(L2ExecError::UnsupportedSemantics(format!(
+            "mirror on non-linear axis {} is not an affine 3D transform (Pass-1)",
+            other.letter()
+        ))),
+    }
+}
+
+/// Имя Sys-переменной для сообщений (sync с eval::sys_var_name).
+fn sys_var_display(sv: &SysVar) -> String {
+    match sv {
+        SysVar::AbsMachinePos(a) => format!("#ABS[{}]", a.letter()),
+        SysVar::WorkPos(a) => format!("#WORK[{}]", a.letter()),
+        SysVar::SkipPos(a) => format!("#SKIP[{}]", a.letter()),
+        SysVar::ModalGroup(g) => format!("#MODAL[{g}]"),
+        SysVar::WcsOffset { p, axis } => format!("#WCS[{p}.{}]", axis.letter()),
+        SysVar::VendorSpecific(n) => format!("#VENDOR[{n}]"),
+    }
+}
+
+/// D2: рекурсивное предвычисление per-body таблиц меток (узлы Label).
+fn precompute_labels(stmts: &[L2Stmt], map: &mut HashMap<usize, BTreeMap<u32, usize>>) {
+    map.insert(stmts.as_ptr() as usize, crate::lowering::collect_labels(stmts));
+    for stmt in stmts {
+        match stmt {
+            L2Stmt::While { body, .. } | L2Stmt::WithTransform { body, .. } => {
+                precompute_labels(body, map);
+            }
+            _ => {}
+        }
+    }
 }
 
 // ===========================================================================
-// Тесты: T1-заготовка, D0–D2-матрица, T5, пины Приложения
+// Тесты: D0–D3-матрица, T4/T5/T6-пины, §3-матрица, трансформации, SysVar
 // ===========================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ast::{
-        placeholder_span, Axis, Plane, SubTarget, SysVar, TransformKind, UnaryOp, VarRef,
+        placeholder_span, Axis, BinaryOp, Plane, SubTarget, SysVar, TransformKind, UnaryOp, VarRef,
     };
     use eid_core::ast::Dir;
 
@@ -586,12 +1402,81 @@ mod tests {
         }
     }
 
-    // ---------- T1-заготовка: L1-программа проходит конвейер ----------
+    fn assign(idx: u32, v: Expr) -> L2Stmt {
+        L2Stmt::Assign {
+            target: VarRef::Direct(idx),
+            value: v,
+            src: placeholder_span(),
+        }
+    }
+
+    fn move_stmt(kind: MoveKind, target: ExprPose, feed: Option<Expr>) -> L2Stmt {
+        L2Stmt::Move {
+            kind,
+            target,
+            feed,
+            spindle: None,
+            src: placeholder_span(),
+        }
+    }
+
+    fn call(target: SubTarget, args: Vec<(u8, Expr)>) -> L2Stmt {
+        L2Stmt::CallSub {
+            target,
+            repeat: None,
+            args,
+            modal: false,
+            src: placeholder_span(),
+        }
+    }
+
+    fn label(n: u32) -> L2Stmt {
+        L2Stmt::Label {
+            n,
+            src: placeholder_span(),
+        }
+    }
+
+    fn goto(n: u32, cond: Expr) -> L2Stmt {
+        L2Stmt::IfGoto {
+            cond,
+            target_label: n,
+            src: placeholder_span(),
+        }
+    }
+
+    fn linear(x: Expr, y: Expr, z: Expr, feed: Option<Expr>) -> L2Stmt {
+        move_stmt(
+            MoveKind::Linear,
+            ExprPose {
+                x: Some(x),
+                y: Some(y),
+                z: Some(z),
+                a: None,
+                b: None,
+                c: None,
+            },
+            feed,
+        )
+    }
+
+    /// Разкодировать hex-payload носителя в текст (обратимость §3/T4).
+    fn decode_payload(op: &Op) -> String {
+        match op {
+            Op::Raw { payload_hex, .. } => {
+                let bytes: Vec<u8> = (0..payload_hex.len() / 2)
+                    .map(|i| u8::from_str_radix(&payload_hex[i * 2..i * 2 + 2], 16).unwrap())
+                    .collect();
+                String::from_utf8(bytes).unwrap()
+            }
+            _ => panic!("expected Raw"),
+        }
+    }
+
+    // ---------- T1: L1-программа проходит конвейер 1:1 ----------
 
     #[test]
     fn t1_l1_only_program_passes_through() {
-        // L2-программа из чистых L1-опов: замер структуры — опы проходят
-        // 1:1, хвост RAW пуст, диагностик нет.
         let l1 = vec![
             Op::Rapid {
                 start: StartPoint::Unknown,
@@ -600,18 +1485,7 @@ mod tests {
                     y: Num::new("0".into(), 0.0),
                     z: Num::new("5".into(), 5.0),
                 },
-                state: l1_default_state(None),
-                src: placeholder_span(),
-                sub: None,
-            },
-            Op::Linear {
-                start: StartPoint::Unknown,
-                end: Point3 {
-                    x: Num::new("10".into(), 10.0),
-                    y: Num::new("0".into(), 0.0),
-                    z: Num::new("5".into(), 5.0),
-                },
-                state: l1_default_state(Some(Num::new("100".into(), 100.0))),
+                state: l1_default_state(None, false),
                 src: placeholder_span(),
                 sub: None,
             },
@@ -619,200 +1493,232 @@ mod tests {
                 src: placeholder_span(),
             },
         ];
-        let program = L2Program {
-            stmts: l1.iter().cloned().map(L2Stmt::L1Op).collect(),
-            subs: Vec::new(),
-        };
+        let program = L2Program::new(l1.iter().cloned().map(L2Stmt::L1Op).collect(), Vec::new());
         let mut e = ev();
         let res = e.run(&program).unwrap();
-        assert_eq!(res.l1_ops.len(), 3);
-        assert_eq!(res.l1_ops, l1); // passthrough 1:1 (структура)
+        assert_eq!(res.l1_ops, l1); // passthrough 1:1
         assert!(res.raw_tail.is_empty());
         assert!(res.diagnostics.is_empty());
     }
 
-    // ---------- D0: Assign / Move ----------
+    // ---------- D0: Assign / Move / позиция ----------
 
     #[test]
     fn d0_assign_and_null_copy() {
         // #100 = 5; #101 = #0 (Null копируется); #102 = -#100.
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::Assign {
-                    target: VarRef::Direct(100),
-                    value: Expr::num(5.0),
-                    src: placeholder_span(),
-                },
-                L2Stmt::Assign {
-                    target: VarRef::Direct(101),
-                    value: Expr::Null,
-                    src: placeholder_span(),
-                },
-                L2Stmt::Assign {
-                    target: VarRef::Direct(102),
-                    value: Expr::Unary(UnaryOp::Neg, Box::new(Expr::var(100))),
-                    src: placeholder_span(),
-                },
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(5.0)),
+                assign(101, Expr::Null),
+                assign(102, Expr::Unary(UnaryOp::Neg, Box::new(Expr::var(100)))),
             ],
-            subs: Vec::new(),
-        };
+            Vec::new(),
+        );
         let mut e = ev();
         e.run(&program).unwrap();
-        assert_eq!(e.env().read_direct(100).unwrap(), crate::ast::Val::Num(5.0));
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(5.0));
         // ПИН (таблица 2.1, строка 1): присваивание копирует именно Null.
-        assert_eq!(e.env().read_direct(101).unwrap(), crate::ast::Val::Null);
-        assert_eq!(
-            e.env().read_direct(102).unwrap(),
-            crate::ast::Val::Num(-5.0)
-        );
+        assert_eq!(e.env().read_direct(101).unwrap(), Val::Null);
+        assert_eq!(e.env().read_direct(102).unwrap(), Val::Num(-5.0));
     }
 
     #[test]
-    fn d0_const_rapid_linear_to_l1() {
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::Move {
-                    kind: MoveKind::Rapid,
-                    target: target_const(1.0, 2.0, 3.0),
-                    feed: None,
-                    spindle: None,
-                    src: placeholder_span(),
-                },
-                L2Stmt::Move {
-                    kind: MoveKind::Linear,
-                    target: target_const(4.0, 5.0, 6.0),
-                    feed: Some(Expr::num(120.0)),
-                    spindle: None,
-                    src: placeholder_span(),
-                },
+    fn d0_const_and_parametric_move_resolved_to_l1() {
+        // §3 строка 1: `#100 = 5, G0 X#100` → Op::Rapid X5.0000.
+        // Параметрический ход РАЗРЕШАЕТСЯ (12.2), числа 4dp.
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(15.0)),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: Some(Expr::var(100)),
+                        y: Some(Expr::num(2.0)),
+                        z: Some(Expr::num(3.0)),
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+                linear(
+                    Expr::Binary(
+                        BinaryOp::Add,
+                        Box::new(Expr::var(100)),
+                        Box::new(Expr::num(5.0)),
+                    ),
+                    Expr::num(0.0),
+                    Expr::num(5.0),
+                    Some(Expr::num(120.0)),
+                ),
             ],
-            subs: Vec::new(),
-        };
+            Vec::new(),
+        );
         let mut e = ev();
         let res = e.run(&program).unwrap();
         assert_eq!(res.l1_ops.len(), 2);
         assert!(res.raw_tail.is_empty());
         match (&res.l1_ops[0], &res.l1_ops[1]) {
             (
-                Op::Rapid { end, .. },
+                Op::Rapid { end, start, .. },
                 Op::Linear {
-                    end: end2, state, ..
+                    end: e2,
+                    state,
+                    start: s2,
+                    ..
                 },
             ) => {
-                assert_eq!(
-                    (end.x.value(), end.y.value(), end.z.value()),
-                    (1.0, 2.0, 3.0)
-                );
-                assert_eq!(
-                    (end2.x.value(), end2.y.value(), end2.z.value()),
-                    (4.0, 5.0, 6.0)
-                );
+                assert_eq!((end.x.value(), end.y.value(), end.z.value()), (15.0, 2.0, 3.0));
+                assert_eq!((e2.x.value(), e2.y.value(), e2.z.value()), (20.0, 0.0, 5.0));
                 assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(120.0));
+                // Трекинг позиции: первый ход Unknown (позиция неизвестна),
+                // второй Known = конец первого (связность канонической формы).
+                assert!(matches!(start, StartPoint::Unknown));
+                assert!(matches!(s2, StartPoint::Known(_)));
             }
             _ => panic!("expected Rapid+Linear"),
+        }
+        // 4dp-текст (SPEC §10.5 single-final-rounding).
+        if let Op::Linear { end, .. } = &res.l1_ops[1] {
+            assert_eq!(end.x.text, "20.0000");
         }
     }
 
     #[test]
-    fn d0_parametric_move_to_raw() {
-        // X от переменной → носитель Parametric (поза не lowered).
-        let program = L2Program {
-            stmts: vec![L2Stmt::Move {
-                kind: MoveKind::Linear,
-                target: ExprPose {
-                    x: Some(Expr::var(100)),
-                    y: Some(Expr::num(0.0)),
-                    z: Some(Expr::num(5.0)),
-                    a: None,
-                    b: None,
-                    c: None,
-                },
-                feed: None,
-                spindle: None,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
-        };
-        let mut e = ev();
-        let res = e.run(&program).unwrap();
+    fn d0_uninitialized_var_word_is_null_ignored() {
+        // #100 не инициализирована → Null → слово X игнорируется; позиция
+        // неизвестна → носитель E_RUNTIME_STATE (адресная семантика 2.1).
+        let program = L2Program::new(
+            vec![linear(Expr::var(100), Expr::num(0.0), Expr::num(5.0), None)],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
         assert!(res.l1_ops.is_empty());
-        assert_eq!(res.raw_tail.len(), 1);
-        assert_eq!(res.raw_tail[0].marker, RawMarker::Parametric);
-        assert!(matches!(res.raw_tail[0].op, Op::Raw { .. }));
-        assert_eq!(res.diagnostics.len(), 1);
-        // Спан носителя — спан оператора из AST (§2.4).
-        assert!(res.diagnostics[0].src.is_some());
+        assert_eq!(res.raw_tail[0].marker, RawMarker::IncompletePose);
+        assert_eq!(res.diagnostics[0].code, ErrorCode::RuntimeState);
     }
 
     #[test]
-    fn d0_spindle_parametric_to_raw_and_const_ignored_in_state() {
-        // §2.4 Move.spindle: параметрический S → RAW; константный S не
-        // ломает lowering (в State не пишется — направление Cw/Ccw
-        // требует M3/M4-контекста, 12.2).
-        let mk = |spindle: Option<Expr>| L2Stmt::Move {
-            kind: MoveKind::Rapid,
-            target: target_const(1.0, 2.0, 3.0),
-            feed: None,
-            spindle,
-            src: placeholder_span(),
-        };
-        let program = L2Program {
-            stmts: vec![mk(Some(Expr::var(500)))],
-            subs: Vec::new(),
-        };
+    fn d0_word_inheritance_from_tracked_position() {
+        // G0 X5 Y0 Z0; G0 X10 (Y/Z модально наследуются) → оба хода lowered.
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: Some(Expr::num(10.0)),
+                        y: None,
+                        z: None,
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        );
         let res = ev().run(&program).unwrap();
-        assert!(res.l1_ops.is_empty());
-        assert_eq!(res.raw_tail[0].marker, RawMarker::Parametric);
-
-        let program = L2Program {
-            stmts: vec![mk(Some(Expr::num(1200.0)))],
-            subs: Vec::new(),
-        };
-        let res = ev().run(&program).unwrap();
-        assert_eq!(res.l1_ops.len(), 1);
+        assert_eq!(res.l1_ops.len(), 2);
         assert!(res.raw_tail.is_empty());
-        if let Op::Rapid { state, .. } = &res.l1_ops[0] {
-            assert_eq!(state.spindle, eid_core::ast::Spindle::Off);
+        if let Op::Rapid { end, start, .. } = &res.l1_ops[1] {
+            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (10.0, 0.0, 0.0));
+            // start Known = конец предыдущего хода (точка разрыва (a) закрыта).
+            match start {
+                StartPoint::Known(p) => assert_eq!((p.x.value(), p.y.value()), (5.0, 0.0)),
+                StartPoint::Unknown => panic!("start must be known after first move"),
+            }
         } else {
             panic!("expected Rapid");
         }
     }
 
     #[test]
-    fn d0_rotary_axis_to_raw() {
-        // Константная A-ось — всё равно RAW (нет RTCP-контекста; §3
-        // частичный lowering осей — 12.2/T4).
-        let program = L2Program {
-            stmts: vec![L2Stmt::Move {
-                kind: MoveKind::Rapid,
-                target: ExprPose {
-                    x: Some(Expr::num(1.0)),
-                    y: Some(Expr::num(2.0)),
-                    z: Some(Expr::num(3.0)),
-                    a: Some(Expr::num(90.0)),
+    fn d0_initial_pos_config_enables_first_partial_move() {
+        // initial_pos (MachineProfile/симулятор-хоум) → наследование с кадра 1.
+        let cfg = L2Config {
+            initial_pos: Some([0.0, 0.0, 0.0]),
+            ..cfg()
+        };
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Rapid,
+                ExprPose {
+                    x: None,
+                    y: None,
+                    z: Some(Expr::num(1.0)),
+                    a: None,
                     b: None,
                     c: None,
                 },
-                feed: None,
-                spindle: None,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
+                None,
+            )],
+            Vec::new(),
+        );
+        let res = L2Evaluator::new(cfg).run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 1);
+        if let Op::Rapid { end, .. } = &res.l1_ops[0] {
+            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (0.0, 0.0, 1.0));
+        }
+    }
+
+    #[test]
+    fn d0_feed_null_word_ignored_and_restated_flag() {
+        // F#101 (Null) → F-слова нет (2.1); константный F → флаг restated.
+        let mk = |feed: Option<Expr>| {
+            L2Program::new(
+                vec![linear(Expr::num(1.0), Expr::num(0.0), Expr::num(0.0), feed)],
+                Vec::new(),
+            )
         };
-        let mut e = ev();
-        let res = e.run(&program).unwrap();
-        assert!(res.l1_ops.is_empty());
-        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        let res = ev().run(&mk(Some(Expr::var(101)))).unwrap();
+        assert_eq!(res.l1_ops.len(), 1);
+        if let Op::Linear { state, .. } = &res.l1_ops[0] {
+            assert!(state.feed.is_none());
+            assert!(!state.feed_restated);
+        }
+        let res = ev().run(&mk(Some(Expr::num(50.0)))).unwrap();
+        if let Op::Linear { state, .. } = &res.l1_ops[0] {
+            assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(50.0));
+            assert!(state.feed_restated);
+        }
+    }
+
+    #[test]
+    fn d0_spindle_word_does_not_block_lowering() {
+        // §2.4 Move.spindle: S-слово (константное и параметрическое) не
+        // блокирует lowering; в State не пишется (нет M3/M4-контекста — шапка).
+        let mk = |spindle: Option<Expr>| {
+            L2Program::new(
+                vec![L2Stmt::Move {
+                    kind: MoveKind::Rapid,
+                    target: target_const(1.0, 2.0, 3.0),
+                    feed: None,
+                    spindle,
+                    src: placeholder_span(),
+                }],
+                Vec::new(),
+            )
+        };
+        for s in [Some(Expr::num(1200.0)), Some(Expr::var(500))] {
+            let res = ev().run(&mk(s)).unwrap();
+            assert_eq!(res.l1_ops.len(), 1, "S must not block lowering");
+            assert!(res.raw_tail.is_empty());
+            if let Op::Rapid { state, .. } = &res.l1_ops[0] {
+                assert_eq!(state.spindle, eid_core::ast::Spindle::Off);
+            }
+        }
     }
 
     #[test]
     fn d0_null_word_ignored_incomplete_pose() {
-        // Y = Null → слово игнорируется (таблица 2.1) → поза неполная →
-        // носитель (координата неизвестна).
-        let program = L2Program {
-            stmts: vec![L2Stmt::Move {
-                kind: MoveKind::Rapid,
-                target: ExprPose {
+        // Y = Null → слово игнорируется (таблица 2.1) → поза неполная при
+        // неизвестной позиции → носитель.
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Rapid,
+                ExprPose {
                     x: Some(Expr::num(1.0)),
                     y: Some(Expr::Null),
                     z: Some(Expr::num(3.0)),
@@ -820,146 +1726,452 @@ mod tests {
                     b: None,
                     c: None,
                 },
-                feed: None,
-                spindle: None,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
-        };
+                None,
+            )],
+            Vec::new(),
+        );
         let mut e = ev();
         let res = e.run(&program).unwrap();
         assert!(res.l1_ops.is_empty());
         assert_eq!(res.raw_tail[0].marker, RawMarker::IncompletePose);
     }
 
-    #[test]
-    fn d0_arc_to_raw() {
-        let program = L2Program {
-            stmts: vec![L2Stmt::Move {
-                kind: MoveKind::Arc {
-                    ijk: [Some(Expr::num(5.0)), Some(Expr::num(0.0)), None],
-                    r: None,
-                    dir: Dir::Cw,
-                },
-                target: target_const(10.0, 0.0, 0.0),
-                feed: Some(Expr::num(50.0)),
-                spindle: None,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
-        };
-        let mut e = ev();
-        let res = e.run(&program).unwrap();
-        assert_eq!(res.raw_tail[0].marker, RawMarker::ArcUnlowered);
-    }
-
-    // ---------- D1: IfThen (одиночный then_stmt), условия с Null ----------
+    // ---------- T4: частичный lowering ротационной оси (ДОСЛОВНО) ----------
 
     #[test]
-    fn d1_if_then_branches() {
-        // IF 1 THEN ... — исполняется; IF 0 / IF #0 (Null-cond как 0.0 →
-        // false) — не исполняется. (then_stmt одиночный; else в Macro B нет.)
-        let assign = |idx: u32| -> Box<L2Stmt> {
-            Box::new(L2Stmt::Assign {
-                target: VarRef::Direct(idx),
-                value: Expr::num(1.0),
-                src: placeholder_span(),
-            })
-        };
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::IfThen {
-                    cond: Expr::num(1.0),
-                    then_stmt: assign(100),
-                    src: placeholder_span(),
-                },
-                L2Stmt::IfThen {
-                    cond: Expr::num(0.0),
-                    then_stmt: assign(101),
-                    src: placeholder_span(),
-                },
-                L2Stmt::IfThen {
-                    cond: Expr::Null, // IF [#0] — false
-                    then_stmt: assign(102),
-                    src: placeholder_span(),
-                },
+    fn t4_partial_lowering_rotary_payload_verbatim() {
+        // Чек-лист T4: #100 = 15; G0 X#100 A#100 → Op::Raw с payload
+        // «G0 X15.0000 A15.0000\n» (hex, с терминатором), код
+        // E_UNSUPPORTED_SEMANTICS (§3 строка 5).
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(15.0)),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: Some(Expr::var(100)),
+                        y: None,
+                        z: None,
+                        a: Some(Expr::var(100)),
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
             ],
-            subs: Vec::new(),
-        };
-        let mut e = ev();
-        e.run(&program).unwrap();
-        assert_eq!(e.env().read_direct(100).unwrap(), crate::ast::Val::Num(1.0));
-        assert_eq!(e.env().read_direct(101).unwrap(), crate::ast::Val::Null);
-        assert_eq!(e.env().read_direct(102).unwrap(), crate::ast::Val::Null);
-    }
-
-    #[test]
-    fn d1_if_goto_is_raw_carrier() {
-        let program = L2Program {
-            stmts: vec![L2Stmt::IfGoto {
-                cond: Expr::num(1.0),
-                target_label: 10,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
-        };
+            Vec::new(),
+        );
         let mut e = ev();
         let res = e.run(&program).unwrap();
-        assert_eq!(res.raw_tail[0].marker, RawMarker::ControlFlow);
+        assert!(res.l1_ops.is_empty());
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        match &res.raw_tail[0].op {
+            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::UnsupportedSemantics),
+            _ => panic!("carrier must be Raw"),
+        }
+        assert_eq!(decode_payload(&res.raw_tail[0].op), "G0 X15.0000 A15.0000\n");
+        // Диагностика носителя со спаном оператора (§2.4).
+        assert_eq!(res.diagnostics.len(), 1);
+        assert!(res.diagnostics[0].src.is_some());
     }
 
-    // ---------- D2: While (T5) и CallSub ----------
+    #[test]
+    fn t4_linear_rotary_payload_and_pos_update() {
+        // G1-носитель + линейная компонента обновляет позицию: следующий
+        // ход наследует X из RAW-хода.
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                move_stmt(
+                    MoveKind::Linear,
+                    ExprPose {
+                        x: Some(Expr::num(20.0)),
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(0.0)),
+                        a: Some(Expr::num(90.0)),
+                        b: None,
+                        c: None,
+                    },
+                    Some(Expr::num(300.0)),
+                ),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: None,
+                        y: Some(Expr::num(5.0)),
+                        z: None,
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2); // первый и третий ходы
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(
+            decode_payload(&res.raw_tail[0].op),
+            "G1 X20.0000 Y0.0000 Z0.0000 A90.0000 F300.0000\n"
+        );
+        // Третий ход: X наследуется 20 (обновлено RAW-ходом), Y=5, Z → 0.
+        if let Op::Rapid { end, .. } = &res.l1_ops[1] {
+            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (20.0, 5.0, 0.0));
+        }
+    }
+
+    // ---------- D1: кадры, глубина 9, M99/Return, G66 ----------
 
     #[test]
-    fn d2_bounded_while_executes() {
-        // #1 = 3; WHILE [#1 GT 0] DO1 #1 = #1 - 1 END1 → #1 == 0.
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::Assign {
-                    target: VarRef::Direct(1),
-                    value: Expr::num(3.0),
-                    src: placeholder_span(),
-                },
-                L2Stmt::While {
-                    cond: Expr::Binary(
-                        crate::ast::BinaryOp::Gt,
-                        Box::new(Expr::var(1)),
-                        Box::new(Expr::num(0.0)),
+    fn d1_call_sub_args_and_frames() {
+        // Main: G65 P100 A5. B7. → sub O100: #100 = #1 + #2 (локальные!).
+        let program = L2Program::new(
+            vec![call(
+                SubTarget::ONumber(100),
+                vec![(b'A', Expr::num(5.0)), (b'b', Expr::num(7.0))], // lowercase → #2
+            )],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(100),
+                body: vec![
+                    assign(
+                        100,
+                        Expr::Binary(BinaryOp::Add, Box::new(Expr::var(1)), Box::new(Expr::var(2))),
                     ),
-                    do_id: 1,
-                    body: vec![L2Stmt::Assign {
-                        target: VarRef::Direct(1),
-                        value: Expr::Binary(
-                            crate::ast::BinaryOp::Sub,
-                            Box::new(Expr::var(1)),
-                            Box::new(Expr::num(1.0)),
-                        ),
-                        src: placeholder_span(),
-                    }],
-                    src: placeholder_span(),
-                },
-            ],
-            subs: Vec::new(),
-        };
+                    assign(1, Expr::num(0.0)), // запись в локальную — свой кадр
+                ],
+            }],
+        );
         let mut e = ev();
         e.run(&program).unwrap();
-        assert_eq!(e.env().read_direct(1).unwrap(), crate::ast::Val::Num(0.0));
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(12.0));
+        // Стек вернулся к корню; локальная #1 главного блока не тронута.
+        assert_eq!(e.env().frame_depth(), 1);
+        assert_eq!(e.env().read_direct(1).unwrap(), Val::Null);
+    }
+
+    #[test]
+    fn d1_pin_call_sub_null_arg_passes_through() {
+        // ПИН (таблица 2.1, строка 4): «G65 P1000 X#0 — внутри макроса #24
+        // получает Val::Null». Контраст: X0.0 → Num(0.0).
+        let mk = |x_val: Expr| {
+            L2Program::new(
+                vec![call(SubTarget::ONumber(100), vec![(b'X', x_val)])],
+                vec![crate::ast::L2Sub {
+                    target: SubTarget::ONumber(100),
+                    body: vec![assign(500, Expr::var(24))],
+                }],
+            )
+        };
+        let mut e = ev();
+        e.run(&mk(Expr::Null)).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Null);
+        let mut e2 = ev();
+        e2.run(&mk(Expr::num(0.0))).unwrap();
+        assert_eq!(e2.env().read_direct(500).unwrap(), Val::Num(0.0));
+    }
+
+    #[test]
+    fn d1_call_depth_limit_9() {
+        // Дизайн §5 12.2: глубина стека вызовов до 9; 10-й вложенный вызов
+        // → E_LIMIT_EXCEEDED ([L2ExecError::CallDepthExceeded]).
+        let sub_body = vec![
+            assign(
+                500,
+                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+            ),
+            call(SubTarget::ONumber(900), vec![]),
+        ];
+        let program = L2Program::new(
+            vec![call(SubTarget::ONumber(900), vec![])],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(900),
+                body: sub_body,
+            }],
+        );
+        let mut e = ev(); // max_call_depth = 9
+        let err = e.run(&program).unwrap_err();
+        assert_eq!(err, L2ExecError::CallDepthExceeded { limit: 9 });
+        assert_eq!(err.error_code(), ErrorCode::LimitExceeded);
+        // 9 АКТИВНЫХ вызовов допустимы: счётчик дошёл до 9 до падения.
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(9.0));
+        // Расширенный лимит падает позже (на общем бюджете — не сразу).
+        let mut deep = L2Evaluator::new(L2Config {
+            max_call_depth: 12,
+            max_eval_steps: 500,
+            ..cfg()
+        });
+        let err = deep.run(&program).unwrap_err();
+        assert_eq!(err, L2ExecError::CallDepthExceeded { limit: 12 });
+    }
+
+    #[test]
+    fn d1_m99_return_pop_and_implicit_return() {
+        // M99 ДО конца тела: операторы после Return не исполняются;
+        // О-конец без M99 — неявный return (оба пути: pop кадра).
+        let mk = |body: Vec<L2Stmt>| {
+            L2Program::new(
+                vec![call(SubTarget::ONumber(100), vec![])],
+                vec![crate::ast::L2Sub {
+                    target: SubTarget::ONumber(100),
+                    body,
+                }],
+            )
+        };
+        let program = mk(vec![
+            assign(
+                100,
+                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(1.0))),
+            ),
+            L2Stmt::Return {
+                src: placeholder_span(),
+            },
+            assign(
+                100,
+                Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(10.0))),
+            ),
+        ]);
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(1.0));
+        assert_eq!(e.env().frame_depth(), 1, "M99 pops the frame");
+        // Неявный return.
+        let program = mk(vec![assign(
+            100,
+            Expr::Binary(BinaryOp::Add, Box::new(Expr::var(100)), Box::new(Expr::num(100.0))),
+        )]);
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(100.0));
+        assert_eq!(e.env().frame_depth(), 1);
+        // M99 в корне — ошибка (нет активного вызова).
+        let root = L2Program::new(
+            vec![L2Stmt::Return {
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let err = ev().run(&root).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+    }
+
+    #[test]
+    fn d1_m99_inside_while_returns_early() {
+        // M99 внутри тела цикла: ранний выход из подпрограммы (Return
+        // пузырится через While до call-site).
+        let program = L2Program::new(
+            vec![call(SubTarget::ONumber(100), vec![])],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(100),
+                body: vec![
+                    L2Stmt::While {
+                        cond: Expr::num(1.0),
+                        do_id: 1,
+                        body: vec![L2Stmt::Return {
+                            src: placeholder_span(),
+                        }],
+                        src: placeholder_span(),
+                    },
+                    assign(100, Expr::num(777.0)), // не исполняется
+                ],
+            }],
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Null);
+        assert_eq!(e.env().frame_depth(), 1);
+    }
+
+    #[test]
+    fn d1_repeat_l_unroll() {
+        // repeat = L2: подпрограмма O200 дважды инкрементит глобальную #500.
+        let mk_call = |r: Option<Expr>| {
+            L2Stmt::CallSub {
+                target: SubTarget::ONumber(200),
+                repeat: r,
+                args: vec![],
+                modal: false,
+                src: placeholder_span(),
+            }
+        };
+        let program = L2Program::new(
+            vec![mk_call(Some(Expr::num(2.0)))],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(200),
+                body: vec![assign(
+                    500,
+                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                )],
+            }],
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(2.0));
+        // Неизвестная цель → RuntimeError (E_RUNTIME_STATE класс, 12.1-пин).
+        let bad = L2Program::new(vec![mk_call(None)], Vec::new());
+        let err = ev().run(&bad).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+    }
+
+    #[test]
+    fn d1_modal_g66_skeleton_trigger_after_motion() {
+        // G66-каркас: регистрация (носитель SubCall), затем КАЖДЫЙ lowered
+        // motion триггерит тело (два хода → #500 = 2). G67 не имеет узла
+        // AST — контракт-пробел (шапка модуля).
+        let program = L2Program::new(
+            vec![
+                L2Stmt::CallSub {
+                    target: SubTarget::ONumber(300),
+                    repeat: None,
+                    args: vec![],
+                    modal: true,
+                    src: placeholder_span(),
+                },
+                move_stmt(MoveKind::Rapid, target_const(1.0, 0.0, 0.0), None),
+                move_stmt(MoveKind::Rapid, target_const(2.0, 0.0, 0.0), None),
+            ],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(300),
+                body: vec![assign(
+                    500,
+                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                )],
+            }],
+        );
+        let mut e = ev();
+        let res = e.run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2);
+        assert!(res.raw_tail.iter().any(|c| c.marker == RawMarker::SubCall));
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(2.0));
+    }
+
+    // ---------- D2: CFG IfGoto/таблицы меток, бюджеты ----------
+
+    #[test]
+    fn d2_if_goto_cfg_jump_backward_loop() {
+        // N1: #500 += 1; IF [#500 LT 3] GOTO 1 → три итерации, #500 = 3.
+        let program = L2Program::new(
+            vec![
+                label(1),
+                assign(
+                    500,
+                    Expr::Binary(BinaryOp::Add, Box::new(Expr::var(500)), Box::new(Expr::num(1.0))),
+                ),
+                goto(
+                    1,
+                    Expr::Binary(
+                        BinaryOp::Lt,
+                        Box::new(Expr::var(500)),
+                        Box::new(Expr::num(3.0)),
+                    ),
+                ),
+            ],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(3.0));
+    }
+
+    #[test]
+    fn d2_if_goto_jump_forward_skips_dead_code() {
+        // IF [1 EQ 1] GOTO 20 (D3-тривиальное условие) — переход через
+        // мёртвый код; N20 — через узлы Label.
+        let program = L2Program::new(
+            vec![
+                goto(
+                    20,
+                    Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(1.0))),
+                ),
+                assign(500, Expr::num(666.0)), // мёртвый код
+                label(20),
+                assign(501, Expr::num(1.0)),
+            ],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Null);
+        assert_eq!(e.env().read_direct(501).unwrap(), Val::Num(1.0));
+    }
+
+    #[test]
+    fn d2_parser_label_table_contract() {
+        // КОНТРАКТ (а) для B2/D2: таблица в L2Program.labels (парсер) —
+        // без узлов Label: GOTO 5 → stmt-индекс 3 (парсерская таблица
+        // имеет приоритет над собранной по узлам).
+        let with_goto = L2Program {
+            stmts: vec![
+                goto(5, Expr::num(1.0)),
+                assign(500, Expr::num(99.0)), // пропущено
+                assign(500, Expr::num(88.0)), // пропущено
+                assign(500, Expr::num(3.0)),  // N5 = stmt 3 (по таблице)
+            ],
+            subs: Vec::new(),
+            labels: {
+                let mut m = BTreeMap::new();
+                m.insert(5u32, 3usize);
+                m
+            },
+        };
+        let mut e = ev();
+        e.run(&with_goto).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(3.0));
+    }
+
+    #[test]
+    fn d2_goto_unknown_label_is_error() {
+        let program = L2Program::new(vec![goto(42, Expr::num(1.0))], Vec::new());
+        let err = ev().run(&program).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+        assert!(err.message().contains("N42"));
+    }
+
+    #[test]
+    fn d2_labels_are_body_scoped_in_subs() {
+        // Метки тела подпрограммы — СВОИ: GOTO 5 в main не видит метку sub.
+        let subs = vec![crate::ast::L2Sub {
+            target: SubTarget::ONumber(100),
+            body: vec![label(5), assign(500, Expr::num(1.0))],
+        }];
+        let with_goto_main = L2Program {
+            stmts: vec![goto(5, Expr::num(1.0)), call(SubTarget::ONumber(100), vec![])],
+            subs,
+            labels: BTreeMap::new(),
+        };
+        let err = ev().run(&with_goto_main).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+        // А внутри sub — работает (узлы Label).
+        let with_goto_sub = L2Program {
+            stmts: vec![call(SubTarget::ONumber(100), vec![])],
+            subs: vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(100),
+                body: vec![
+                    goto(5, Expr::num(1.0)),
+                    assign(500, Expr::num(99.0)),
+                    label(5),
+                    assign(500, Expr::num(1.0)),
+                ],
+            }],
+            labels: BTreeMap::new(),
+        };
+        let mut e = ev();
+        e.run(&with_goto_sub).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(1.0));
     }
 
     #[test]
     fn t5_infinite_while_limit_exceeded() {
-        // #100 = 1; WHILE [#100 GT 0] DO1 END1 — бесконечный цикл
-        // (чек-лист T5: WHILE [1 EQ 1] DO 1 → E_LIMIT_EXCEEDED).
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::Assign {
-                    target: VarRef::Direct(100),
-                    value: Expr::num(1.0),
-                    src: placeholder_span(),
-                },
+        // #100 = 1; WHILE [#100 GT 0] DO1 END1 — бесконечный цикл.
+        // T5: детерминированное прерывание, класс E_LIMIT_EXCEEDED.
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(1.0)),
                 L2Stmt::While {
                     cond: Expr::Binary(
-                        crate::ast::BinaryOp::Gt,
+                        BinaryOp::Gt,
                         Box::new(Expr::var(100)),
                         Box::new(Expr::num(0.0)),
                     ),
@@ -968,211 +2180,490 @@ mod tests {
                     src: placeholder_span(),
                 },
             ],
-            subs: Vec::new(),
-        };
-        let mut e = ev(); // дефолт 10000
+            Vec::new(),
+        );
+        // Дефолт (оба бюджета 10000): ОБА гварда дают класс
+        // E_LIMIT_EXCEEDED. Конд-вычисление стоит ~4 тика общего бюджета
+        // (узлы AST) — глобальный MaxEvalSteps срабатывает раньше
+        // per-loop счётчика; класс один и тот же (T5 детерминирован).
+        let mut e = ev();
         let err = e.run(&program).unwrap_err();
-        assert!(matches!(err, L2Error::MaxEvalSteps { limit: 10_000 }));
-        // Класс E_LIMIT_EXCEEDED (чек-лист T5).
         assert_eq!(err.error_code(), ErrorCode::LimitExceeded);
-        // Малый конфигурационный бюджет тоже работает.
-        let mut e2 = L2Evaluator::new(L2Config { max_eval_steps: 50 });
+        assert!(matches!(
+            err,
+            L2ExecError::Eval(L2Error::MaxEvalSteps { limit: 10_000 })
+                | L2ExecError::LoopLimitExceeded { limit: 10_000 }
+        ));
+        // Малый ОБЩИЙ бюджет: env-tick срабатывает раньше per-loop.
+        let mut e2 = L2Evaluator::new(L2Config {
+            max_eval_steps: 50,
+            ..cfg()
+        });
         assert!(matches!(
             e2.run(&program),
-            Err(L2Error::MaxEvalSteps { limit: 50 })
+            Err(L2ExecError::Eval(L2Error::MaxEvalSteps { limit: 50 }))
         ));
-    }
-
-    #[test]
-    fn d2_call_sub_args_and_frames() {
-        // Main: G65 P100 A5. B7. → sub O100: #100 = #1 + #2 (локальные!).
-        let program = L2Program {
-            stmts: vec![L2Stmt::CallSub {
-                target: SubTarget::ONumber(100),
-                repeat: None,
-                args: vec![(b'A', Expr::num(5.0)), (b'b', Expr::num(7.0))], // lowercase → #2
-                modal: false,
-                src: placeholder_span(),
-            }],
-            subs: vec![crate::ast::L2Sub {
-                target: SubTarget::ONumber(100),
-                body: vec![
-                    L2Stmt::Assign {
-                        target: VarRef::Direct(100),
-                        value: Expr::Binary(
-                            crate::ast::BinaryOp::Add,
-                            Box::new(Expr::var(1)),
-                            Box::new(Expr::var(2)),
-                        ),
-                        src: placeholder_span(),
-                    },
-                    // Запись в локальную подпрограммы — свой кадр.
-                    L2Stmt::Assign {
-                        target: VarRef::Direct(1),
-                        value: Expr::num(0.0),
-                        src: placeholder_span(),
-                    },
-                ],
-            }],
-        };
-        let mut e = ev();
-        e.run(&program).unwrap();
+        // Малый per-loop бюджет — T5 «на КАЖДЫЙ цикл»: 21-е вычисление
+        // условия прерывает цикл раньше общего бюджета (21×4 тиков < 10000).
+        let mut e3 = L2Evaluator::new(L2Config {
+            max_loop_steps: 20,
+            ..cfg()
+        });
         assert_eq!(
-            e.env().read_direct(100).unwrap(),
-            crate::ast::Val::Num(12.0)
-        );
-        // Стек вернулся к корню; локальная #1 главного блока не тронута.
-        assert_eq!(e.env().frame_depth(), 1);
-        assert_eq!(e.env().read_direct(1).unwrap(), crate::ast::Val::Null);
-    }
-
-    #[test]
-    fn d2_pin_call_sub_null_arg_passes_through() {
-        // ПИН (таблица 2.1, строка 4): «G65 P1000 X#0 — внутри макроса #24
-        // получает Val::Null» (буква X → #24). Контраст: X0.0 → Num(0.0).
-        let mk = |x_val: Expr| L2Program {
-            stmts: vec![L2Stmt::CallSub {
-                target: SubTarget::ONumber(100),
-                repeat: None,
-                args: vec![(b'X', x_val)],
-                modal: false,
-                src: placeholder_span(),
-            }],
-            subs: vec![crate::ast::L2Sub {
-                target: SubTarget::ONumber(100),
-                body: vec![L2Stmt::Assign {
-                    target: VarRef::Direct(500),
-                    value: Expr::var(24),
-                    src: placeholder_span(),
-                }],
-            }],
-        };
-        let mut e = ev();
-        e.run(&mk(Expr::Null)).unwrap();
-        assert_eq!(e.env().read_direct(500).unwrap(), crate::ast::Val::Null);
-        let mut e2 = ev();
-        e2.run(&mk(Expr::num(0.0))).unwrap();
-        assert_eq!(
-            e2.env().read_direct(500).unwrap(),
-            crate::ast::Val::Num(0.0)
+            e3.run(&program).unwrap_err(),
+            L2ExecError::LoopLimitExceeded { limit: 20 }
         );
     }
 
     #[test]
-    fn d2_call_sub_repeat_and_unknown_target() {
-        // repeat = L2: подпрограмма O200 дважды инкрементит глобальную #500.
-        let mk_call = |r: Option<Expr>| L2Stmt::CallSub {
-            target: SubTarget::ONumber(200),
-            repeat: r,
-            args: vec![],
-            modal: false,
+    fn t5_per_loop_budget_is_per_session() {
+        // Два последовательных цикла по 5 итераций: per-loop лимит 6 —
+        // ОБА исполняются (бюджет — на сессию, не на статический узел).
+        let while5 = |body_idx: u32| L2Stmt::While {
+            cond: Expr::Binary(
+                BinaryOp::Lt,
+                Box::new(Expr::var(body_idx)),
+                Box::new(Expr::num(5.0)),
+            ),
+            do_id: 1,
+            body: vec![assign(
+                body_idx,
+                Expr::Binary(
+                    BinaryOp::Add,
+                    Box::new(Expr::var(body_idx)),
+                    Box::new(Expr::num(1.0)),
+                ),
+            )],
             src: placeholder_span(),
         };
-        let program = L2Program {
-            stmts: vec![mk_call(Some(Expr::num(2.0)))],
-            subs: vec![crate::ast::L2Sub {
-                target: SubTarget::ONumber(200),
-                body: vec![L2Stmt::Assign {
-                    target: VarRef::Direct(500),
-                    value: Expr::Binary(
-                        crate::ast::BinaryOp::Add,
-                        Box::new(Expr::var(500)),
-                        Box::new(Expr::num(1.0)),
-                    ),
-                    src: placeholder_span(),
-                }],
-            }],
+        let program = L2Program::new(
+            vec![
+                assign(1, Expr::num(0.0)),
+                while5(1),
+                assign(2, Expr::num(0.0)),
+                while5(2),
+            ],
+            Vec::new(),
+        );
+        let cfg = L2Config {
+            max_loop_steps: 6,
+            ..cfg()
         };
+        let mut e = L2Evaluator::new(cfg);
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(1).unwrap(), Val::Num(5.0));
+        assert_eq!(e.env().read_direct(2).unwrap(), Val::Num(5.0));
+    }
+
+    #[test]
+    fn d2_while_do_id_domain_and_null_cond() {
+        // Null-cond = false (нулевая итерация); do_id вне 1..3 — ошибка.
+        let program = L2Program::new(
+            vec![L2Stmt::While {
+                cond: Expr::Null, // IF [#0] → false
+                do_id: 1,
+                body: vec![assign(500, Expr::num(1.0))],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
         let mut e = ev();
         e.run(&program).unwrap();
-        assert_eq!(e.env().read_direct(500).unwrap(), crate::ast::Val::Num(2.0));
-        // Неизвестная цель → RuntimeError (E_RUNTIME_STATE класс).
-        let bad = L2Program {
-            stmts: vec![mk_call(None)],
-            subs: vec![],
-        };
-        let err = ev().run(&bad).unwrap_err();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Null);
+        let bad = L2Program::new(
+            vec![L2Stmt::While {
+                cond: Expr::num(1.0),
+                do_id: 5,
+                body: vec![],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        assert_eq!(
+            ev().run(&bad).unwrap_err().error_code(),
+            ErrorCode::RuntimeState
+        );
+    }
+
+    #[test]
+    fn d2_bounded_while_executes() {
+        // #1 = 3; WHILE [#1 GT 0] DO1 #1 = #1 - 1 END1 → #1 == 0.
+        let program = L2Program::new(
+            vec![
+                assign(1, Expr::num(3.0)),
+                L2Stmt::While {
+                    cond: Expr::Binary(
+                        BinaryOp::Gt,
+                        Box::new(Expr::var(1)),
+                        Box::new(Expr::num(0.0)),
+                    ),
+                    do_id: 1,
+                    body: vec![assign(
+                        1,
+                        Expr::Binary(BinaryOp::Sub, Box::new(Expr::var(1)), Box::new(Expr::num(1.0))),
+                    )],
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(1).unwrap(), Val::Num(0.0));
+    }
+
+    // ---------- D3: мёртвые ветки/тривиальные условия ----------
+
+    #[test]
+    fn d3_dead_branch_not_evaluated_sys_stops_avoided() {
+        // D3-синергия (§4): мёртвая ветка НЕ вычисляется — SysVar-чтение
+        // (E_RUNTIME_STATE в живой ветке) в мёртвой не останавливает.
+        let dead_move = move_stmt(
+            MoveKind::Linear,
+            ExprPose {
+                x: Some(Expr::Var(VarRef::Sys(SysVar::SkipPos(Axis::X)))),
+                y: Some(Expr::num(0.0)),
+                z: Some(Expr::num(0.0)),
+                a: None,
+                b: None,
+                c: None,
+            },
+            None,
+        );
+        // IF [1 EQ 2] THEN <Sys-ход> — ветка мертва: без останова.
+        let program = L2Program::new(
+            vec![L2Stmt::IfThen {
+                cond: Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(2.0))),
+                then_stmt: Box::new(dead_move.clone()),
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        // IF [#500 GT 0] c #500 = Null (→0.0) — тоже мертва.
+        let program = L2Program::new(
+            vec![L2Stmt::IfThen {
+                cond: Expr::Binary(BinaryOp::Gt, Box::new(Expr::var(500)), Box::new(Expr::num(0.0))),
+                then_stmt: Box::new(dead_move),
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        // Контраст: ЖИВАЯ ветка с Sys-чтением → останов E_RUNTIME_STATE.
+        let live = L2Program::new(
+            vec![L2Stmt::IfThen {
+                cond: Expr::Binary(BinaryOp::Eq, Box::new(Expr::num(1.0)), Box::new(Expr::num(1.0))),
+                then_stmt: Box::new(move_stmt(
+                    MoveKind::Linear,
+                    ExprPose {
+                        x: Some(Expr::Var(VarRef::Sys(SysVar::SkipPos(Axis::X)))),
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(0.0)),
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                )),
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        assert_eq!(
+            ev().run(&live).unwrap_err().error_code(),
+            ErrorCode::RuntimeState
+        );
+    }
+
+    #[test]
+    fn d3_const_ifthen_selects_branch() {
+        // IF [1 EQ 1] THEN (исполняется) / IF [0] / IF [#0] THEN (нет).
+        let program = L2Program::new(
+            vec![
+                L2Stmt::IfThen {
+                    cond: Expr::Binary(
+                        BinaryOp::Eq,
+                        Box::new(Expr::num(1.0)),
+                        Box::new(Expr::num(1.0)),
+                    ),
+                    then_stmt: Box::new(assign(100, Expr::num(1.0))),
+                    src: placeholder_span(),
+                },
+                L2Stmt::IfThen {
+                    cond: Expr::num(0.0),
+                    then_stmt: Box::new(assign(101, Expr::num(1.0))),
+                    src: placeholder_span(),
+                },
+                L2Stmt::IfThen {
+                    cond: Expr::Null, // IF [#0] — false
+                    then_stmt: Box::new(assign(102, Expr::num(1.0))),
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(1.0));
+        assert_eq!(e.env().read_direct(101).unwrap(), Val::Null);
+        assert_eq!(e.env().read_direct(102).unwrap(), Val::Null);
+    }
+
+    // ---------- SysVar-маппинг (§3) ----------
+
+    #[test]
+    fn sysvar_modal_group_snapshot_resolved() {
+        // ModalGroup(1): power-on 0 (G0); после Linear → 1; после Arc Cw → 2.
+        let mv = |v: Expr| linear(v, Expr::num(0.0), Expr::num(0.0), None);
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(1.0, 0.0, 0.0), None),
+                mv(Expr::num(2.0)),
+                assign(500, Expr::Var(VarRef::Sys(SysVar::ModalGroup(1)))),
+                mv(Expr::var(500)),
+                assign(501, Expr::Var(VarRef::Sys(SysVar::ModalGroup(1)))),
+                L2Stmt::Move {
+                    kind: MoveKind::Arc {
+                        ijk: [Some(Expr::num(-1.0)), Some(Expr::num(0.0)), None],
+                        r: None,
+                        dir: Dir::Cw,
+                    },
+                    target: target_const(1.0, 1.0, 0.0),
+                    feed: None,
+                    spindle: None,
+                    src: placeholder_span(),
+                },
+                assign(502, Expr::Var(VarRef::Sys(SysVar::ModalGroup(1)))),
+            ],
+            Vec::new(),
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(1.0)); // G1
+        assert_eq!(e.env().read_direct(501).unwrap(), Val::Num(1.0));
+        assert_eq!(e.env().read_direct(502).unwrap(), Val::Num(2.0)); // G2
+        // Плоскость: power-on G17.
+        let m = Modals::new();
+        assert_eq!(m.plane(), Plane::XY);
+        assert_eq!(m.value(1), Some(0));
+    }
+
+    #[test]
+    fn sysvar_unmodeled_group_and_wcs_and_positions() {
+        // Немоделируемая группа → E_RUNTIME_STATE; WcsOffset →
+        // E_REQUIRES_MACHINE_TABLE; позиции → E_RUNTIME_STATE (§3).
+        let read =
+            |sv: SysVar| L2Program::new(vec![assign(500, Expr::Var(VarRef::Sys(sv)))], Vec::new());
+        let err = ev().run(&read(SysVar::ModalGroup(77))).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+        let err = ev()
+            .run(&read(SysVar::WcsOffset {
+                p: 1,
+                axis: Axis::X,
+            }))
+            .unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RequiresMachineTable);
+        let err = ev().run(&read(SysVar::WorkPos(Axis::Z))).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::RuntimeState);
+        let err = ev().run(&read(SysVar::VendorSpecific(5223))).unwrap_err();
         assert_eq!(err.error_code(), ErrorCode::RuntimeState);
     }
 
     #[test]
-    fn d2_modal_call_is_raw() {
-        let program = L2Program {
-            stmts: vec![L2Stmt::CallSub {
-                target: SubTarget::ONumber(300),
-                repeat: None,
-                args: vec![],
-                modal: true,
-                src: placeholder_span(),
-            }],
-            subs: vec![crate::ast::L2Sub {
-                target: SubTarget::ONumber(300),
-                body: vec![],
-            }],
-        };
-        let mut e = ev();
-        let res = e.run(&program).unwrap();
-        assert_eq!(res.raw_tail[0].marker, RawMarker::SubCall);
-        // Модальный вызов НЕ исполнялся.
-        assert!(res.l1_ops.is_empty());
-    }
-
-    // ---------- §3 последняя строка: Sys-чтение → E_RUNTIME_STATE останов ----
-
-    #[test]
-    fn g31_sysvar_read_stops_with_runtime_state() {
-        // Ход с X = #SKIP[X] — останов E_RUNTIME_STATE.
-        let mk = |v: Expr| L2Program {
-            stmts: vec![L2Stmt::Move {
-                kind: MoveKind::Linear,
-                target: ExprPose {
-                    x: Some(v),
-                    y: Some(Expr::num(0.0)),
-                    z: Some(Expr::num(0.0)),
-                    a: None,
-                    b: None,
-                    c: None,
-                },
-                feed: Some(Expr::num(10.0)),
-                spindle: None,
-                src: placeholder_span(),
-            }],
-            subs: Vec::new(),
+    fn g31_sysvar_read_in_move_stops_with_runtime_state() {
+        // §3 последняя строка: ход с X = #SKIP[X] — останов, программа
+        // остаётся в L2 (Err; результата lowering нет).
+        let mk = |v: Expr| {
+            L2Program::new(
+                vec![linear(v, Expr::num(0.0), Expr::num(0.0), Some(Expr::num(10.0)))],
+                Vec::new(),
+            )
         };
         let skip = mk(Expr::Var(VarRef::Sys(SysVar::SkipPos(Axis::X))));
         let err = ev().run(&skip).unwrap_err();
         assert_eq!(err.error_code(), ErrorCode::RuntimeState);
-
         let abs = mk(Expr::Var(VarRef::Sys(SysVar::AbsMachinePos(Axis::Z))));
         assert_eq!(
             ev().run(&abs).unwrap_err().error_code(),
             ErrorCode::RuntimeState
         );
-        // Доходить до lowering не должно: останов до l1_ops/raw_tail.
     }
 
-    // ---------- Трансформации / RTCP ----------
+    // ---------- Трансформации (§3 строки 3-4; синтетика — ценз B) ----------
 
     #[test]
-    fn transform_and_rtcp_are_raw_carriers() {
-        let program = L2Program {
-            stmts: vec![
-                L2Stmt::RtcpMode {
-                    enabled: true,
-                    tool_length_h: Some(1),
-                    src: placeholder_span(),
+    fn transform_rotate90_golden_end_to_end() {
+        // G68 R90 вокруг (10,10): ход (15,10) → базовая (10,15) — бриф-пин.
+        let program = L2Program::new(
+            vec![L2Stmt::WithTransform {
+                transform: TransformKind::Rotate2D {
+                    center: [Expr::num(10.0), Expr::num(10.0)],
+                    angle_deg: Expr::num(90.0),
+                    plane: Plane::XY,
                 },
+                body: vec![move_stmt(MoveKind::Rapid, target_const(15.0, 10.0, 0.0), None)],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 1);
+        assert!(res.raw_tail.is_empty());
+        if let Op::Rapid { end, .. } = &res.l1_ops[0] {
+            assert_eq!((end.x.value(), end.y.value()), (10.0, 15.0));
+        }
+    }
+
+    #[test]
+    fn transform_rotate_applies_to_multiple_moves_and_unwinds() {
+        // 45° вокруг origin: (10,0) → (7.0711, 7.0711); после блока
+        // трансформация снята — следующий ход без поворота.
+        let program = L2Program::new(
+            vec![
                 L2Stmt::WithTransform {
-                    // §2.3 дословно: Rotate2D { center: [Expr; 2],
-                    // angle_deg: Expr, plane: Plane }.
                     transform: TransformKind::Rotate2D {
                         center: [Expr::num(0.0), Expr::num(0.0)],
                         angle_deg: Expr::num(45.0),
                         plane: Plane::XY,
                     },
+                    body: vec![move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None)],
+                    src: placeholder_span(),
+                },
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2);
+        let get_xy = |op: &Op| match op {
+            Op::Rapid { end, .. } => (end.x.value(), end.y.value()),
+            _ => panic!(),
+        };
+        let (x1, y1) = get_xy(&res.l1_ops[0]);
+        // Значения Num — 4dp (single-final-rounding, SPEC §10.5):
+        // 7.07106781 → 7.0711.
+        assert_eq!(x1, 7.0711);
+        assert_eq!(y1, 7.0711);
+        assert_eq!(get_xy(&res.l1_ops[1]), (10.0, 0.0)); // трансформация снята
+    }
+
+    #[test]
+    fn transform_scale_golden_and_arc_offsets() {
+        // G51 P2 вокруг (0,0,0): (3,4,5) → (6,8,10); дуга ПЕРВОЙ в теле:
+        // программный старт (10,0,0), I-5 J0 → программный центр (5,0),
+        // конец (0,5); масштаб ×2 → базовые старт (20,0), центр (10,0),
+        // конец (0,10) (смещения IJK — векторы, масштабируются тоже);
+        // углы масштаб не меняет: старт 0°, конец 135° → Cw sweep 225°.
+        let arc = L2Stmt::Move {
+            kind: MoveKind::Arc {
+                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                r: None,
+                dir: Dir::Cw,
+            },
+            target: target_const(0.0, 5.0, 0.0),
+            feed: None,
+            spindle: None,
+            src: placeholder_span(),
+        };
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                L2Stmt::WithTransform {
+                    transform: TransformKind::Scale {
+                        center: [Expr::num(0.0), Expr::num(0.0), Expr::num(0.0)],
+                        factor: Expr::num(2.0),
+                    },
+                    body: vec![
+                        arc,
+                        move_stmt(MoveKind::Rapid, target_const(3.0, 4.0, 5.0), None),
+                    ],
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 3);
+        if let Op::Arc {
+            start,
+            end,
+            center,
+            sweep_deg,
+            ..
+        } = &res.l1_ops[1]
+        {
+            match start {
+                StartPoint::Known(p) => {
+                    assert_eq!((p.x.value(), p.y.value()), (20.0, 0.0));
+                }
+                _ => panic!("arc start must be known"),
+            }
+            assert_eq!((end.x.value(), end.y.value()), (0.0, 10.0));
+            assert_eq!((center.x.value(), center.y.value()), (10.0, 0.0));
+            assert!((sweep_deg.value() - 225.0).abs() < 1e-6);
+        } else {
+            panic!("expected Arc");
+        }
+        if let Op::Rapid { end, .. } = &res.l1_ops[2] {
+            assert_eq!((end.x.value(), end.y.value(), end.z.value()), (6.0, 8.0, 10.0));
+        }
+    }
+
+    #[test]
+    fn transform_nested_compose_inner_first() {
+        // Scale(2, origin) внутри Rotate(90°, origin): точка (1,0,0):
+        // сначала scale → (2,0), затем rotate → (0,2) (семантика вложенных
+        // кадров: активная = внешняя ∘ новая).
+        let program = L2Program::new(
+            vec![L2Stmt::WithTransform {
+                transform: TransformKind::Rotate2D {
+                    center: [Expr::num(0.0), Expr::num(0.0)],
+                    angle_deg: Expr::num(90.0),
+                    plane: Plane::XY,
+                },
+                body: vec![L2Stmt::WithTransform {
+                    transform: TransformKind::Scale {
+                        center: [Expr::num(0.0), Expr::num(0.0), Expr::num(0.0)],
+                        factor: Expr::num(2.0),
+                    },
+                    body: vec![move_stmt(MoveKind::Rapid, target_const(1.0, 0.0, 0.0), None)],
+                    src: placeholder_span(),
+                }],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        if let Op::Rapid { end, .. } = &res.l1_ops[0] {
+            assert!((end.x.value() - 0.0).abs() < 1e-9);
+            assert!((end.y.value() - 2.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn transform_arc_center_rotation() {
+        // Поворот 90° вокруг origin: дуга из (10,0) c I-5 J0 (центр (5,0)):
+        // старт (0,10), смещение-вектор (−5,0) → (0,−5), центр (0,5);
+        // конец (5,5) → (−5,5); sweep сохраняется 90° CCW.
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                L2Stmt::WithTransform {
+                    transform: TransformKind::Rotate2D {
+                        center: [Expr::num(0.0), Expr::num(0.0)],
+                        angle_deg: Expr::num(90.0),
+                        plane: Plane::XY,
+                    },
                     body: vec![L2Stmt::Move {
-                        kind: MoveKind::Linear,
-                        target: target_const(10.0, 0.0, 0.0),
+                        kind: MoveKind::Arc {
+                            ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                            r: None,
+                            dir: Dir::Ccw,
+                        },
+                        target: target_const(5.0, 5.0, 0.0),
                         feed: None,
                         spindle: None,
                         src: placeholder_span(),
@@ -1180,32 +2671,346 @@ mod tests {
                     src: placeholder_span(),
                 },
             ],
-            subs: Vec::new(),
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2);
+        if let Op::Arc {
+            end,
+            center,
+            sweep_deg,
+            normal,
+            ..
+        } = &res.l1_ops[1]
+        {
+            assert!((end.x.value() + 5.0).abs() < 1e-6);
+            assert!((end.y.value() - 5.0).abs() < 1e-6);
+            assert!((center.x.value() - 0.0).abs() < 1e-6);
+            assert!((center.y.value() - 5.0).abs() < 1e-6);
+            assert!((sweep_deg.value() - 90.0).abs() < 1e-6);
+            assert_eq!(
+                (normal.x.value(), normal.y.value(), normal.z.value()),
+                (0.0, 0.0, 1.0)
+            );
+        }
+    }
+
+    #[test]
+    fn t6_mirror_default_refusal() {
+        // G51.1 без флага → отказ E_UNSUPPORTED_SEMANTICS (§3 строка 4).
+        let program = L2Program::new(
+            vec![L2Stmt::WithTransform {
+                transform: TransformKind::Mirror {
+                    axis: Axis::X,
+                    pivot: Expr::num(0.0),
+                },
+                body: vec![move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None)],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let err = ev().run(&program).unwrap_err();
+        assert_eq!(err.error_code(), ErrorCode::UnsupportedSemantics);
+        assert!(err.message().contains("allow_mirror_bake"));
+    }
+
+    #[test]
+    fn t6_mirror_baked_inverts_and_flips_arc_dir_with_notice() {
+        // allow_mirror_bake = true: X инвертируется (x ↦ −x, pivot 0),
+        // дуга Cw → Ccw, Notice-диагностика выставлена.
+        let arc = L2Stmt::Move {
+            kind: MoveKind::Arc {
+                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                r: None,
+                dir: Dir::Cw,
+            },
+            target: target_const(0.0, 5.0, 0.0),
+            feed: None,
+            spindle: None,
+            src: placeholder_span(),
         };
-        let mut e = ev();
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                L2Stmt::WithTransform {
+                    transform: TransformKind::Mirror {
+                        axis: Axis::X,
+                        pivot: Expr::num(0.0),
+                    },
+                    body: vec![
+                        arc,
+                        move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None),
+                    ],
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let cfg = L2Config {
+            allow_mirror_bake: true,
+            ..cfg()
+        };
+        let mut e = L2Evaluator::new(cfg);
         let res = e.run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 3);
+        // Notice.
+        assert!(res.diagnostics.iter().any(|d| d.message.contains("mirror baked")));
+        // Дуга ПЕРВОЙ в теле: зеркальный старт (−10,0), I зеркалится
+        // (−5 → 5) → центр (−5,0); конец (0,5) → (0,5); dir Cw→Ccw;
+        // углы: старт 180°, конец 45° → CCW sweep 225° (величина свипа
+        // сохраняется — зеркало меняет ориентацию, флип dir компенсирует).
+        if let Op::Arc {
+            start,
+            end,
+            dir,
+            center,
+            sweep_deg,
+            ..
+        } = &res.l1_ops[1]
+        {
+            match start {
+                StartPoint::Known(p) => assert_eq!((p.x.value(), p.y.value()), (-10.0, 0.0)),
+                _ => panic!("arc start must be known"),
+            }
+            assert_eq!((end.x.value(), end.y.value()), (0.0, 5.0));
+            assert_eq!(*dir, Dir::Ccw);
+            assert_eq!((center.x.value(), center.y.value()), (-5.0, 0.0));
+            assert!((sweep_deg.value() - 225.0).abs() < 1e-6);
+        }
+        // Rapid после дуги: (5,0,0) → (−5,0,0).
+        if let Op::Rapid { end, .. } = &res.l1_ops[2] {
+            assert_eq!((end.x.value(), end.y.value()), (-5.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn transform_twp_is_carrier_with_suppressed_body() {
+        // G68.2 → Raw-носитель с подставленными значениями; тело подавлено
+        // (§3 строка 6; синтетический порядок слов X Y Z A B C — ценз B).
+        let program = L2Program::new(
+            vec![L2Stmt::WithTransform {
+                transform: TransformKind::TiltedWorkPlane {
+                    origin: [Expr::num(1.0), Expr::num(2.0), Expr::num(3.0)],
+                    euler: [Expr::num(10.0), Expr::num(20.0), Expr::num(30.0)],
+                },
+                body: vec![move_stmt(MoveKind::Rapid, target_const(5.0, 0.0, 0.0), None)],
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert!(res.l1_ops.is_empty(), "body must be suppressed");
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::Transform);
+        assert_eq!(
+            decode_payload(&res.raw_tail[0].op),
+            "G68.2 X1.0000 Y2.0000 Z3.0000 A10.0000 B20.0000 C30.0000\n"
+        );
+    }
+
+    #[test]
+    fn rtcp_is_carrier_payload_with_h() {
+        // G43.4 H1 / G49 → Raw-носители (§3 строка 6).
+        let program = L2Program::new(
+            vec![
+                L2Stmt::RtcpMode {
+                    enabled: true,
+                    tool_length_h: Some(1),
+                    src: placeholder_span(),
+                },
+                L2Stmt::RtcpMode {
+                    enabled: false,
+                    tool_length_h: None,
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
         assert_eq!(res.raw_tail.len(), 2);
         assert_eq!(res.raw_tail[0].marker, RawMarker::Rtcp);
-        assert_eq!(res.raw_tail[1].marker, RawMarker::Transform);
-        // Тело трансформации подавлено: ни одного L1-опа.
-        assert!(res.l1_ops.is_empty());
+        assert_eq!(decode_payload(&res.raw_tail[0].op), "G43.4 H1\n");
+        assert_eq!(decode_payload(&res.raw_tail[1].op), "G49\n");
+    }
+
+    // ---------- Дуги: lowering в Op::Arc ----------
+
+    #[test]
+    fn arc_ijk_lowers_to_l1_with_canonical_geometry() {
+        // G3 из (10,0) c I-5 J0 в (5,5): Op::Arc center (5,0), sweep 90,
+        // нормаль +Z, pitch 0; start Known (связность).
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                L2Stmt::Move {
+                    kind: MoveKind::Arc {
+                        ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                        r: None,
+                        dir: Dir::Ccw,
+                    },
+                    target: target_const(5.0, 5.0, 0.0),
+                    feed: Some(Expr::num(100.0)),
+                    spindle: None,
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2);
+        assert!(res.raw_tail.is_empty());
+        match &res.l1_ops[1] {
+            Op::Arc {
+                start,
+                end,
+                center,
+                normal,
+                dir,
+                sweep_deg,
+                pitch,
+                state,
+                ..
+            } => {
+                match start {
+                    StartPoint::Known(p) => assert_eq!((p.x.value(), p.y.value()), (10.0, 0.0)),
+                    StartPoint::Unknown => panic!("start must be known"),
+                }
+                assert_eq!((end.x.value(), end.y.value()), (5.0, 5.0));
+                assert_eq!((center.x.value(), center.y.value()), (5.0, 0.0));
+                assert_eq!(
+                    (normal.x.value(), normal.y.value(), normal.z.value()),
+                    (0.0, 0.0, 1.0)
+                );
+                assert_eq!(*dir, Dir::Ccw);
+                assert!((sweep_deg.value() - 90.0).abs() < 1e-9);
+                assert!(pitch.value().abs() < 1e-12);
+                assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(100.0));
+            }
+            _ => panic!("expected Arc"),
+        }
+    }
+
+    #[test]
+    fn arc_r_form_and_helical_pitch_and_invalid() {
+        // R-форма: (0,0) → (10,0) R5 CCW: центр (5,0), sweep 180.
+        // Винт: K-компонента хода → pitch; K в центре ≠ 0 → носитель.
+        // Без IJK/R → носитель InvalidInput.
+        let mk = |kind: MoveKind, tgt: ExprPose, feed: Option<Expr>| {
+            L2Program::new(
+                vec![
+                    move_stmt(MoveKind::Rapid, target_const(0.0, 0.0, 0.0), None),
+                    L2Stmt::Move {
+                        kind,
+                        target: tgt,
+                        feed,
+                        spindle: None,
+                        src: placeholder_span(),
+                    },
+                ],
+                Vec::new(),
+            )
+        };
+        let r_prog = mk(
+            MoveKind::Arc {
+                ijk: [None, None, None],
+                r: Some(Expr::num(5.0)),
+                dir: Dir::Ccw,
+            },
+            target_const(10.0, 0.0, 0.0),
+            None,
+        );
+        let res = ev().run(&r_prog).unwrap();
+        match &res.l1_ops[1] {
+            Op::Arc { center, sweep_deg, .. } => {
+                assert!((center.x.value() - 5.0).abs() < 1e-6);
+                assert!((sweep_deg.value() - 180.0).abs() < 1e-6);
+            }
+            _ => panic!("expected Arc"),
+        }
+        // Винт: конец (5,5,3), IJK без K → pitch 3.
+        let helix = mk(
+            MoveKind::Arc {
+                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                r: None,
+                dir: Dir::Ccw,
+            },
+            target_const(5.0, 5.0, 3.0),
+            None,
+        );
+        let res = ev().run(&helix).unwrap();
+        match &res.l1_ops[1] {
+            Op::Arc { pitch, .. } => assert!((pitch.value() - 3.0).abs() < 1e-9),
+            _ => panic!("expected Arc"),
+        }
+        // K-смещение центра ≠ 0 → носитель InvalidInput.
+        let bad = mk(
+            MoveKind::Arc {
+                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), Some(Expr::num(2.0))],
+                r: None,
+                dir: Dir::Ccw,
+            },
+            target_const(5.0, 5.0, 3.0),
+            None,
+        );
+        let res = ev().run(&bad).unwrap();
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::ArcUnlowered);
+        match &res.raw_tail[0].op {
+            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::InvalidInput),
+            _ => panic!(),
+        }
+        // Ни IJK, ни R → носитель InvalidInput (NoGeometry).
+        let none = mk(
+            MoveKind::Arc {
+                ijk: [None, None, None],
+                r: None,
+                dir: Dir::Ccw,
+            },
+            target_const(5.0, 5.0, 0.0),
+            None,
+        );
+        let res = ev().run(&none).unwrap();
+        assert_eq!(res.raw_tail.len(), 1);
+        assert!(res.diagnostics[0].message.contains("without in-plane IJK/R"));
+        // Старт неизвестен → носитель RuntimeState.
+        let nostart = L2Program::new(
+            vec![L2Stmt::Move {
+                kind: MoveKind::Arc {
+                    ijk: [Some(Expr::num(-5.0)), None, None],
+                    r: None,
+                    dir: Dir::Ccw,
+                },
+                target: target_const(5.0, 5.0, 0.0),
+                feed: None,
+                spindle: None,
+                src: placeholder_span(),
+            }],
+            Vec::new(),
+        );
+        let res = ev().run(&nostart).unwrap();
+        assert_eq!(res.raw_tail[0].marker, RawMarker::ArcUnlowered);
+        assert_eq!(res.diagnostics[0].code, ErrorCode::RuntimeState);
     }
 
     // ---------- Инфраструктура ----------
 
     #[test]
-    fn raw_carrier_payload_is_deterministic_hex() {
-        let stmt = L2Stmt::IfGoto {
-            cond: Expr::num(1.0),
-            target_label: 5,
-            src: placeholder_span(),
-        };
-        let a = raw_carrier_op("r", &stmt);
-        let b = raw_carrier_op("r", &stmt);
-        assert_eq!(a, b); // детерминизм
-        if let Op::Raw { payload_hex, .. } = &a {
+    fn raw_payload_hex_is_deterministic() {
+        let text = "G0 X15.0000 A15.0000\n";
+        assert_eq!(
+            crate::lowering::payload_hex(text),
+            crate::lowering::payload_hex(text)
+        );
+        let op = crate::lowering::raw_frame_op(
+            text,
+            "r".into(),
+            ErrorCode::UnsupportedSemantics,
+            placeholder_span(),
+        );
+        if let Op::Raw { payload_hex, .. } = &op {
             assert!(!payload_hex.is_empty());
             assert!(payload_hex.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(payload_hex.ends_with("0A"), "terminator \\n in hex tail");
         } else {
             panic!("carrier must be Op::Raw");
         }
@@ -1213,14 +3018,14 @@ mod tests {
 
     #[test]
     fn l2_stmt_src_accessor() {
-        let mv = L2Stmt::Move {
-            kind: MoveKind::Rapid,
-            target: ExprPose::empty(),
-            feed: None,
-            spindle: None,
-            src: placeholder_span(),
-        };
+        let mv = move_stmt(MoveKind::Rapid, ExprPose::empty(), None);
         assert!(mv.src().is_some());
+        assert!(label(1).src().is_some());
+        assert!(L2Stmt::Return {
+            src: placeholder_span()
+        }
+        .src()
+        .is_some());
         assert!(L2Stmt::L1Op(Op::ProgramEnd {
             src: placeholder_span()
         })
@@ -1239,18 +3044,38 @@ mod tests {
     }
 
     #[test]
-    fn expr_is_const_matrix() {
-        assert!(expr_is_const(&Expr::num(1.0)));
-        assert!(expr_is_const(&Expr::Null));
-        assert!(expr_is_const(&Expr::Binary(
-            crate::ast::BinaryOp::Add,
-            Box::new(Expr::num(1.0)),
-            Box::new(Expr::Null)
-        )));
-        assert!(!expr_is_const(&Expr::var(100)));
-        assert!(!expr_is_const(&Expr::Unary(
-            UnaryOp::Abs,
-            Box::new(Expr::var(1))
-        )));
+    fn run_is_repeatable_and_resets_state() {
+        // Прогон детерминирован: состояние (переменные/позиция/модальности/
+        // трансформации) сбрасывается на каждый run.
+        let program = L2Program::new(vec![assign(100, Expr::num(5.0))], Vec::new());
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(5.0));
+        // Второй прогон той же программы — тот же результат.
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(5.0));
+    }
+
+    // ---------- SubTarget::Named (амендрт v0.1.2, парсер D2) ----------
+
+    #[test]
+    fn d1_named_subtarget_resolution() {
+        // o<square> sub / call — именованная подпрограмма.
+        let program = L2Program::new(
+            vec![call(
+                SubTarget::Named("square".to_string()),
+                vec![(b'A', Expr::num(3.0))],
+            )],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::Named("square".to_string()),
+                body: vec![assign(
+                    100,
+                    Expr::Binary(BinaryOp::Mul, Box::new(Expr::var(1)), Box::new(Expr::var(1))),
+                )],
+            }],
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(100).unwrap(), Val::Num(9.0));
     }
 }
