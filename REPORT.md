@@ -1,7 +1,7 @@
 # REPORT — MVP-цикл, итерации 0–5
 
 **Дата:** 2026-11-22 · **Оркестратор:** сессия по плану `IMPLEMENTATION-PLAN.md` v0.1.3 (5 агентов: A core, B harness/corpus, C GRBL, D LinuxCNC, E integration; оркестратор — координация, классификация, acceptance)
-**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9.1 (Fanuc + Haas колонки) · CORPUS v0.7.1 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
+**Версии:** SPEC v0.17 · grammar v0.4 (back-compat, magic v0.3) · EQUIVALENCE v0.3.1 · COVERAGE v0.9.2→v0.9.3 (Fanuc + Haas колонки; haas-приёмка партией) · CORPUS v0.7.1 · PLAN v0.1.3 · interface v0.1.2 · **manifest: 68 векторов + 144 Tier B (69 published / 75 local-dev); 17 fanuc-dialect → Pending до регистрации адаптера**
 
 ---
 
@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **758 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203 теста, parse+emit+legality) · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
+**Числа:** **758 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203t) + Haas-адаптер ПОЛНЫЙ (176t, registered live) + fanuc-live в реестре (17 файлов) + INTERFACE-V0.2-DESIGN · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -109,8 +109,24 @@
 
 #21 SrcSpan→Arc<str> · #22 AdapterOutput · Box-PR large_enum_variant · **AST-флаг F-кадра** — все в очереди разморозки API v0.2 (бласт-радиус через замороженный интерфейс v0.1) · NURBS/Q10 — ревью-очередь пользователя.
 
-## 7. Дальше (итерация 7)
+## 7. Итерация 7 — Haas-адаптер + fanuc-live + дизайн v0.2
 
-eid-fanuc v0.18-зеркало (в полёте: клиренс/G73/G86/F-правило — 3-я поверхность развёртки) · eid-haas адаптер (контракт готов: research v0.0 + COVERAGE v0.9) · регистрация "fanuc" в adapter-реестре (17 fanuc-файлов корпуса становятся живыми тестами) · 15+34+68 `?`-реестры: сверка по конкретным сериям (вкл. §6.68 grbl-space) · разморозка API v0.2 (#21/#22/Box/F-флаг).
+### 7.1 eid-haas — ПОЛНЫЙ ЦИКЛ (этапы 1–3, коммиты 477bc9e/73ab099/93b3bda)
 
-**Ревью-очередь (пользователь):** Q10 static-inlining (O-code ×25) · NURBS P-words ×13 (Raw vs этап 12). Auto-PEND — решён (SPEC v0.16, подтверждён rs274 независимо).
+Парсер + эмиссия Haas NGC: **176 тестов**, зарегистрирован live (5-й адаптер реестра). Ловушки контракта все поглощены: DPI machinists-notation с **F-доменом ×0.0001 (Setting 77)** — собственный тест поймал начальную unit-scaled ошибку; EOB `;`; **G52 = Err** (2-й вендорский отказ); G10 L2 P0 = слот G52 (**≠ Fanuc external offset**), G10 L20 ≠ wcs_set_here; **G70/G71/G72 = болтовые** (≠ Fanuc units); **P-dot-rule** (dotted=сек/bare=мс, уникальное Haas-правило) в G04 и циклах; **L-повторы (НЕ K)**, G83 переменные I/J/K (d1=I, dk=max(K,d−J)); **WCS-слоты G110–G112 → p=7..9 + W_WCS_EXTENDED** (нативная симметрия EID); M-коллизии ≠Fanuc запинены (M07=Shower, M29=relay, M13=тормоз 5-й оси). **Cross-check semantic_diff=0 на #19/#20/#21 — 4-я поверхность развёртки подтвердила SPEC v0.18.** Legality-enum с первого дня (INTERFACE-V0.2 волна-4: тотальные функции, ноль panic на emit-пути — первый адаптер на новом стандарте; старые — миграция в v0.2).
+
+### 7.2 fanuc live + реестр
+
+Регистрация "fanuc" (agent E, ff090bd): **17/17 fanuc-файлов корпуса обрабатываются живым адаптером** (ok=6/diag=11/crash=0 — паритет смоука), pending-тесты заменены живыми (harness +1, integration +2, cli +3). Находки: все ok-файлы содержат Macro B-Raw → кросс-диалект честно E_RAW_UNTRANSLATABLE (SPEC §8.1; same-dialect verbatim — единственный live-позитив); path_mode value-shift grbl-ExactPath→G61→ExactStop задокументирован (точная эквивалентность на G61.1).
+
+### 7.3 INTERFACE-V0.2-DESIGN (agent A, 1dcdcb0) — решения на измерениях
+
+Counting-аллокатор на 150k-оповой программе опроверг два claim'а: **SrcSpan→Arc — ДЕЛАТЬ** (file-String = 7.9% аллокаций, доминирует Num.text; «3–5×» — миф), **Box-PR — ОТКЛОНЁН** (+300k аллокаций/+21% на горячей клон-фазе, lint-зазор остаётся). AdapterOutput (Send+Sync) — ДЕЛАТЬ (открывает параллельный корпус/веб; фиксирует класс «затёртых notices» из R3-consistency). **F-флаг = State.feed_restated: bool** (88B/0-alloc, goldens целы; comparator-collapse отвергнут повторно — 3 основания). LegalityCondition-enum — ДЕЛАТЬ (паник-точки выписаны). План 5 волн + риск-реестр 12 + приёмка T1–T12.
+
+### 7.4 Мутационный раунд v0.18 (agent D, в полёте)
+
+Kill-rate по изменившимся поверхностям vs baseline 75.5%; real-gap = потенциальные новые находки.
+
+## 8. Дальше (итерация 8)
+
+Реализация INTERFACE v0.2 по дизайн-доку (5 волн: docs → Arc → AdapterOutput → F-флаг → legality-enum; fanuc/linuxcnc/grbl-эмиттеры мигрируют на typed-enum) · `?`-реестры: 15 Fanuc + 34 Haas + 72 COVERAGE (сверка по конкретным сериям/мануалам; §6.68 grbl-space, §6.70 Haas-L0) · fanuc/haas-эмиссионные профили (M02-vs-M30, G59.x→G54.1/G154-map, R-arc-флаг) · NURBS/Q10 — ревью-очередь пользователя.
