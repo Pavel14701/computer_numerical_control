@@ -9,8 +9,9 @@
 
 use eid_core::ast::Units;
 use eid_integration::profile::{
-    AxisRange, DialectKind, Limits, MachineProfile, FANUC_DEFAULT_PROFILE, GRBL_DEFAULT_PROFILE,
-    HAAS_DEFAULT_PROFILE, LINUXCNC_DEFAULT_PROFILE, MAX_WORD_CHARS_CAP,
+    AxisRange, DialectKind, Limits, MachineProfile, ProfileEmissionOpts, ProgramEndStyle,
+    FANUC_DEFAULT_PROFILE, GRBL_DEFAULT_PROFILE, HAAS_DEFAULT_PROFILE, LINUXCNC_DEFAULT_PROFILE,
+    MAX_WORD_CHARS_CAP,
 };
 use std::path::PathBuf;
 
@@ -518,3 +519,210 @@ const OVERRIDE_TOML: &str = concat!(
     "max-source-lines = 20000\n",
     "max-word-chars = 8\n",
 );
+
+// ---------------------------------------------------------------------------
+// 8. Этап 8 (emission-профили fanuc/haas): serde-default на старых TOML,
+//    явные значения (program_end_style, wcs_extended_map, allow-r-arcs
+//    алиас), валидация диалекта/формата.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stage8_flags_serde_defaults_on_legacy_toml() {
+    // Старый TOML без новых ключей: дефолты M30 / мапы нет — загрузка не
+    // ломается (аддитивная эволюция схемы, serde-default).
+    let p: MachineProfile = toml::from_str(GRBL_DEFAULT_PROFILE).unwrap();
+    assert_eq!(p.program_end_style, ProgramEndStyle::M30);
+    assert_eq!(p.wcs_extended_map, None);
+    let legacy = concat!(
+        "name = \"Legacy8\"\n",
+        "dialect = \"fanuc\"\n",
+        "emit-r-arcs = false\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let p2: MachineProfile = toml::from_str(legacy).expect("легаси-TOML валиден");
+    assert_eq!(p2.program_end_style, ProgramEndStyle::M30);
+    assert_eq!(p2.wcs_extended_map, None);
+    // Дефолтные TOML fanuc/haas несут явный M30 и равны конструкторам.
+    let fanuc: MachineProfile = toml::from_str(FANUC_DEFAULT_PROFILE).unwrap();
+    assert_eq!(fanuc.program_end_style, ProgramEndStyle::M30);
+    assert_eq!(fanuc.wcs_extended_map, None);
+    let haas: MachineProfile = toml::from_str(HAAS_DEFAULT_PROFILE).unwrap();
+    assert_eq!(haas, MachineProfile::haas_default());
+}
+
+#[test]
+fn stage8_explicit_flags_parse() {
+    // Явные значения всех трёх флагов (M02 + мапа + allow-r-arcs-алиас).
+    let toml_text = concat!(
+        "name = \"Stage8 bench\"\n",
+        "dialect = \"fanuc\"\n",
+        "allow-r-arcs = true\n",
+        "program-end-style = \"M02\"\n",
+        "\n",
+        "[wcs-extended-map]\n",
+        "\"G59.1\" = \"G54.1 P1\"\n",
+        "\"G59.2\" = \"G54.1 P2\"\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let p: MachineProfile = toml::from_str(toml_text).expect("профиль с флагами этапа 8");
+    assert_eq!(p.program_end_style, ProgramEndStyle::M02);
+    let map = p.wcs_extended_map.as_ref().expect("мапа прочитана");
+    assert_eq!(map.get("G59.1").map(String::as_str), Some("G54.1 P1"));
+    assert_eq!(map.get("G59.2").map(String::as_str), Some("G54.1 P2"));
+    // allow-r-arcs — serde-алиас emit-r-arcs (имя флага из брифа этапа 8):
+    // TOML-ключ может называться любым из двух (оба в одном файле = duplicate
+    // field — serde-семантика алиасов).
+    assert!(p.emit_r_arcs);
+    // Проекция в ProfileEmissionOpts.
+    let o = ProfileEmissionOpts::from_profile(&p);
+    assert!(!o.is_default());
+    assert_eq!(o.program_end_style, ProgramEndStyle::M02);
+    assert!(o.allow_r_arcs);
+    assert_eq!(o.wcs_extended_map.len(), 2);
+}
+
+#[test]
+fn stage8_m02_on_non_fanuc_haas_dialect_is_err() {
+    // program_end_style = "M02" вне fanuc/haas → отказ загрузки (тихое
+    // игнорирование запрещено).
+    let toml_text = concat!(
+        "name = \"Grbl M02\"\n",
+        "dialect = \"grbl-1.1\"\n",
+        "emit-r-arcs = false\n",
+        "program-end-style = \"M02\"\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let path = write_temp("stage8_m02_grbl.toml", toml_text);
+    let err = MachineProfile::load(&path).expect_err("M02 на grbl отвергается");
+    assert!(
+        err.contains("program_end_style") && err.contains("fanuc/haas"),
+        "{err}"
+    );
+    // Явный дефолт M30 на любом диалекте валиден (no-op).
+    let ok = toml_text.replace("program-end-style = \"M02\"", "program-end-style = \"M30\"");
+    let path = write_temp("stage8_m30_grbl.toml", &ok);
+    MachineProfile::load(&path).expect("M30 на grbl валиден (дефолт)");
+}
+
+#[test]
+fn stage8_map_on_non_fanuc_haas_dialect_is_err() {
+    let toml_text = concat!(
+        "name = \"LinuxCNC map\"\n",
+        "dialect = \"linuxcnc\"\n",
+        "emit-r-arcs = false\n",
+        "\n",
+        "[wcs-extended-map]\n",
+        "\"G59.1\" = \"G154 P1\"\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let path = write_temp("stage8_map_lnx.toml", toml_text);
+    let err = MachineProfile::load(&path).expect_err("мапа на linuxcnc отвергается");
+    assert!(err.contains("wcs_extended_map"), "{err}");
+}
+
+#[test]
+fn stage8_map_value_format_validation() {
+    let mk = |dialect: &str, key: &str, value: &str| {
+        format!(
+            concat!(
+                "name = \"Probe\"\n",
+                "dialect = \"{d}\"\n",
+                "emit-r-arcs = false\n",
+                "\n",
+                "[wcs-extended-map]\n",
+                "\"{k}\" = \"{v}\"\n",
+                "\n",
+                "[limits]\n",
+                "max-ops-per-program = 200000\n",
+                "max-unroll-iterations = 10000\n",
+                "max-source-lines = 1000000\n",
+                "max-word-chars = 32\n",
+            ),
+            d = dialect,
+            k = key,
+            v = value
+        )
+    };
+    // Чужой-диалектный формат значения: G154 на fanuc → отказ.
+    let path = write_temp("s8_map_wrong_fmt.toml", &mk("fanuc", "G59.1", "G154 P1"));
+    let err = MachineProfile::load(&path).expect_err("G154 на fanuc отвергается");
+    assert!(err.contains("G54.1 P<n>"), "{err}");
+    // Ключ вне словаря → отказ.
+    let path = write_temp("s8_map_bad_key.toml", &mk("fanuc", "G54.1", "G54.1 P1"));
+    let err = MachineProfile::load(&path).expect_err("ключ G54.1 вне словаря");
+    assert!(
+        err.contains("валидные ключи") && err.contains("G59.1"),
+        "{err}"
+    );
+    // Домен Pn: fanuc P49 > 48 → отказ; P1..P48 границы ок.
+    let path = write_temp("s8_map_p49.toml", &mk("fanuc", "G59.1", "G54.1 P49"));
+    assert!(MachineProfile::load(&path).is_err(), "P49 > домена 48");
+    let path = write_temp("s8_map_p48.toml", &mk("fanuc", "G59.1", "G54.1 P48"));
+    MachineProfile::load(&path).expect("P48 = граница домена fanuc");
+    // haas: P99 ок, P100 отказ.
+    let path = write_temp("s8_map_p99.toml", &mk("haas", "G59.1", "G154 P99"));
+    MachineProfile::load(&path).expect("P99 = граница домена haas");
+    let path = write_temp("s8_map_p100.toml", &mk("haas", "G59.1", "G154 P100"));
+    assert!(MachineProfile::load(&path).is_err(), "P100 > домена 99");
+    // P0 → отказ (домен 1..N).
+    let path = write_temp("s8_map_p0.toml", &mk("haas", "G59.1", "G154 P0"));
+    assert!(MachineProfile::load(&path).is_err(), "P0 вне домена");
+    // Пустая мапа → отказ (конфигурационная ошибка).
+    let empty = concat!(
+        "name = \"Empty map\"\n",
+        "dialect = \"haas\"\n",
+        "emit-r-arcs = false\n",
+        "\n",
+        "[wcs-extended-map]\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let path = write_temp("s8_map_empty.toml", empty);
+    let err = MachineProfile::load(&path).expect_err("пустая мапа отвергается");
+    assert!(err.contains("пуста"), "{err}");
+}
+
+#[test]
+fn stage8_allow_r_arcs_alias_reads() {
+    // allow_r_arcs (имя флага из брифа этапа 8) — serde-алиас канонического
+    // поля emit_r_arcs: старые TOML (`emit-r-arcs`) остаются валидны.
+    let toml_text = concat!(
+        "name = \"R bench\"\n",
+        "dialect = \"haas\"\n",
+        "allow-r-arcs = true\n",
+        "\n",
+        "[limits]\n",
+        "max-ops-per-program = 200000\n",
+        "max-unroll-iterations = 10000\n",
+        "max-source-lines = 1000000\n",
+        "max-word-chars = 32\n",
+    );
+    let p: MachineProfile = toml::from_str(toml_text).expect("алиас читается");
+    assert!(p.emit_r_arcs);
+    let o = ProfileEmissionOpts::from_profile(&p);
+    assert!(o.allow_r_arcs);
+}

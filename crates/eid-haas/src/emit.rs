@@ -111,6 +111,108 @@ pub struct EmitOut {
 }
 
 // ===========================================================================
+// Профильные эмиссионные опции (этап 8; COVERAGE §5.2 «дефолт / выбор
+// профиля»). Trait Adapter v0.2 ЗАМОРОЖЕН — emit(&self, program) профиль не
+// принимает; опции входят через обёртку registry
+// (eid-integration HaasNamedAdapter хранит Option<ProfileEmissionOpts>,
+// конструктор with_emission_opts) и вызывают [`emit_with_profile`].
+// Default = поведение до этапа 8 (байт-в-байт: золотовые тексты целы).
+// Типы дублируют eid-fanuc::emit намеренно: крейты независимы (без
+// перекрёстных зависимостей), eid-core не трогается (adapter.rs v0.2
+// заморожен).
+// ===========================================================================
+
+/// Стиль program_end (COVERAGE §5.2: «M30 дефолт, Haas-конвенция» vs M02 —
+/// выбор профиля). Дефолт — [`HaasProgramEnd::M30`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HaasProgramEnd {
+    /// `M30` — reset-семантика (глушит шпиндель/СОЖ; Setting 129 `?`).
+    #[default]
+    M30,
+    /// `M02` — исторический конец программы (легален в словаре Haas NGC).
+    M02,
+}
+
+impl HaasProgramEnd {
+    /// Слово эмиссии.
+    pub fn word(self) -> &'static str {
+        match self {
+            HaasProgramEnd::M30 => "M30",
+            HaasProgramEnd::M02 => "M02",
+        }
+    }
+}
+
+/// Таблица маппинга расширенных WCS (этап 8, COVERAGE §5.2 profile-опция
+/// «map → G154 Pn» с notice — НЕ дефолт, аналогия golden_preset_no_bake).
+/// None (дефолт) = текущее поведение (приёмка этапа 3): слоты p7..9 →
+/// G110/G111/G112 + warning `wcs_extended_slot`. G154 Pn — другая нумерация
+/// той же таблицы (P1 = слот #7 — нативная симметрия), подмена сопровождается
+/// notice.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HaasG59Map {
+    /// `"G59.1" = "G154 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_1: Option<u32>,
+    /// `"G59.2" = "G154 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_2: Option<u32>,
+    /// `"G59.3" = "G154 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_3: Option<u32>,
+}
+
+impl HaasG59Map {
+    /// Мапа пуста (ни один слот не замаплен)?
+    pub fn is_empty(&self) -> bool {
+        self.g59_1.is_none() && self.g59_2.is_none() && self.g59_3.is_none()
+    }
+
+    /// Pn слота; None = слот не замаплен (неполная мапа).
+    fn slot(&self, w: Wcs) -> Option<u32> {
+        match w {
+            Wcs::G59_1 => self.g59_1,
+            Wcs::G59_2 => self.g59_2,
+            Wcs::G59_3 => self.g59_3,
+            _ => None,
+        }
+    }
+
+    /// Имя слота в синтаксисе источника (для диагностики).
+    fn slot_name(w: Wcs) -> Option<&'static str> {
+        match w {
+            Wcs::G59_1 => Some("G59.1"),
+            Wcs::G59_2 => Some("G59.2"),
+            Wcs::G59_3 => Some("G59.3"),
+            _ => None,
+        }
+    }
+}
+
+/// Профильные эмиссионные опции Haas (этап 8). [`HaasEmissionOpts::default()`]
+/// эквивалентен поведению до этапа 8; библиотечный [`emit`] и
+/// `HaasAdapter::emit` используют именно его.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HaasEmissionOpts {
+    /// COVERAGE §5.2 program_end: M30 (дефолт) | M02 — выбор профиля.
+    pub program_end: HaasProgramEnd,
+    /// true → дуги эмитятся R-формой + notice на каждой R-дуге (COVERAGE §5.2
+    /// «R — флаг профиля + notice», EQUIVALENCE §4); false (дефолт) = всегда
+    /// IJK. Полные круги (sweep=360°) — ВСЕГДА IJK даже при true: R при
+    /// совпадающих in-plane start/end неоднозначен (SPEC §6; R-полный круг —
+    /// alarm контроллера).
+    pub allow_r_arcs: bool,
+    /// None = мапа выключена (текущее поведение — G110–G112 + warning);
+    /// Some = таблица применена (эмиссия G154 Pn + notice «map применён,
+    /// таблица подменена»).
+    pub g59_map: Option<HaasG59Map>,
+}
+
+impl HaasEmissionOpts {
+    /// Мапа применена (Some и непуста)?
+    fn map_on(&self) -> bool {
+        self.g59_map.as_ref().is_some_and(|m| !m.is_empty())
+    }
+}
+
+// ===========================================================================
 // Legality — ConversionTarget-паттерн (MLIR) + типизированные условия
 // (INTERFACE-V0.2 §2.5, В1): enum вместо &'static str, code_of/warning_of —
 // тотальные match-функции (compile-time полнота; паник-точек «таблица и
@@ -138,6 +240,10 @@ pub enum HaasEmissionCondition {
     /// `wcs_define_p_outside_l2_domain` — P вне домена Haas L2 (0..6;
     /// p7..9 = расширенные origin — запись через L20, profile-опция).
     WcsDefinePOutsideL2Domain,
+    /// `wcs_map_incomplete` — profile wcs_extended_map включена, но
+    /// встреченный в программе расширенный слот (p7..9) не замаплен
+    /// (этап 8; отказ с перечнем незмапленных слотов).
+    WcsMapIncomplete,
     /// `coolant_mist_unrepresentable` — mist-spray-кода в словаре нет.
     CoolantMistUnrepresentable,
     /// `machine_frame_arc` — дуга в G53 не эмитится (ходы прямые).
@@ -163,6 +269,7 @@ impl HaasEmissionCondition {
         match self {
             HaasEmissionCondition::WcsSetHere => "wcs_set_here",
             HaasEmissionCondition::WcsDefinePOutsideL2Domain => "wcs_define_p_outside_l2_domain",
+            HaasEmissionCondition::WcsMapIncomplete => "wcs_map_incomplete",
             HaasEmissionCondition::CoolantMistUnrepresentable => "coolant_mist_unrepresentable",
             HaasEmissionCondition::MachineFrameArc => "machine_frame_arc",
             HaasEmissionCondition::MotionFeedNone => "motion_feed_none",
@@ -189,6 +296,9 @@ impl HaasEmissionCondition {
             HaasEmissionCondition::WcsSetHere => USEM,
             // Вне словаря цели: L2-домен Haas P0..P6 (COVERAGE §5.2).
             HaasEmissionCondition::WcsDefinePOutsideL2Domain => SYN,
+            // Неполная profile-мапа: целевой код незмапленного слота не
+            // определён — правило §5 (SYN).
+            HaasEmissionCondition::WcsMapIncomplete => SYN,
             // M07 = Shower (другой канал); mist-spray не представим.
             HaasEmissionCondition::CoolantMistUnrepresentable => USEM,
             // G53 ходы прямые (SPEC §5.3).
@@ -385,9 +495,22 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     emit_with_warnings(program, &mut sink).map(|out| out.text)
 }
 
-/// Эмиссия + warnings (потери метаданных при целевой эмиссии, COVERAGE §5.2).
+/// Эмиссия + warnings с ДЕФОЛТНЫМИ опциями (поведение до этапа 8;
+/// библиотечный emit и `HaasAdapter::emit` — байт-в-байт прежние).
 pub fn emit_with_warnings(
     program: &Program,
+    warnings: &mut Vec<String>,
+) -> Result<EmitOut, Vec<Diagnostic>> {
+    emit_with_profile(program, &HaasEmissionOpts::default(), warnings)
+}
+
+/// Эмиссия + warnings + профильные опции (этап 8, COVERAGE §5.2):
+/// program_end_style (M30/M02), allow_r_arcs (R-форма + notice), g59_map
+/// (G59.x → G154 Pn + notice «map применён, таблица подменена»).
+/// `opts = Default` ⇒ байт-в-байт поведение до этапа 8.
+pub fn emit_with_profile(
+    program: &Program,
+    opts: &HaasEmissionOpts,
     warnings: &mut Vec<String>,
 ) -> Result<EmitOut, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST) —
@@ -430,13 +553,14 @@ pub fn emit_with_warnings(
     }
     // Легальность эмиссии — против таблицы (COVERAGE §5.2), fail-fast; коды —
     // только из тотальных match-функций enum'ов (единый путь отказа, без
-    // паник «таблица и эмиттер разошлись» — INTERFACE-V0.2 §2.5).
+    // паник «таблица и эмиттер разошлись» — INTERFACE-V0.2 §2.5). Этап 8:
+    // расширенные слоты — с учётом g59_map (замапленные → G154 Pn).
     let table = crate::HaasAdapter::new().emission_legality();
-    let problems = validate_haas(program);
+    let problems = validate_haas(program, opts);
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut w = Writer::new(program);
+    let mut w = Writer::new(program, opts);
     w.run(&table, warnings)?;
     // Копия warnings в EmitOut — буфер вызывателя НЕ опустошается (и адаптер,
     // и тест читают свой Vec).
@@ -448,9 +572,46 @@ pub fn emit_with_warnings(
 
 /// Валидация легальности эмиссии (fail-fast, COVERAGE §5.2). Коды отказов —
 /// исключительтельно `cond.code()` (тотальный match; единый путь отказа).
-fn validate_haas(program: &Program) -> Vec<Diagnostic> {
+/// Этап 8: при включённой g59_map незмапленные расширенные слоты, встреченные
+/// в программе, дают ОДИН отказ с перечнем незмапленных (класс SYN — правило
+/// §5); мапа выключена — прежнее поведение (все 9 слотов представимы:
+/// p7..9 → G110–G112 + warning).
+fn validate_haas(program: &Program, opts: &HaasEmissionOpts) -> Vec<Diagnostic> {
     let mut v = Vec::new();
     let table = crate::HaasAdapter::new().emission_legality();
+    // Этап 8: слоты p7..9 без маппинга при включённой мапе — агрегация по
+    // всей программе (frame_preset + state.wcs опов).
+    let mut unmapped: Vec<&'static str> = Vec::new();
+    let note_wcs = |wcs: Wcs, unmapped: &mut Vec<&'static str>| {
+        if opts.map_on() && wcs_is_extended(wcs) {
+            let mapped = opts.g59_map.as_ref().and_then(|m| m.slot(wcs)).is_some();
+            if !mapped {
+                if let Some(name) = HaasG59Map::slot_name(wcs) {
+                    if !unmapped.contains(&name) {
+                        unmapped.push(name);
+                    }
+                }
+            }
+        }
+    };
+    if let Some(pr) = &program.frame_preset {
+        note_wcs(pr.wcs, &mut unmapped);
+    }
+    for op in &program.ops {
+        if let Some(st) = op_state(op) {
+            note_wcs(st.wcs, &mut unmapped);
+        }
+    }
+    if opts.map_on() && !unmapped.is_empty() {
+        unmapped.sort_unstable();
+        v.push(diag(
+            HaasEmissionCondition::WcsMapIncomplete.code(),
+            format!(
+                "wcs_map_incomplete: profile wcs_extended_map включена, но в программе есть слоты без маппинга: {} — эмиссия G154 Pn невозможна (дополните таблицу или выключите мапу; COVERAGE §5.2)",
+                unmapped.join(", ")
+            ),
+        ));
+    }
     // «Последний не-Raw оп = PEND» — Haas-хвост (Raw-subs после M30, §4.4)
     // не нарушает структуру; не-Raw опыт после PEND — нарушение.
     let mut last_is_end = true; // отсутствует не-Raw оп ⇒ handled end_count==0
@@ -581,6 +742,22 @@ fn op_src(op: &Op) -> &eid_core::ast::SrcSpan {
     }
 }
 
+/// Снапшот состояния опа (этап 8: агрегация расширенных слотов по всей
+/// программе в валидаторе g59_map).
+fn op_state(op: &Op) -> Option<&eid_core::ast::State> {
+    match op {
+        Op::Rapid { state, .. }
+        | Op::Linear { state, .. }
+        | Op::Arc { state, .. }
+        | Op::Dwell { state, .. }
+        | Op::ToolChange { state, .. }
+        | Op::ProgramStop { state, .. }
+        | Op::WcsDefine { state, .. }
+        | Op::WcsSetHere { state, .. } => Some(state),
+        Op::ProgramEnd { .. } | Op::Raw { .. } => None,
+    }
+}
+
 fn check_motion_state(
     v: &mut Vec<Diagnostic>,
     state: &eid_core::ast::State,
@@ -620,6 +797,10 @@ fn check_state_common(
 struct Writer<'a> {
     program: &'a Program,
     text: String,
+    // Профильные эмиссионные опции (этап 8; Default = поведение до этапа 8).
+    opts: HaasEmissionOpts,
+    // notice «map применён» — один на эмиссию (первое применение таблицы).
+    map_notice_done: bool,
     // Модальное состояние вывода (то, что увидит reparse).
     cur_wcs: Wcs,
     cur_plane: GCode,
@@ -630,7 +811,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(program: &'a Program) -> Self {
+    fn new(program: &'a Program, opts: &HaasEmissionOpts) -> Self {
         let cur_wcs = program
             .frame_preset
             .as_ref()
@@ -639,6 +820,8 @@ impl<'a> Writer<'a> {
         Self {
             program,
             text: String::new(),
+            opts: opts.clone(),
+            map_notice_done: false,
             cur_wcs,
             cur_plane: GCode::PlaneXY,
             cur_spindle: Spindle::Off,
@@ -653,9 +836,32 @@ impl<'a> Writer<'a> {
         self.text.push('\n');
     }
 
-    /// WCS-строка выбора: расширенный слот p7..9 → G110–G112 + warning
-    /// (зеркало W_WCS_EXTENDED).
-    fn wcs_line(&mut self, wcs: Wcs, warnings: &mut Vec<String>) {
+    /// WCS-строка выбора (этап 8): при включённой g59_map замапленный
+    /// расширенный слот → `G154 Pn` + ОДИН notice «map применён, таблица
+    /// подменена» на эмиссию (заменяет прежний warning wcs_extended_slot —
+    /// текст того говорит про G110–G112); без мапы — прежнее поведение
+    /// (G110–G112 + warning, приёмка этапа 3). Незмапленный слот при
+    /// включённой мапе — Err (fail-fast валидатором отсечён; защита полноты).
+    fn wcs_line(&mut self, wcs: Wcs, warnings: &mut Vec<String>) -> Result<(), Vec<Diagnostic>> {
+        if wcs_is_extended(wcs) && self.opts.map_on() {
+            let map = self.opts.g59_map.as_ref().expect("map_on ⇒ Some");
+            let p = map.slot(wcs).ok_or_else(|| {
+                vec![diag(
+                    HaasEmissionCondition::WcsMapIncomplete.code(),
+                    format!(
+                        "wcs_map_incomplete: слот {} без маппинга в profile wcs_extended_map (перечень незмапленных — в диагностике валидатора)",
+                        HaasG59Map::slot_name(wcs).unwrap_or("G59.x")
+                    ),
+                )]
+            })?;
+            if !self.map_notice_done {
+                warnings.push(haas_map_notice_text(map));
+                self.map_notice_done = true;
+            }
+            self.line(format!("G154 P{p}"));
+            self.cur_wcs = wcs;
+            return Ok(());
+        }
         let word = wcs_word(wcs);
         if wcs_is_extended(wcs) {
             warnings.push(
@@ -666,6 +872,7 @@ impl<'a> Writer<'a> {
         }
         self.line(word);
         self.cur_wcs = wcs;
+        Ok(())
     }
 
     fn run(
@@ -706,7 +913,7 @@ impl<'a> Writer<'a> {
         //    очистка запрещена (COVERAGE §5.2): сдвиг персистентен вне
         //    программы (Setting 129 `?`) — см. модуль-док.
         if let Some(pr) = &self.program.frame_preset {
-            self.wcs_line(pr.wcs, warnings);
+            self.wcs_line(pr.wcs, warnings)?;
             self.line(format!(
                 "G92 X{} Y{} Z{}",
                 fmt_num(pr.values.x.value()),
@@ -729,7 +936,9 @@ impl<'a> Writer<'a> {
         warnings: &mut Vec<String>,
     ) -> Result<(), Vec<Diagnostic>> {
         if state.wcs != self.cur_wcs {
-            self.wcs_line(state.wcs, warnings);
+            // Этап 8: расширенный слот при включённой g59_map → G154 Pn +
+            // notice «map применён» (один на эмиссию).
+            self.wcs_line(state.wcs, warnings)?;
         }
         if !spindle_eq(&state.spindle, &self.cur_spindle) {
             let line = match &state.spindle {
@@ -829,17 +1038,6 @@ impl<'a> Writer<'a> {
                 }
                 let f = self.feed_word(state, *sub, warnings)?;
                 let g = if *dir == Dir::Cw { "G2" } else { "G3" };
-                // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
-                // grbl/linuxcnc/fanuc; I/J/K literal X/Y/Z): ровно две
-                // in-plane оси, G18 → I+K, G19 → J+K, G17 → I+J.
-                let letter = ["I", "J", "K"];
-                let mut arc_words = String::new();
-                for ax in 0..3 {
-                    if ax == a0 || ax == a1 {
-                        arc_words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
-                    }
-                }
-                let arc_words = arc_words.trim_end().to_string();
                 // Полный круг (sweep=360°, pitch=0) — БЕЗ end-слов (`G2 I_ J_`
                 // — легальный Haas-формат, официальный ман; слова end==start
                 // перепарсер квантует в zero-length drop). Винтовой полный
@@ -847,6 +1045,41 @@ impl<'a> Writer<'a> {
                 // (in-plane наследуют старт). Частичная дуга — все три оси.
                 let full_turn = (sweep_deg.value() - 360.0).abs() <= 1e-6;
                 let helical_turn = full_turn && pitch.value().abs() > 1e-9;
+                // Слова дуги (этап 8): при profile-флаге allow_r_arcs
+                // (= emit-r-arcs; COVERAGE §5.2 «R — флаг профиля + notice»)
+                // дуга эмитится R-формой, иначе — IJK (EQUIVALENCE §4).
+                // Полные круги — ВСЕГДА IJK: R при совпадающих in-plane
+                // start/end неоднозначен (SPEC §6; R-полный круг — alarm).
+                let arc_words = if self.opts.allow_r_arcs && !full_turn {
+                    // Радиус = |центр − start| в плоскости дуги; знак R — по
+                    // sweep (соглашение ≤180°/>180°; парсер восстанавливает
+                    // центр и sweep из хорды и |R| — канонизатор arc_block).
+                    // R — 4dp.
+                    let rho = offs[a0].hypot(offs[a1]);
+                    let r_signed = if sweep_deg.value() > 180.0 { -rho } else { rho };
+                    warnings.push(format!(
+                        "arc: R-форма применена по профилю (allow-r-arcs = emit-r-arcs = true): R{} вместо IJK — та же дуга, центр пересчитывается из R (COVERAGE §5.2; EQUIVALENCE §4)",
+                        fmt_num(r_signed)
+                    ));
+                    format!("R{}", fmt_num(r_signed))
+                } else {
+                    if self.opts.allow_r_arcs && full_turn {
+                        warnings.push(
+                            "arc: полный круг 360° — R-форма неоднозначна (совпадающие in-plane start/end, SPEC §6); эмитится IJK даже при allow_r_arcs".into(),
+                        );
+                    }
+                    // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
+                    // grbl/linuxcnc/fanuc; I/J/K literal X/Y/Z): ровно две
+                    // in-plane оси, G18 → I+K, G19 → J+K, G17 → I+J.
+                    let letter = ["I", "J", "K"];
+                    let mut words = String::new();
+                    for ax in 0..3 {
+                        if ax == a0 || ax == a1 {
+                            words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
+                        }
+                    }
+                    words.trim_end().to_string()
+                };
                 let axis_letter = ["X", "Y", "Z"][_naxis];
                 let axes_part = if full_turn && !helical_turn {
                     String::new()
@@ -915,8 +1148,8 @@ impl<'a> Writer<'a> {
             Op::ProgramEnd { .. } => {
                 // Хвост M5/M9 НЕ эмитится (ruling COVERAGE §5; Haas M30 сам
                 // глушит + Setting 129 `?`). Дефолт M30 (Haas-конвенция);
-                // профиль M02 — этап 8.
-                self.line("M30");
+                // этап 8: profile program_end_style = "M02" → `M02`.
+                self.line(self.opts.program_end.word());
                 Ok(())
             }
             Op::WcsDefine {
@@ -1044,6 +1277,27 @@ fn slot_text(w: Wcs) -> &'static str {
         Wcs::G59_3 => "p9 (#9)",
         _ => "p7..9",
     }
+}
+
+/// Notice применения g59_map (этап 8, COVERAGE §5.2 profile-опция — «НЕ
+/// дефолт», аналогия golden_preset_no_bake): один на эмиссию, текст
+/// перечисляет всю применённую таблицу (детерминированный порядок
+/// G59.1/.2/.3).
+fn haas_map_notice_text(map: &HaasG59Map) -> String {
+    let mut entries = Vec::new();
+    for (name, p) in [
+        ("G59.1", map.g59_1),
+        ("G59.2", map.g59_2),
+        ("G59.3", map.g59_3),
+    ] {
+        if let Some(p) = p {
+            entries.push(format!("{name}→G154 P{p}"));
+        }
+    }
+    format!(
+        "wcs_extended_map: map применён, таблица WCS подменена профилем ({}) — G154 Pn = другая нумерация расширенных слотов (P1 = слот #7), таблица слота может иметь чужое происхождение origin — эквивалентность условна по таблицам станка (EQUIVALENCE §1.2; COVERAGE §5.2; НЕ дефолт — аналогия golden_preset_no_bake)",
+        entries.join(", ")
+    )
 }
 
 fn spindle_eq(a: &Spindle, b: &Spindle) -> bool {

@@ -41,7 +41,7 @@ use eid_haas::HaasAdapter;
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
 
-use crate::profile::{Limits, MachineProfile};
+use crate::profile::{Limits, MachineProfile, ProfileEmissionOpts, ProgramEndStyle};
 
 /// Имя канонического текстового формата EID (registry-имя EidTextAdapter).
 pub const EID_TEXT_DIALECT: &str = "eid-l1";
@@ -91,6 +91,28 @@ impl AnyAdapter {
         self.as_adapter().dialect_name()
     }
 
+    /// Этап 8: присоединить профильные эмиссионные опции. Механика проброса:
+    /// trait Adapter v0.2 ЗАМОРОЖЕН — `emit(&self, program)` профиль не
+    /// принимает (расширение trait = отдельное решение, молча не делается),
+    /// поэтому опции хранит ОБЁРТКА registry
+    /// (`FanucNamedAdapter`/`HaasNamedAdapter`, поле `emission_opts` +
+    /// `emit_with_opts` адаптера крейта). Цели grbl/linuxcnc/eid-l1 опции
+    /// не получают (COVERAGE не объявляет для них этих флагов; guard
+    /// диалекта — в `translate_text_with_profile`).
+    pub fn with_emission_opts(self, opts: Option<ProfileEmissionOpts>) -> Self {
+        match self {
+            AnyAdapter::Fanuc(mut a) => {
+                a.emission_opts = opts;
+                AnyAdapter::Fanuc(a)
+            }
+            AnyAdapter::Haas(mut a) => {
+                a.emission_opts = opts;
+                AnyAdapter::Haas(a)
+            }
+            other => other,
+        }
+    }
+
     fn as_adapter(&self) -> &dyn Adapter {
         match self {
             AnyAdapter::Grbl(a) => a,
@@ -120,16 +142,30 @@ impl AnyAdapter {
 /// warnings в буфер адаптера, паттерн Grbl); notices/warnings — те же
 /// буферы, забирать [`FanucNamedAdapter::take_notices`]/
 /// [`FanucNamedAdapter::take_warnings`].
+///
+/// Этап 8: [`ProfileEmissionOpts`] хранится В ОБЁРТКЕ (не в trait —
+/// Adapter v0.2 заморожен, расширение trait = отдельное решение);
+/// `Some(opts)` → `FanucAdapter::emit_with_opts`, None → прежний
+/// `emit` (байт-в-байт). Конструктор — [`FanucNamedAdapter::with_emission_opts`].
 #[derive(Debug, Default)]
 pub struct FanucNamedAdapter {
     inner: FanucAdapter,
+    emission_opts: Option<ProfileEmissionOpts>,
 }
 
 impl FanucNamedAdapter {
     pub fn new() -> Self {
         Self {
             inner: FanucAdapter::new(),
+            emission_opts: None,
         }
+    }
+
+    /// Этап 8: профильные эмиссионные опции (program_end_style /
+    /// allow_r_arcs / wcs_extended_map); None = дефолт (поведение до этапа 8).
+    pub fn with_emission_opts(mut self, opts: Option<ProfileEmissionOpts>) -> Self {
+        self.emission_opts = opts;
+        self
     }
 }
 
@@ -143,7 +179,10 @@ impl Adapter for FanucNamedAdapter {
     }
 
     fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
-        self.inner.emit(program)
+        match &self.emission_opts {
+            None => self.inner.emit(program),
+            Some(o) => self.inner.emit_with_opts(program, &fanuc_emission_opts(o)),
+        }
     }
 }
 
@@ -157,16 +196,29 @@ impl Adapter for FanucNamedAdapter {
 /// делегация (emit возвращает warnings в буфер адаптера, паттерн
 /// FanucNamedAdapter); notices/warnings — те же буферы, забирать
 /// [`HaasNamedAdapter::take_notices`]/[`HaasNamedAdapter::take_warnings`].
+///
+/// Этап 8: [`ProfileEmissionOpts`] в обёртке — механика идентична
+/// [`FanucNamedAdapter`] (trait v0.2 заморожен); конструктор
+/// [`HaasNamedAdapter::with_emission_opts`].
 #[derive(Debug, Default)]
 pub struct HaasNamedAdapter {
     inner: HaasAdapter,
+    emission_opts: Option<ProfileEmissionOpts>,
 }
 
 impl HaasNamedAdapter {
     pub fn new() -> Self {
         Self {
             inner: HaasAdapter::new(),
+            emission_opts: None,
         }
+    }
+
+    /// Этап 8: профильные эмиссионные опции; None = дефолт (поведение
+    /// до этапа 8).
+    pub fn with_emission_opts(mut self, opts: Option<ProfileEmissionOpts>) -> Self {
+        self.emission_opts = opts;
+        self
     }
 }
 
@@ -180,7 +232,74 @@ impl Adapter for HaasNamedAdapter {
     }
 
     fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
-        self.inner.emit(program)
+        match &self.emission_opts {
+            None => self.inner.emit(program),
+            Some(o) => self.inner.emit_with_opts(program, &haas_emission_opts(o)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProfileEmissionOpts → крейт-опции (этап 8): разбор таблицы
+// wcs_extended_map в структуру Pn-слотов. Значения уже проверены
+// MachineProfile::validate; защита от hand-конструируемых профилей (мимо
+// validate): невалидная запись = слот остаётся незамапленным → эмиссия
+// откажет с перечнем незмапленных (fail-closed).
+// ---------------------------------------------------------------------------
+
+/// `"G54.1 P<n>"` / `"G154 P<n>"` → n; иначе None.
+fn parse_map_p(value: &str, head: &str) -> Option<u32> {
+    let mut parts = value.split(' ');
+    let (h, p) = (parts.next()?, parts.next()?);
+    if parts.next().is_some() || h != head {
+        return None;
+    }
+    p.strip_prefix('P')?.parse::<u32>().ok()
+}
+
+fn fanuc_emission_opts(o: &ProfileEmissionOpts) -> eid_fanuc::emit::FanucEmissionOpts {
+    let mut map = eid_fanuc::emit::FanucG59Map::default();
+    for (k, v) in &o.wcs_extended_map {
+        let dst = match k.as_str() {
+            "G59.1" => &mut map.g59_1,
+            "G59.2" => &mut map.g59_2,
+            "G59.3" => &mut map.g59_3,
+            _ => continue,
+        };
+        if let Some(n) = parse_map_p(v, "G54.1") {
+            *dst = Some(n);
+        }
+    }
+    eid_fanuc::emit::FanucEmissionOpts {
+        program_end: match o.program_end_style {
+            ProgramEndStyle::M30 => eid_fanuc::emit::FanucProgramEnd::M30,
+            ProgramEndStyle::M02 => eid_fanuc::emit::FanucProgramEnd::M02,
+        },
+        allow_r_arcs: o.allow_r_arcs,
+        g59_map: if map.is_empty() { None } else { Some(map) },
+    }
+}
+
+fn haas_emission_opts(o: &ProfileEmissionOpts) -> eid_haas::emit::HaasEmissionOpts {
+    let mut map = eid_haas::emit::HaasG59Map::default();
+    for (k, v) in &o.wcs_extended_map {
+        let dst = match k.as_str() {
+            "G59.1" => &mut map.g59_1,
+            "G59.2" => &mut map.g59_2,
+            "G59.3" => &mut map.g59_3,
+            _ => continue,
+        };
+        if let Some(n) = parse_map_p(v, "G154") {
+            *dst = Some(n);
+        }
+    }
+    eid_haas::emit::HaasEmissionOpts {
+        program_end: match o.program_end_style {
+            ProgramEndStyle::M30 => eid_haas::emit::HaasProgramEnd::M30,
+            ProgramEndStyle::M02 => eid_haas::emit::HaasProgramEnd::M02,
+        },
+        allow_r_arcs: o.allow_r_arcs,
+        g59_map: if map.is_empty() { None } else { Some(map) },
     }
 }
 
@@ -492,6 +611,12 @@ pub fn translate_text(
 /// (#11) — при `profile.emit_preamble`. Библиотечные emit() адаптеров не
 /// меняются. `profile = None` → дефолтный профиль диалекта
 /// (лимиты COVERAGE §1.2 у всех дефолтов совпадают, emit_preamble = false).
+///
+/// Этап 8: эмиссионные флаги профиля (program_end_style / wcs_extended_map /
+/// emit_r_arcs = allow_r_arcs) пробрасываются в ЦЕЛЬ через обёртку registry
+/// (`with_emission_opts`; trait Adapter v0.2 заморожен). Guard диалекта:
+/// не-дефолтные флаги применимы только к цели своего диалекта — иначе отказ
+/// E_INVALID_INPUT (тихое игнорирование флага профиля запрещено).
 pub fn translate_text_with_profile(
     from: &str,
     to: &str,
@@ -511,6 +636,26 @@ pub fn translate_text_with_profile(
 
     let source = AnyAdapter::for_name(from)?;
     let target = AnyAdapter::for_name(to)?;
+
+    // Этап 8: проброс эмиссионных опций в цель (fanuc/haas) + guard диалекта.
+    let emission = profile.map(ProfileEmissionOpts::from_profile);
+    if let (Some(p), Some(o)) = (profile, &emission) {
+        if !o.is_default() && p.dialect.as_name() != target.name() {
+            return Err(TranslateError::Emit(vec![Diagnostic {
+                code: ErrorCode::InvalidInput,
+                stage: Stage::Emit,
+                src: None,
+                options: Vec::new(),
+                limit: None,
+                message: format!(
+                    "profile emission flags (program_end_style / wcs_extended_map / emit_r_arcs) объявлены для диалекта `{}`, но цель трансляции — `{}`: тихое игнорирование флага запрещено (флаги этапа 8 — fanuc/haas, COVERAGE §5.1/§5.2)",
+                    p.dialect.as_name(),
+                    target.name()
+                ),
+            }]));
+        }
+    }
+    let target = target.with_emission_opts(emission);
 
     let source_out = source.parse(src, file).map_err(TranslateError::Parse)?;
     let program = source_out.program;

@@ -527,6 +527,8 @@ fn legality_table_complete() {
     let all = [
         HaasEmissionCondition::WcsSetHere,
         HaasEmissionCondition::WcsDefinePOutsideL2Domain,
+        // Этап 8: неполная profile wcs_extended_map (незмапленный слот).
+        HaasEmissionCondition::WcsMapIncomplete,
         HaasEmissionCondition::CoolantMistUnrepresentable,
         HaasEmissionCondition::MachineFrameArc,
         HaasEmissionCondition::MotionFeedNone,
@@ -895,4 +897,293 @@ fn illegal_feed_none_and_end_invariants() {
     assert!(d
         .iter()
         .any(|x| x.code == HaasEmissionCondition::ArcNormalNonCanonical.code()));
+}
+
+// ===========================================================================
+// Этап 8 (agent C, emission-профили): профильные опции эмиссии Haas —
+// program_end M30/M02 (COVERAGE §5.2 «выбор профиля»), allow_r_arcs
+// (R-форма + notice на каждой R-дуге; дефолт false = всегда IJK),
+// g59_map (G59.x → G154 Pn + notice «map применён, таблица подменена»;
+// неполная мапа → отказ wcs_map_incomplete с перечнем незмапленных).
+// Опции входят через HaasAdapter::emit_with_opts (trait v0.2 заморожен);
+// Default = прежняя эмиссия байт-в-байт (мапа off: p7..9 → G110–G112 +
+// warning wcs_extended_slot — приёмка этапа 3 сохранена).
+// ===========================================================================
+
+// StartPoint уже в use-блоке выше (eid_core::ast).
+use eid_haas::emit::{emit_with_profile, HaasEmissionOpts, HaasG59Map, HaasProgramEnd};
+
+/// Эмиссия hand-программы с опциями (text + warnings).
+fn emit_with_opts_haas(p: &Program, opts: &HaasEmissionOpts) -> (String, Vec<String>) {
+    let mut w = Vec::new();
+    let out = emit_with_profile(p, opts, &mut w).expect("emit_with_profile ok");
+    (out.text, out.warnings)
+}
+
+/// CCW 90° (центр (10,0), старт (0,0), end (10,-10), R = +10) и CCW 270°
+/// (старт (10,-10), тот же центр (I0 J10 — инкремент от старта), end (0,0),
+/// R = −10 — знак по sweep > 180°). G61 явно — без path-mode value shift.
+fn two_arcs_program_haas() -> Program {
+    parse_haas(
+        "G21 G90 G94 G17;\nF100.0;\nG61;\nG0 X0. Y0. Z5.;\nG3 X10. Y-10. I10. J0.;\nG3 X0. Y0. I0. J10.;\nM30;\n",
+    )
+}
+
+#[test]
+fn stage8_default_opts_byte_identical_to_plain_emit() {
+    let p = two_arcs_program_haas();
+    let plain = HaasAdapter::new().emit(&p).expect("emit ok").text;
+    let (with_default, _) = emit_with_opts_haas(&p, &HaasEmissionOpts::default());
+    assert_eq!(
+        plain, with_default,
+        "Default-опции = прежняя эмиссия байт-в-байт"
+    );
+}
+
+#[test]
+fn stage8_program_end_m02() {
+    // COVERAGE §5.2: M30 дефолт (Haas-конвенция, reset-семантика) vs M02 —
+    // выбор профиля.
+    let p = parse_haas("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nM30;\n");
+    let (m30, _) = emit_with_opts_haas(&p, &HaasEmissionOpts::default());
+    assert!(m30.trim_end().ends_with("M30"), "{m30}");
+    let opts = HaasEmissionOpts {
+        program_end: HaasProgramEnd::M02,
+        ..HaasEmissionOpts::default()
+    };
+    let (m02, _) = emit_with_opts_haas(&p, &opts);
+    assert!(
+        m02.trim_end().ends_with("M02") && !m02.contains("M30"),
+        "{m02}"
+    );
+    let (m02_again, _) = emit_with_opts_haas(&p, &opts);
+    assert_eq!(m02, m02_again, "детерминизм");
+}
+
+#[test]
+fn stage8_r_arcs_false_ijk_true_r_with_notice() {
+    let p = two_arcs_program_haas();
+    // false (дефолт) = всегда IJK.
+    let (ijk, _) = emit_with_opts_haas(&p, &HaasEmissionOpts::default());
+    assert!(ijk.contains("I10.0000") && ijk.contains("J0.0000"), "{ijk}");
+    assert!(!ijk.contains(" R"), "{ijk}");
+    // true = R-форма + notice на КАЖДОЙ R-дуге (COVERAGE §5.2).
+    let opts = HaasEmissionOpts {
+        allow_r_arcs: true,
+        ..HaasEmissionOpts::default()
+    };
+    let (r_text, w) = emit_with_opts_haas(&p, &opts);
+    assert!(r_text.contains("R10.0000"), "{r_text}");
+    assert!(!r_text.contains("I10.0000"), "{r_text}");
+    let notices = w.iter().filter(|s| s.contains("R-форма применена")).count();
+    assert_eq!(notices, 2, "notice на каждой R-дуге: {w:?}");
+    assert!(r_text.contains(" R10.0000"), "90° → R>0: {r_text}");
+    assert!(r_text.contains(" R-10.0000"), "270° → R<0: {r_text}");
+}
+
+#[test]
+fn stage8_r_arcs_full_circle_stays_ijk() {
+    // Полный круг — ВСЕГДА IJK даже при allow_r_arcs (R при start==end
+    // неоднозначен, SPEC §6) + notice про fallback.
+    let p = parse_haas("G21 G90 G94 G17;\nF100.0;\nG0 X5. Y0. Z5.;\nG2 I-5. J0. F100.;\nM30;\n");
+    let opts = HaasEmissionOpts {
+        allow_r_arcs: true,
+        ..HaasEmissionOpts::default()
+    };
+    let (text, w) = emit_with_opts_haas(&p, &opts);
+    assert!(text.contains("I-5.0000"), "полный круг → IJK: {text}");
+    assert!(!text.contains(" R"), "{text}");
+    assert!(
+        w.iter().any(|s| s.contains("полный круг 360°")),
+        "notice про IJK-fallback: {w:?}"
+    );
+}
+
+#[test]
+fn stage8_r_roundtrip_ast_and_semantic_diff() {
+    // Требование этапа 8: parse(R-файл) ≡ AST (R → центр-пересчёт) —
+    // semantic_diff с IJK-вариантом = 0 (та же дуга).
+    let ad = HaasAdapter::new();
+    let ast_ijk = two_arcs_program_haas();
+    let opts = HaasEmissionOpts {
+        allow_r_arcs: true,
+        ..HaasEmissionOpts::default()
+    };
+    let (r_text, _) = emit_with_opts_haas(&ast_ijk, &opts);
+    let ast_r = ad
+        .parse(&r_text, "rt.ngc")
+        .expect("parse R-текста ok")
+        .program;
+    let (ijk_text, _) = emit_with_opts_haas(&ast_ijk, &HaasEmissionOpts::default());
+    let ast_ijk_re = ad
+        .parse(&ijk_text, "rt.ngc")
+        .expect("parse IJK-текста ok")
+        .program;
+    let d = semantic_diff(&ast_r, &ast_ijk_re, &DiffConfig::default());
+    assert!(d.is_empty(), "R ≡ IJK (та же дуга): {d:?}");
+    let arcs = |p: &Program| -> Vec<(f64, f64, f64, f64)> {
+        p.ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Arc {
+                    center, sweep_deg, ..
+                } => Some((
+                    center.x.value(),
+                    center.y.value(),
+                    center.z.value(),
+                    sweep_deg.value(),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    let a = arcs(&ast_ijk);
+    let b = arcs(&ast_r);
+    assert_eq!(a.len(), 2);
+    for (l, r) in a.iter().zip(b.iter()) {
+        for (lv, rv, name) in [
+            (l.0, r.0, "center.x"),
+            (l.1, r.1, "center.y"),
+            (l.2, r.2, "center.z"),
+            (l.3, r.3, "sweep"),
+        ] {
+            assert!(
+                (lv - rv).abs() < 1e-9,
+                "{name}: IJK {lv} vs R-пересчёт {rv}"
+            );
+        }
+    }
+    let d = semantic_diff(&ast_ijk, &ast_r, &DiffConfig::default());
+    assert!(d.is_empty(), "parse(R) ≡ исходный AST: {d:?}");
+}
+
+#[test]
+fn stage8_wcs_map_off_default_unchanged_g110() {
+    // Мапа выключена (дефолт) = приёмка этапа 3: p7 → G110 + warning
+    // wcs_extended_slot; байт-равно plain emit.
+    let p = hand_program(vec![Op::Rapid {
+        start: StartPoint::Unknown,
+        end: pt(1.0, 1.0, 1.0),
+        state: state(Wcs::G59_1),
+        src: src_span(),
+        sub: None,
+    }]);
+    let (text, w) = emit_with_opts_haas(&p, &HaasEmissionOpts::default());
+    assert!(text.contains("G110"), "{text}");
+    assert!(w.iter().any(|s| s.contains("wcs_extended_slot")), "{w:?}");
+    let plain = HaasAdapter::new().emit(&p).expect("emit ok");
+    assert_eq!(plain.text, text);
+    assert_eq!(plain.warnings, w);
+}
+
+#[test]
+fn stage8_wcs_map_on_g154_pn_notice_once() {
+    // Мапа включена → G154 Pn + notice «map применён, таблица подменена»
+    // РОВНО ОДИН раз на эмиссию (НЕ дефолт — аналогия golden_preset_no_bake).
+    let p = hand_program(vec![
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end: pt(1.0, 1.0, 1.0),
+            state: state(Wcs::G59_1),
+            src: src_span(),
+            sub: None,
+        },
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end: pt(2.0, 2.0, 2.0),
+            state: state(Wcs::G59_2),
+            src: src_span(),
+            sub: None,
+        },
+    ]);
+    let opts = HaasEmissionOpts {
+        g59_map: Some(HaasG59Map {
+            g59_1: Some(1),
+            g59_2: Some(2),
+            g59_3: None,
+        }),
+        ..HaasEmissionOpts::default()
+    };
+    let (text, w) = emit_with_opts_haas(&p, &opts);
+    assert!(text.contains("G154 P1"), "{text}");
+    assert!(text.contains("G154 P2"), "{text}");
+    assert!(!text.contains("G110") && !text.contains("G111"), "{text}");
+    let notices: Vec<&String> = w.iter().filter(|s| s.contains("map применён")).collect();
+    assert_eq!(notices.len(), 1, "notice один на эмиссию: {w:?}");
+    assert!(
+        notices[0].contains("G59.1→G154 P1") && notices[0].contains("G59.2→G154 P2"),
+        "notice перечисляет таблицу: {}",
+        notices[0]
+    );
+}
+
+#[test]
+fn stage8_wcs_map_incomplete_refusal_lists_unmapped() {
+    // Неполная мапа: G59.1 замаплен, G59.2 нет, в программе есть оба →
+    // ОДИН отказ wcs_map_incomplete (SYN) с перечнем незмапленных.
+    let p = hand_program(vec![
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end: pt(1.0, 1.0, 1.0),
+            state: state(Wcs::G59_1),
+            src: src_span(),
+            sub: None,
+        },
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end: pt(2.0, 2.0, 2.0),
+            state: state(Wcs::G59_2),
+            src: src_span(),
+            sub: None,
+        },
+    ]);
+    let opts = HaasEmissionOpts {
+        g59_map: Some(HaasG59Map {
+            g59_1: Some(1),
+            g59_2: None,
+            g59_3: None,
+        }),
+        ..HaasEmissionOpts::default()
+    };
+    let err = HaasAdapter::new().emit_with_opts(&p, &opts);
+    let Err(d) = err else {
+        panic!("ожидался отказ")
+    };
+    assert_eq!(d[0].code, ErrorCode::UnsupportedSyntax);
+    assert!(
+        d[0].message.contains("wcs_map_incomplete") && d[0].message.contains("G59.2"),
+        "перечень незмапленных: {d:?}"
+    );
+}
+
+#[test]
+fn stage8_wcs_map_frame_preset_mapped() {
+    // frame_preset.wcs = расширенный слот: мапа включена → G154 P1 первым
+    // блоком + notice (вместо G110 + wcs_extended_slot).
+    let mut p = hand_program(vec![Op::Rapid {
+        start: StartPoint::Unknown,
+        end: pt(1.0, 1.0, 1.0),
+        state: state(Wcs::G54),
+        src: src_span(),
+        sub: None,
+    }]);
+    p.frame_preset = Some(eid_core::ast::FramePreset {
+        wcs: Wcs::G59_1,
+        values: pt(1.0, 2.0, 3.0),
+    });
+    let opts = HaasEmissionOpts {
+        g59_map: Some(HaasG59Map {
+            g59_1: Some(1),
+            g59_2: None,
+            g59_3: None,
+        }),
+        ..HaasEmissionOpts::default()
+    };
+    let (text, w) = emit_with_opts_haas(&p, &opts);
+    assert!(text.contains("G154 P1\nG92 X"), "{text}");
+    assert!(w.iter().any(|s| s.contains("map применён")), "{w:?}");
+    assert!(
+        !w.iter().any(|s| s.contains("wcs_extended_slot")),
+        "мапленный слот не дублирует старый warning: {w:?}"
+    );
 }

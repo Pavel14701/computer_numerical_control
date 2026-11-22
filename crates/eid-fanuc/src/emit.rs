@@ -30,8 +30,11 @@
 //!  6. дуги: плоскость из канонической нормали (+Z→G17, +Y→G18, +X→G19);
 //!     смена плоскости — отдельной строкой; центр — ТОЛЬКО in-plane пара
 //!     I/J/K (G17→I+J, G18→I+K, G19→J+K; I/J/K literal X/Y/Z), инкремент
-//!     от старта (G91.1 в заголовке); R НЕ эмитится никогда (EQUIVALENCE §4;
-//!     профиль-флаг R+notice — этап 8); **полный круг (sweep=360°, pitch=0)
+//!     от старта (G91.1 в заголовке); R НЕ эмитится при дефолтных опциях
+//!     (EQUIVALENCE §4); этап 8: profile-флаг allow_r_arcs (= emit-r-arcs)
+//!     включает R-форму + notice на каждой R-дуге (COVERAGE §5.1), полные
+//!     круги — всегда IJK (R при start==end неоднозначен, SPEC §6);
+//!     **полный круг (sweep=360°, pitch=0)
 //!     БЕЗ end-слов** (`G2 I_ J_` — легальный Fanuc-формат; слова end==start
 //!     при перепарсе квантуются в zero-length drop); винтовой полный оборот
 //!     (pitch≠0) — с end-словом вне-плоскостной оси; частичная дуга — все
@@ -41,10 +44,15 @@
 //!     иначе sub-ms остаток → **X-форма** (`G4 X0.0005` — Fanuc X принимает
 //!     float-секунды).
 //!  8. tool_change → `T## M06` в одном блоке (Fanuc-идиома); STOP → M0/M1;
-//!     PEND → `M30` (дефолт, Fanuc-конвенция rewind; профиль M02 — этап 8);
+//!     PEND → `M30` (дефолт, Fanuc-конвенция rewind; этап 8: профиль
+//!     program_end_style = "M02" → `M02`, COVERAGE §5.1);
 //!     WCS_DEFINE → `G10 L2 P<n> X_ Y_ Z_`; **WCS_SET_HERE → отказ
 //!     E_UNSUPPORTED_SEMANTICS** (Fanuc L20 = запись G54.1 Pn — другое;
-//!     честный отказ, COVERAGE §5.1 ловушка №3).
+//!     честный отказ, COVERAGE §5.1 ловушка №3). Этап 8: расширенные слоты
+//!     G59.x при profile wcs_extended_map → `G54.1 Pn` + notice «map применён,
+//!     таблица подменена» (НЕ дефолт, аналогия golden_preset_no_bake);
+//!     без мапы — прежний отказ E_UNSUPPORTED_SYNTAX; неполная мапа → отказ
+//!     с перечнем незмапленных слотов.
 //!
 //! Хвост M5/M9 перед program_end НЕ эмитится (ruling COVERAGE §5: AST не
 //! хранит пост-конечное состояние; Fanuc M30 сам глушит шпиндель/СОЖ).
@@ -77,6 +85,103 @@ use crate::state::{plane_axes, GCode};
 pub struct EmitOut {
     pub text: String,
     pub warnings: Vec<String>,
+}
+
+// ===========================================================================
+// Профильные эмиссионные опции (этап 8; COVERAGE §5.1 «дефолт / выбор
+// профиля»). Trait Adapter v0.2 ЗАМОРОЖЕН — emit(&self, program) профиль не
+// принимает; опции входят через обёртку registry
+// (eid-integration FanucNamedAdapter хранит Option<ProfileEmissionOpts>,
+// конструктор with_emission_opts) и вызывают [`emit_with_profile`].
+// Default = поведение до этапа 8 (байт-в-байт: золотовые тексты целы).
+// ===========================================================================
+
+/// Стиль program_end (COVERAGE §5.1: «M30 дефолт, Fanuc-конвенция» vs M02 —
+/// выбор профиля). Дефолт — [`FanucProgramEnd::M30`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FanucProgramEnd {
+    /// `M30` — rewind + reset-семантика (глушит шпиндель/СОЖ).
+    #[default]
+    M30,
+    /// `M02` — исторический конец программы (легален в словаре Fanuc).
+    M02,
+}
+
+impl FanucProgramEnd {
+    /// Слово эмиссии.
+    pub fn word(self) -> &'static str {
+        match self {
+            FanucProgramEnd::M30 => "M30",
+            FanucProgramEnd::M02 => "M02",
+        }
+    }
+}
+
+/// Таблица маппинга расширенных WCS (этап 8, COVERAGE §5.1 profile-опция
+/// «map G59.x → G54.1 Pn» с notice — НЕ дефолт, аналогия golden_preset_no_bake:
+/// G54.1 — другая таблица с чужим происхождением origin). None (дефолт) =
+/// текущее поведение: расширенные слоты (G59.1/.2/.3) → отказ
+/// E_UNSUPPORTED_SYNTAX.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FanucG59Map {
+    /// `"G59.1" = "G54.1 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_1: Option<u32>,
+    /// `"G59.2" = "G54.1 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_2: Option<u32>,
+    /// `"G59.3" = "G54.1 P<n>"` → Some(n); None = слот не замаплен.
+    pub g59_3: Option<u32>,
+}
+
+impl FanucG59Map {
+    /// Мапа пуста (ни один слот не замаплен)?
+    pub fn is_empty(&self) -> bool {
+        self.g59_1.is_none() && self.g59_2.is_none() && self.g59_3.is_none()
+    }
+
+    /// Pn слота; None = слот не замаплен (неполная мапа).
+    fn slot(&self, w: Wcs) -> Option<u32> {
+        match w {
+            Wcs::G59_1 => self.g59_1,
+            Wcs::G59_2 => self.g59_2,
+            Wcs::G59_3 => self.g59_3,
+            _ => None,
+        }
+    }
+
+    /// Имя слота в синтаксисе источника (для диагностики).
+    fn slot_name(w: Wcs) -> Option<&'static str> {
+        match w {
+            Wcs::G59_1 => Some("G59.1"),
+            Wcs::G59_2 => Some("G59.2"),
+            Wcs::G59_3 => Some("G59.3"),
+            _ => None,
+        }
+    }
+}
+
+/// Профильные эмиссионные опции Fanuc (этап 8). [`FanucEmissionOpts::default()`]
+/// эквивалентен поведению до этапа 8; библиотечный [`emit`] и
+/// `FanucAdapter::emit` используют именно его.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FanucEmissionOpts {
+    /// COVERAGE §5.1 program_end: M30 (дефолт) | M02 — выбор профиля.
+    pub program_end: FanucProgramEnd,
+    /// true → дуги эмитятся R-формой + notice на каждой R-дуге (COVERAGE §5.1
+    /// «R — profile-флаг + notice», EQUIVALENCE §4); false (дефолт) = всегда
+    /// IJK. Полные круги (sweep=360°) — ВСЕГДА IJK даже при true: R при
+    /// совпадающих in-plane start/end неоднозначен (SPEC §6; R-полный круг —
+    /// alarm контроллера).
+    pub allow_r_arcs: bool,
+    /// None = мапа выключена (текущее поведение); Some = таблица применена
+    /// (эмиссия G54.1 Pn + notice «map применён, таблица подменена»).
+    pub g59_map: Option<FanucG59Map>,
+}
+
+impl FanucEmissionOpts {
+    /// Мапа применена (Some и непуста)?
+    fn map_on(&self) -> bool {
+        self.g59_map.as_ref().is_some_and(|m| !m.is_empty())
+    }
 }
 
 // ===========================================================================
@@ -313,9 +418,22 @@ pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
     emit_with_warnings(program, &mut sink).map(|out| out.text)
 }
 
-/// Эмиссия + warnings (потери метаданных при целевой эмиссии, COVERAGE §5.1).
+/// Эмиссия + warnings с ДЕФОЛТНЫМИ опциями (поведение до этапа 8;
+/// библиотечный emit и `FanucAdapter::emit` — байт-в-байт прежние).
 pub fn emit_with_warnings(
     program: &Program,
+    warnings: &mut Vec<String>,
+) -> Result<EmitOut, Vec<Diagnostic>> {
+    emit_with_profile(program, &FanucEmissionOpts::default(), warnings)
+}
+
+/// Эмиссия + warnings + профильные опции (этап 8, COVERAGE §5.1):
+/// program_end_style (M30/M02), allow_r_arcs (R-форма + notice), g59_map
+/// (G59.x → G54.1 Pn + notice «map применён, таблица подменена»).
+/// `opts = Default` ⇒ байт-в-байт поведение до этапа 8.
+pub fn emit_with_profile(
+    program: &Program,
+    opts: &FanucEmissionOpts,
     warnings: &mut Vec<String>,
 ) -> Result<EmitOut, Vec<Diagnostic>> {
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST) —
@@ -357,13 +475,14 @@ pub fn emit_with_warnings(
             ),
         )]);
     }
-    // Легальность эмиссии — против таблицы (COVERAGE §5.1), fail-fast.
+    // Легальность эмиссии — против таблицы (COVERAGE §5.1), fail-fast;
+    // wcs-домен — с учётом g59_map (этап 8: замапленные G59.x легальны).
     let table = crate::FanucAdapter::new().emission_legality();
-    let problems = validate_fanuc(&table, program);
+    let problems = validate_fanuc(&table, program, opts);
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut w = Writer::new(program);
+    let mut w = Writer::new(program, opts);
     w.run(&table, warnings)?;
     // Копия warnings в EmitOut — буфер вызывателя НЕ опустошается (и адаптер,
     // и тест читают свой Vec).
@@ -375,11 +494,37 @@ pub fn emit_with_warnings(
 
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5.1).
 /// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
-fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagnostic> {
+/// Этап 8: расширенные слоты проверяются с учётом g59_map — замапленные
+/// легальны (эмиссия G54.1 Pn); при включённой мапе незмапленные слоты,
+/// встреченные в программе, дают ОДИН отказ с перечнем незмапленных
+/// (неполная мапа); мапа выключена — прежний per-slot отказ SYNTAX.
+fn validate_fanuc(
+    table: &FanucEmissionLegality,
+    program: &Program,
+    opts: &FanucEmissionOpts,
+) -> Vec<Diagnostic> {
     // v0.2 волна 4 (§2.5 В1): код отказа — тотальный `cond.code()` на enum;
     // таблица — данные для интроспекции/тестов. Паник-точек на emit-пути нет.
     let code = |cond: FanucEmissionCondition| cond.code();
     let mut v = Vec::new();
+    // Этап 8: расширенные слоты без маппинга при включённой g59_map —
+    // собираются по всей программе, ОДИН отказ с перечнем в конце (агрегация
+    // даёт полный список незмапленных сразу, а не по одному за прогон).
+    let mut unmapped: Vec<&'static str> = Vec::new();
+    // frame_preset.wcs — тоже использование слота (writer эмитит выборку
+    // первым блоком; при map-off отказ — прежний writer-путь с его текстом).
+    if let Some(pr) = &program.frame_preset {
+        if wcs_word(pr.wcs).is_none() && opts.map_on() {
+            let mapped = opts.g59_map.as_ref().and_then(|m| m.slot(pr.wcs)).is_some();
+            if !mapped {
+                if let Some(name) = FanucG59Map::slot_name(pr.wcs) {
+                    if !unmapped.contains(&name) {
+                        unmapped.push(name);
+                    }
+                }
+            }
+        }
+    }
     // «Последний не-Raw оп = PEND» — Fanuc-хвост (Raw-subs после M30, ruling
     // 1) не нарушает структуру; не-Raw опыт после PEND — нарушение.
     let mut last_is_end = true; // отсутствует не-Raw оп ⇒ handled end_count==0
@@ -419,7 +564,7 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
                 if let Err(m) = plane_of(&n) {
                     v.push(diag_src(code(FanucEmissionCondition::ArcNormalNonCanonical), m, src));
                 }
-                check_motion_state(table, &mut v, state, src, true);
+                check_motion_state(table, &mut v, state, src, true, opts, &mut unmapped);
                 if state.frame == Frame::Machine {
                     v.push(diag_src(
                         code(FanucEmissionCondition::MachineFrameArc),
@@ -428,13 +573,17 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
                     ));
                 }
             }
-            Op::Linear { state, src, .. } => check_motion_state(table, &mut v, state, src, true),
-            Op::Rapid { state, src, .. } => check_motion_state(table, &mut v, state, src, false),
+            Op::Linear { state, src, .. } => {
+                check_motion_state(table, &mut v, state, src, true, opts, &mut unmapped)
+            }
+            Op::Rapid { state, src, .. } => {
+                check_motion_state(table, &mut v, state, src, false, opts, &mut unmapped)
+            }
             Op::Dwell { state, src, .. } | Op::ProgramStop { state, src, .. } => {
-                check_wcs(table, &mut v, &state.wcs, src);
+                check_wcs(table, &mut v, &state.wcs, src, opts, &mut unmapped);
             }
             Op::WcsDefine { p, state, src, .. } => {
-                check_wcs(table, &mut v, &state.wcs, src);
+                check_wcs(table, &mut v, &state.wcs, src, opts, &mut unmapped);
                 if !(1..=6).contains(p) {
                     v.push(diag_src(
                         code(FanucEmissionCondition::WcsDefinePOutsideG54G59),
@@ -458,6 +607,19 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
             }
             _ => {}
         }
+    }
+    // Неполная мапа (этап 8): слоты, встреченные в программе без записи в
+    // таблице — один отказ с перечнем незмапленных (класс — SYN, правило §5:
+    // целевой код вне словаря Fanuc; wcs_outside_g54_g59-условие таблицы).
+    if opts.map_on() && !unmapped.is_empty() {
+        unmapped.sort_unstable();
+        v.push(diag(
+            FanucEmissionCondition::WcsOutsideG54G59.code(),
+            format!(
+                "wcs_map_incomplete: profile wcs_extended_map включена, но в программе есть слоты без маппинга: {} — эмиссия G54.1 Pn невозможна (дополните таблицу или выключите мапу; COVERAGE §5.1)",
+                unmapped.join(", ")
+            ),
+        ));
     }
     // Инварианты §3 (енды): отсутствует / дубликат / не последний.
     let end_count = program
@@ -507,6 +669,8 @@ fn check_motion_state(
     state: &eid_core::ast::State,
     src: &eid_core::ast::SrcSpan,
     need_feed: bool,
+    opts: &FanucEmissionOpts,
+    unmapped: &mut Vec<&'static str>,
 ) {
     if need_feed && state.feed.is_none() {
         v.push(diag_src(
@@ -515,19 +679,37 @@ fn check_motion_state(
             src,
         ));
     }
-    check_wcs(_table, v, &state.wcs, src);
+    check_wcs(_table, v, &state.wcs, src, opts, unmapped);
 }
 
+/// WCS-домен эмиссии (этап 8): мапа выключена → прежний per-slot отказ
+/// SYNTAX; мапа включена → замапленные слоты легальны (writer эмитит
+/// G54.1 Pn + notice), незмапленные собираются в `unmapped` для агрегированного
+/// отказа с перечнем.
 fn check_wcs(
     _table: &FanucEmissionLegality,
     v: &mut Vec<Diagnostic>,
     wcs: &Wcs,
     src: &eid_core::ast::SrcSpan,
+    opts: &FanucEmissionOpts,
+    unmapped: &mut Vec<&'static str>,
 ) {
-    if wcs_word(*wcs).is_none() {
+    if wcs_word(*wcs).is_some() {
+        return;
+    }
+    if opts.map_on() {
+        let mapped = opts.g59_map.as_ref().and_then(|m| m.slot(*wcs)).is_some();
+        if !mapped {
+            if let Some(name) = FanucG59Map::slot_name(*wcs) {
+                if !unmapped.contains(&name) {
+                    unmapped.push(name);
+                }
+            }
+        }
+    } else {
         v.push(diag_src(
             FanucEmissionCondition::WcsOutsideG54G59.code(),
-            "wcs_outside_g54_g59: state.wcs = G59.1/.2/.3 — в словаре Fanuc кодов нет (COVERAGE §5.1; G54.1 — другая таблица; профиль-маппинг — этап 8, НЕ дефолт)",
+            "wcs_outside_g54_g59: state.wcs = G59.1/.2/.3 — в словаре Fanuc кодов нет (COVERAGE §5.1; G54.1 — другая таблица с чужим происхождением; profile-опция wcs_extended_map выключена — подмена таблицы без notice запрещена)",
             src,
         ));
     }
@@ -540,6 +722,10 @@ fn check_wcs(
 struct Writer<'a> {
     program: &'a Program,
     text: String,
+    // Профильные эмиссионные опции (этап 8; Default = поведение до этапа 8).
+    opts: FanucEmissionOpts,
+    // notice «map применён» — один на эмиссию (первое применение таблицы).
+    map_notice_done: bool,
     // Модальное состояние вывода (то, что увидит reparse).
     cur_wcs: Wcs,
     cur_plane: GCode,
@@ -550,7 +736,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(program: &'a Program) -> Self {
+    fn new(program: &'a Program, opts: &FanucEmissionOpts) -> Self {
         let cur_wcs = program
             .frame_preset
             .as_ref()
@@ -559,6 +745,8 @@ impl<'a> Writer<'a> {
         Self {
             program,
             text: String::new(),
+            opts: opts.clone(),
+            map_notice_done: false,
             cur_wcs,
             cur_plane: GCode::PlaneXY,
             cur_spindle: Spindle::Off,
@@ -571,6 +759,46 @@ impl<'a> Writer<'a> {
     fn line(&mut self, s: impl Into<String>) {
         self.text.push_str(&s.into());
         self.text.push('\n');
+    }
+
+    /// WCS-слово эмиссии с учётом g59_map (этап 8). Нативные G54–G59 — как
+    /// раньше (без notice); расширенный слот при включённой мапе — `G54.1 Pn`
+    /// с ОДНИМ notice «map применён, таблица подменена» на эмиссию (аналогия
+    /// golden_preset_no_bake: подмена таблицы WCS громкая). Незмапленный —
+    /// Err (fail-fast валидатором уже отсечён; здесь защита полноты).
+    fn wcs_emit_word(
+        &mut self,
+        wcs: Wcs,
+        warnings: &mut Vec<String>,
+    ) -> Result<String, Vec<Diagnostic>> {
+        if let Some(word) = wcs_word(wcs) {
+            return Ok(word.to_string());
+        }
+        let map = match self.opts.g59_map.as_ref() {
+            Some(m) if !m.is_empty() => m,
+            // map-off: прежний текст отказа (валидатор дал per-slot diag с
+            // каноническим условием; writer-ветка — защита полноты).
+            _ => {
+                return Err(vec![diag(
+                FanucEmissionCondition::WcsOutsideG54G59.code(),
+                "state.wcs вне словаря Fanuc — wcs-слово не эмитится (валидатор отсекает ранее)",
+            )])
+            }
+        };
+        let p = map.slot(wcs).ok_or_else(|| {
+            vec![diag(
+                FanucEmissionCondition::WcsOutsideG54G59.code(),
+                format!(
+                    "wcs_map_incomplete: слот {} без маппинга в profile wcs_extended_map (валидатор отсекает ранее — перечень незмапленных в его диагностике)",
+                    FanucG59Map::slot_name(wcs).unwrap_or("G59.x")
+                ),
+            )]
+        })?;
+        if !self.map_notice_done {
+            warnings.push(map_notice_text(map));
+            self.map_notice_done = true;
+        }
+        Ok(format!("G54.1 P{p}"))
     }
 
     fn run(
@@ -607,15 +835,22 @@ impl<'a> Writer<'a> {
                 }
             }
         }
-        // 3. frame_preset: выборка WCS, затем G92 первым блоком (EQUIVALENCE
-        //    §1.4); без запекания в G10. G92-hygiene (G92.1 первым блоком) —
-        //    флаг профиля, НЕ дефолт — этап 8 (COVERAGE §5.1).
+        // 3. frame_preset: выборка WCS (этап 8: расширенный слот при
+        //    включённой g59_map → G54.1 Pn + notice), затем G92 первым
+        //    блоком (EQUIVALENCE §1.4); без запекания в G10. G92-hygiene
+        //    (G92.1 первым блоком) — флаг профиля, НЕ дефолт — этап 8
+        //    (COVERAGE §5.1).
         if let Some(pr) = &self.program.frame_preset {
-            let w = wcs_word(pr.wcs).ok_or_else(|| {
-                vec![diag(
-                    FanucEmissionCondition::WcsOutsideG54G59.code(),
-                    "frame_preset.wcs вне словаря Fanuc (G59.x) — кодов нет (COVERAGE §5.1)",
-                )]
+            let w = self.wcs_emit_word(pr.wcs, warnings).map_err(|mut d| {
+                // Сохранение прежнего текста отказа для map-off (письмо
+                // диагностик — writer-путь, COVERAGE §5.1).
+                if !self.opts.map_on() {
+                    d = vec![diag(
+                        FanucEmissionCondition::WcsOutsideG54G59.code(),
+                        "frame_preset.wcs вне словаря Fanuc (G59.x) — кодов нет (COVERAGE §5.1)",
+                    )];
+                }
+                d
             })?;
             self.line(w);
             self.line(format!(
@@ -634,14 +869,15 @@ impl<'a> Writer<'a> {
 
     /// Дельты снапшота состояния перед строкой опа (фиксированный порядок:
     /// WCS → шпиндель → СОЖ; plane — только у дуг).
-    fn pre_state(&mut self, state: &eid_core::ast::State) -> Result<(), Vec<Diagnostic>> {
+    fn pre_state(
+        &mut self,
+        state: &eid_core::ast::State,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), Vec<Diagnostic>> {
         if state.wcs != self.cur_wcs {
-            let w = wcs_word(state.wcs).ok_or_else(|| {
-                vec![diag(
-                ErrorCode::UnsupportedSyntax,
-                "state.wcs вне словаря Fanuc — wcs-слово не эмитится (валидатор отсекает ранее)",
-            )]
-            })?;
+            // Этап 8: расширенный слот при включённой g59_map → G54.1 Pn +
+            // notice «map применён» (один на эмиссию).
+            let w = self.wcs_emit_word(state.wcs, warnings)?;
             self.line(w);
             self.cur_wcs = state.wcs;
         }
@@ -680,7 +916,7 @@ impl<'a> Writer<'a> {
             | Op::Linear {
                 end, state, sub, ..
             } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 self.check_tool_jump(state, warnings);
                 let f = self.feed_word(state, *sub, warnings)?;
                 let g = match (op, state.frame) {
@@ -714,7 +950,7 @@ impl<'a> Writer<'a> {
                 sub,
                 ..
             } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 self.check_tool_jump(state, warnings);
                 // Плоскость из канонической нормали (валидатор отсёк не-ось).
                 let (plane, a0, a1, _naxis) =
@@ -740,17 +976,6 @@ impl<'a> Writer<'a> {
                 }
                 let f = self.feed_word(state, *sub, warnings)?;
                 let g = if *dir == Dir::Cw { "G2" } else { "G3" };
-                // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
-                // grbl/linuxcnc; I/J/K literal X/Y/Z): ровно две in-plane
-                // оси, G18 → I+K, G19 → J+K, G17 → I+J.
-                let letter = ["I", "J", "K"];
-                let mut arc_words = String::new();
-                for ax in 0..3 {
-                    if ax == a0 || ax == a1 {
-                        arc_words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
-                    }
-                }
-                let arc_words = arc_words.trim_end().to_string();
                 // Полный круг (sweep=360°, pitch=0) — БЕЗ end-слов (`G2 I_ J_`
                 // — легальный Fanuc-формат; слова end==start перепарсер
                 // квантует в zero-length drop). Винтовой полный оборот
@@ -758,6 +983,41 @@ impl<'a> Writer<'a> {
                 // наследуют старт). Частичная дуга — все три оси.
                 let full_turn = (sweep_deg.value() - 360.0).abs() <= 1e-6;
                 let helical_turn = full_turn && pitch.value().abs() > 1e-9;
+                // Слова дуги (этап 8): при profile-флаге allow_r_arcs
+                // (= emit-r-arcs; COVERAGE §5.1 «R — profile-флаг + notice»)
+                // дуга эмитится R-формой, иначе — IJK (EQUIVALENCE §4).
+                // Полные круги — ВСЕГДА IJK: R при совпадающих in-plane
+                // start/end неоднозначен (SPEC §6; R-полный круг — alarm).
+                let arc_words = if self.opts.allow_r_arcs && !full_turn {
+                    // Радиус = |центр − start| в плоскости дуги; знак R — по
+                    // sweep (Fanuc-соглашение: R>0 = ≤180°, R<0 = >180°;
+                    // парсер восстанавливает центр и sweep из хорды и |R| —
+                    // канонизатор arc_block, формула LinuxCNC/grbl). R — 4dp.
+                    let rho = offs[a0].hypot(offs[a1]);
+                    let r_signed = if sweep_deg.value() > 180.0 { -rho } else { rho };
+                    warnings.push(format!(
+                        "arc: R-форма применена по профилю (allow-r-arcs = emit-r-arcs = true): R{} вместо IJK — та же дуга, центр пересчитывается из R (COVERAGE §5.1; EQUIVALENCE §4)",
+                        fmt_num(r_signed)
+                    ));
+                    format!("R{}", fmt_num(r_signed))
+                } else {
+                    if self.opts.allow_r_arcs && full_turn {
+                        warnings.push(
+                            "arc: полный круг 360° — R-форма неоднозначна (совпадающие in-plane start/end, SPEC §6); эмитится IJK даже при allow_r_arcs".into(),
+                        );
+                    }
+                    // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
+                    // grbl/linuxcnc; I/J/K literal X/Y/Z): ровно две in-plane
+                    // оси, G18 → I+K, G19 → J+K, G17 → I+J.
+                    let letter = ["I", "J", "K"];
+                    let mut words = String::new();
+                    for ax in 0..3 {
+                        if ax == a0 || ax == a1 {
+                            words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
+                        }
+                    }
+                    words.trim_end().to_string()
+                };
                 let axis_letter = ["X", "Y", "Z"][_naxis];
                 let axes_part = if full_turn && !helical_turn {
                     String::new()
@@ -786,7 +1046,7 @@ impl<'a> Writer<'a> {
                 )])
             }
             Op::Dwell { seconds, state, .. } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 self.check_tool_jump(state, warnings);
                 if !seconds.value.is_finite() {
                     return Err(vec![diag(
@@ -806,7 +1066,7 @@ impl<'a> Writer<'a> {
                 Ok(())
             }
             Op::ToolChange { tool, state, .. } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 // Fanuc-идиома: T## M06 в одном блоке (1:1, COVERAGE §5.1).
                 self.line(format!("T{tool} M06"));
                 self.cur_tool = Some(*tool);
@@ -815,22 +1075,22 @@ impl<'a> Writer<'a> {
             Op::ProgramStop {
                 optional, state, ..
             } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 self.check_tool_jump(state, warnings);
                 self.line(if *optional { "M1" } else { "M0" });
                 Ok(())
             }
             Op::ProgramEnd { .. } => {
                 // Хвост M5/M9 НЕ эмитится (ruling COVERAGE §5: AST не хранит
-                // пост-конечное состояние; Fanuc M30 сам глушит).
-                // Дефолт M30 (Fanuc-конвенция rewind); профиль M02 — этап 8.
-                self.line("M30");
+                // пост-конечное состояние; M30 сам глушит; M02 — профиль
+                // этапа 8 без rewind-семантики).
+                self.line(self.opts.program_end.word());
                 Ok(())
             }
             Op::WcsDefine {
                 p, origin, state, ..
             } => {
-                self.pre_state(state)?;
+                self.pre_state(state, warnings)?;
                 self.check_tool_jump(state, warnings);
                 self.line(format!(
                     "G10 L2 P{p} X{} Y{} Z{}",
@@ -939,6 +1199,27 @@ impl<'a> Writer<'a> {
         }
         Ok(())
     }
+}
+
+/// Notice применения g59_map (этап 8, COVERAGE §5.1 — «подмена таблицы без
+/// предупреждения запрещена», аналогия golden_preset_no_bake): один на
+/// эмиссию, текст перечисляет всю применённую таблицу (детерминированный
+/// порядок G59.1/.2/.3).
+fn map_notice_text(map: &FanucG59Map) -> String {
+    let mut entries = Vec::new();
+    for (name, p) in [
+        ("G59.1", map.g59_1),
+        ("G59.2", map.g59_2),
+        ("G59.3", map.g59_3),
+    ] {
+        if let Some(p) = p {
+            entries.push(format!("{name}→G54.1 P{p}"));
+        }
+    }
+    format!(
+        "wcs_extended_map: map применён, таблица WCS подменена профилем ({}) — G54.1 Pn имеет ЧУЖОЕ происхождение origin относительно G59.x-таблиц источника, эквивалентность условна по таблицам станка (EQUIVALENCE §1.2; COVERAGE §5.1; НЕ дефолт — аналогия golden_preset_no_bake)",
+        entries.join(", ")
+    )
 }
 
 fn spindle_eq(a: &Spindle, b: &Spindle) -> bool {

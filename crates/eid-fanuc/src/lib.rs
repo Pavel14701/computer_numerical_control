@@ -22,6 +22,13 @@
 //! path_mode G61/G64 (+warnings), program_end M30 (профиль M02 — этап 8),
 //! T## M06; модальная абсорбция на RAW-строках (SPEC §8.6 v0.17) и
 //! explicit-end полный круг (SPEC §3 v0.17) — зеркала аудита.
+//! Этап 8 (emission-профили, agent C): `FanucAdapter::emit_with_opts` —
+//! program_end M30/M02, allow_r_arcs (R-форма + notice, COVERAGE §5.1),
+//! g59_map (G59.x → G54.1 Pn + notice «map применён»; неполная мапа → отказ
+//! с перечнем незмапленных). Опции входят через обёртку registry
+//! (eid-integration FanucNamedAdapter::with_emission_opts; trait v0.2
+//! заморожен); дефолтные опции = прежняя эмиссия байт-в-байт.
+//! explicit-end полный круг (SPEC §3 v0.17) — зеркала аудита.
 #![allow(dead_code)]
 
 use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
@@ -153,8 +160,24 @@ impl Adapter for FanucAdapter {
     }
 
     fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
+        self.emit_with_opts(program, &emit::FanucEmissionOpts::default())
+    }
+}
+
+impl FanucAdapter {
+    /// Эмиссия с профильными опциями (этап 8, COVERAGE §5.1): program_end
+    /// M30/M02, allow_r_arcs (R-форма + notice), g59_map (G59.x → G54.1 Pn +
+    /// notice). Trait Adapter v0.2 заморожен — опции входят НЕ через trait,
+    /// а этим методом (обёртка registry eid-integration FanucNamedAdapter
+    /// хранит Option<ProfileEmissionOpts> и вызывает его). Дефолтные опции
+    /// = [`Adapter::emit`] байт-в-байт.
+    pub fn emit_with_opts(
+        &self,
+        program: &Program,
+        opts: &emit::FanucEmissionOpts,
+    ) -> Result<EmitOutput, Vec<Diagnostic>> {
         let mut warnings = Vec::new();
-        let out = emit::emit_with_warnings(program, &mut warnings)?;
+        let out = emit::emit_with_profile(program, opts, &mut warnings)?;
         // EmitOut.warnings и sink-Vec дублируют друг друга (fanuc
         // emit_with_warnings заполняет оба) — берём из EmitOut.
         Ok(EmitOutput {

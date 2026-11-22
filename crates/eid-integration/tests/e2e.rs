@@ -9,9 +9,10 @@
 //! RAW-правило на ok-файле tier_b (кросс-диалект отказ, same-dialect verbatim).
 
 use eid_core::adapter::Adapter;
+use eid_core::ast::Op;
 use eid_core::diag::ErrorCode;
 use eid_harness::diff::{semantic_diff, DiffConfig};
-use eid_integration::profile::{Limits, MachineProfile};
+use eid_integration::profile::{Limits, MachineProfile, ProgramEndStyle};
 use eid_integration::sim::{check_program, mock_sim};
 use eid_integration::translate::{
     format_diagnostic, stage_tag, translate_file, translate_file_with_profile, translate_text,
@@ -439,6 +440,10 @@ fn profile_with_ops_limit(limit: usize) -> MachineProfile {
         },
         emit_r_arcs: false,
         emit_preamble: false,
+        // Этап 8: дефолтные эмиссионные флаги (M30, мапы нет) — поведение
+        // до этапа 8.
+        program_end_style: eid_integration::profile::ProgramEndStyle::M30,
+        wcs_extended_map: None,
         axis_limits: None,
         axis_limits_units: eid_core::ast::Units::Mm,
     }
@@ -799,4 +804,307 @@ fn e2e_fanuc_raw_rule_cross_refusal_and_same_dialect_verbatim() {
             out.emitted
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Этап 8 (агент C, emission-профили fanuc/haas): e2e через
+// translate_text_with_profile — проброс флагов профиля до эмиссии
+// (обёртка registry, trait v0.2 заморожен).
+// ---------------------------------------------------------------------------
+
+/// Fanuc-профиль с изменённым эмиссионным флагом (конструктор + мутация —
+/// устойчиво к новым полям).
+fn fanuc_profile_mutated(mutate: impl FnOnce(&mut MachineProfile)) -> MachineProfile {
+    let mut p = MachineProfile::fanuc_default();
+    mutate(&mut p);
+    p
+}
+
+fn haas_profile_mutated(mutate: impl FnOnce(&mut MachineProfile)) -> MachineProfile {
+    let mut p = MachineProfile::haas_default();
+    mutate(&mut p);
+    p
+}
+
+#[test]
+fn e2e_stage8_fanuc_program_end_m02() {
+    // COVERAGE §5.1 program_end: M30 дефолт vs M02 — выбор профиля.
+    // Выход с M02-профилем содержит M02 и НЕ содержит M30; parse-back живой.
+    let src = "G21 G90 G94 G17\nG61.1\nG0 X0 Y0 Z5\nG1 X10 F150\nM2\n";
+    let m02 = fanuc_profile_mutated(|p| {
+        p.program_end_style = ProgramEndStyle::M02;
+    });
+    let out = translate_text_with_profile("linuxcnc", "fanuc", src, "m02.lnx.ngc", Some(&m02))
+        .expect("translate с M02-профилем");
+    assert!(
+        out.emitted.contains("M02") && !out.emitted.contains("M30"),
+        "выход с M02: {:?}",
+        out.emitted
+    );
+    // Контроль: дефолтный fanuc-профиль (M30) — прежний выход.
+    let def = MachineProfile::fanuc_default();
+    let out30 = translate_text_with_profile("linuxcnc", "fanuc", src, "m30.lnx.ngc", Some(&def))
+        .expect("translate с дефолтным профилем");
+    assert!(
+        out30.emitted.contains("M30") && !out30.emitted.contains("M02"),
+        "выход с дефолтом M30: {:?}",
+        out30.emitted
+    );
+    // parse(выход M02) ≡ parse(источник) — semantic_diff 0.
+    let back = parse("fanuc", &out.emitted, "m02.fanuc.ngc");
+    let source = parse("linuxcnc", src, "m02.lnx.ngc");
+    assert_equivalent(&source, &back, "M02 parse-back");
+}
+
+#[test]
+fn e2e_stage8_fanuc_wcs_map_off_refusal_on_maps() {
+    // G59.x → fanuc: мапа выключена (дефолт) → отказ SYNTAX
+    // (wcs_outside_g54_g59); мапа включена → G54.1 Pn + notice «map применён».
+    let src = "G21 G90 G94 G17\nG61.1\nG59.1\nG0 X0 Y0 Z5\nG1 X1 F150\nM2\n";
+    let def = MachineProfile::fanuc_default();
+    let err = translate_text_with_profile("linuxcnc", "fanuc", src, "map.lnx.ngc", Some(&def))
+        .expect_err("map-off: G59.1 вне словаря Fanuc → SYNTAX");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.message.contains("wcs_outside_g54_g59")),
+                "{diags:?}"
+            );
+        }
+        other => panic!("ожидался Err(Emit), фактический: {other:?}"),
+    }
+    let mut on = MachineProfile::fanuc_default();
+    on.wcs_extended_map = Some(
+        [("G59.1".to_string(), "G54.1 P1".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let out = translate_text_with_profile("linuxcnc", "fanuc", src, "map.lnx.ngc", Some(&on))
+        .expect("map-on: G59.1 → G54.1 P1");
+    assert!(
+        out.emitted.contains("G54.1 P1") && !out.emitted.contains("G59"),
+        "выход с мапой: {:?}",
+        out.emitted
+    );
+    let notices: Vec<&String> = out
+        .q3_warnings
+        .iter()
+        .filter(|w| w.contains("map применён"))
+        .collect();
+    assert_eq!(
+        notices.len(),
+        1,
+        "notice один на эмиссию: {:?}",
+        out.q3_warnings
+    );
+    assert!(
+        notices[0].contains("G59.1→G54.1 P1"),
+        "notice перечисляет таблицу: {notices:?}"
+    );
+    // parse-back для fanuc-мапы ЗАВЕДОМО не эквивалентен: G54.1 Pn fanuc-
+    // парсер читает как Raw (диспозиция COVERAGE §2.3) — эквивалентность
+    // условна по машинным таблицам origin (EQUIVALENCE §1.2), что и
+    // фиксирует notice «map применён». Проверяем сам факт Raw-reparse:
+    let back = parse("fanuc", &out.emitted, "map.fanuc.ngc");
+    assert!(
+        back.ops.iter().any(|op| matches!(op, Op::Raw { .. })),
+        "G54.1 P1 fanuc-парсер читает как Raw (COVERAGE §2.3): {:?}",
+        back.ops
+    );
+}
+
+#[test]
+fn e2e_stage8_haas_wcs_extended_map_g154() {
+    // G59.x → haas: мапа выключена (дефолт) — приёмка этапа 3 (G110 + warning
+    // wcs_extended_slot); мапа включена → G154 Pn + notice «map применён»
+    // (НЕ дефолт — аналогия golden_preset_no_bake).
+    let src = "G21 G90 G94 G17\nG61.1\nG59.1\nG0 X0 Y0 Z5\nG1 X1 F150\nM2\n";
+    let def = MachineProfile::haas_default();
+    let out_off = translate_text_with_profile("linuxcnc", "haas", src, "wmap.lnx.ngc", Some(&def))
+        .expect("map-off: прежнее поведение живо");
+    assert!(
+        out_off.emitted.contains("G110") && !out_off.emitted.contains("G154"),
+        "map-off: {:?}",
+        out_off.emitted
+    );
+    assert!(
+        out_off
+            .q3_warnings
+            .iter()
+            .any(|w| w.contains("wcs_extended_slot")),
+        "map-off warning wcs_extended_slot: {:?}",
+        out_off.q3_warnings
+    );
+    let mut on = MachineProfile::haas_default();
+    on.wcs_extended_map = Some(
+        [("G59.1".to_string(), "G154 P1".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let out = translate_text_with_profile("linuxcnc", "haas", src, "wmap.lnx.ngc", Some(&on))
+        .expect("map-on: G59.1 → G154 P1");
+    assert!(
+        out.emitted.contains("G154 P1") && !out.emitted.contains("G110"),
+        "выход с G154-мапой: {:?}",
+        out.emitted
+    );
+    let notices: Vec<&String> = out
+        .q3_warnings
+        .iter()
+        .filter(|w| w.contains("map применён"))
+        .collect();
+    assert_eq!(
+        notices.len(),
+        1,
+        "notice один на эмиссию: {:?}",
+        out.q3_warnings
+    );
+    assert!(
+        !out.q3_warnings
+            .iter()
+            .any(|w| w.contains("wcs_extended_slot")),
+        "мапленный слот не дублирует wcs_extended_slot: {:?}",
+        out.q3_warnings
+    );
+    // parse-back живой (G154 P1 парсится Haas-адаптером в p7).
+    let back = parse("haas", &out.emitted, "wmap.haas.ngc");
+    let source = parse("linuxcnc", src, "wmap.lnx.ngc");
+    assert_equivalent(&source, &back, "G154 parse-back");
+}
+
+#[test]
+fn e2e_stage8_incomplete_map_lists_unmapped() {
+    // Неполная мапа: в программе G59.1 и G59.2, таблица покрывает только
+    // G59.1 → отказ с перечнем незмапленных (G59.2).
+    let src = "G21 G90 G94 G17\nG61.1\nG59.1\nG0 X0 Y0 Z5\nG59.2\nG0 X1 Y1 Z1\nM2\n";
+    let mut partial = MachineProfile::haas_default();
+    partial.wcs_extended_map = Some(
+        [("G59.1".to_string(), "G154 P1".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let err = translate_text_with_profile("linuxcnc", "haas", src, "part.lnx.ngc", Some(&partial))
+        .expect_err("неполная мапа обязана отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert!(
+                diags.iter().any(|d| {
+                    d.message.contains("wcs_map_incomplete") && d.message.contains("G59.2")
+                }),
+                "перечень незмапленных: {diags:?}"
+            );
+        }
+        other => panic!("ожидался Err(Emit), фактический: {other:?}"),
+    }
+    // Полная таблица проходит оба слота.
+    let mut full = MachineProfile::haas_default();
+    full.wcs_extended_map = Some(
+        [
+            ("G59.1".to_string(), "G154 P1".to_string()),
+            ("G59.2".to_string(), "G154 P2".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let out = translate_text_with_profile("linuxcnc", "haas", src, "part.lnx.ngc", Some(&full))
+        .expect("полная мапа проходит");
+    assert!(
+        out.emitted.contains("G154 P1") && out.emitted.contains("G154 P2"),
+        "полная мапа: {:?}",
+        out.emitted
+    );
+}
+
+#[test]
+fn e2e_stage8_r_arcs_flag_and_roundtrip() {
+    // R-флаг (emit_r_arcs = allow_r_arcs): false (дефолт) — IJK всегда;
+    // true — R-форма + notice на каждой дуге; parse(R-выход) ≡ parse(IJK-
+    // выход) — semantic_diff 0 (та же дуга, центр пересчитан из R).
+    let src =
+        "G21 G90 G94 G17\nG61.1\nF100\nG0 X0 Y0 Z5\nG3 X10 Y-10 I10 J0\nG3 X0 Y0 I0 J10\nM2\n";
+    let def = MachineProfile::fanuc_default();
+    let out_ijk = translate_text_with_profile("linuxcnc", "fanuc", src, "r.lnx.ngc", Some(&def))
+        .expect("translate дефолт (IJK)");
+    assert!(
+        out_ijk.emitted.contains("I10.0000") && !out_ijk.emitted.contains(" R"),
+        "дефолт — IJK: {:?}",
+        out_ijk.emitted
+    );
+    assert!(
+        out_ijk.q3_warnings.iter().all(|w| !w.contains("R-форма")),
+        "дефолт без R-notices: {:?}",
+        out_ijk.q3_warnings
+    );
+
+    let r = fanuc_profile_mutated(|p| {
+        p.emit_r_arcs = true;
+    });
+    let out_r = translate_text_with_profile("linuxcnc", "fanuc", src, "r.lnx.ngc", Some(&r))
+        .expect("translate с R-флагом");
+    assert!(
+        out_r.emitted.contains("R10.0000") && !out_r.emitted.contains("I10.0000"),
+        "R-форма: {:?}",
+        out_r.emitted
+    );
+    assert!(
+        out_r.emitted.contains("R-10.0000"),
+        "270° → отрицательный R: {:?}",
+        out_r.emitted
+    );
+    let n = out_r
+        .q3_warnings
+        .iter()
+        .filter(|w| w.contains("R-форма применена"))
+        .count();
+    assert_eq!(n, 2, "notice на каждой R-дуге: {:?}", out_r.q3_warnings);
+
+    // Roundtrip: parse(R) ≡ parse(IJK) ≡ источник — semantic_diff 0.
+    let source = parse("linuxcnc", src, "r.lnx.ngc");
+    let back_r = parse("fanuc", &out_r.emitted, "r.fanuc.ngc");
+    let back_ijk = parse("fanuc", &out_ijk.emitted, "r.fanuc.ngc");
+    assert_equivalent(&source, &back_r, "parse(R) ≡ источник");
+    assert_equivalent(&back_r, &back_ijk, "parse(R) ≡ parse(IJK) — та же дуга");
+
+    // Haas-цель с R-флагом — зеркало.
+    let rh = haas_profile_mutated(|p| {
+        p.emit_r_arcs = true;
+    });
+    let out_rh = translate_text_with_profile("linuxcnc", "haas", src, "rh.lnx.ngc", Some(&rh))
+        .expect("translate haas с R-флагом");
+    assert!(
+        out_rh.emitted.contains("R10.0000"),
+        "haas R-форма: {:?}",
+        out_rh.emitted
+    );
+    let back_rh = parse("haas", &out_rh.emitted, "rh.haas.ngc");
+    assert_equivalent(&source, &back_rh, "haas parse(R) ≡ источник");
+}
+
+#[test]
+fn e2e_stage8_profile_dialect_guard() {
+    // Guard диалекта: не-дефолтные эмиссионные флаги профиля применимы
+    // только к цели своего диалекта — иначе отказ (тихое игнорирование
+    // запрещено). Дефолтные флаги на любой цели — без отказа.
+    let src = "G21 G90 G94 G17\nG61.1\nG0 X0 Y0 Z5\nG1 X10 F150\nM2\n";
+    let m02 = fanuc_profile_mutated(|p| {
+        p.program_end_style = ProgramEndStyle::M02;
+    });
+    let err = translate_text_with_profile("linuxcnc", "haas", src, "guard.lnx.ngc", Some(&m02))
+        .expect_err("fanuc-профиль с M02 на haas-цели обязан отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert!(
+                diags[0].message.contains("цель трансляции") && diags[0].message.contains("`haas`"),
+                "{diags:?}"
+            );
+        }
+        other => panic!("ожидался Err(Emit), фактический: {other:?}"),
+    }
+    // Дефолтный fanuc-профиль на haas-цели — без отказа (лимиты применяются,
+    // эмиссионных флагов нет).
+    let def = MachineProfile::fanuc_default();
+    translate_text_with_profile("linuxcnc", "haas", src, "guard.lnx.ngc", Some(&def))
+        .expect("дефолтный профиль не несёт флагов — guard молчит");
 }

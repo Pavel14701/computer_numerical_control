@@ -103,6 +103,9 @@ impl HaasAdapter {
                 // L2-домен Haas P0..P6 (p7..9 = расширенные origin — L20,
                 // profile-опция НЕ дефолт; COVERAGE §5.2).
                 (emit::HaasEmissionCondition::WcsDefinePOutsideL2Domain, SYN),
+                // Этап 8: неполная profile wcs_extended_map — незмапленный
+                // расширенный слот в программе (SYN, правило §5).
+                (emit::HaasEmissionCondition::WcsMapIncomplete, SYN),
                 // M07 = Shower — другой канал СОЖ; mist-spray не представим.
                 (
                     emit::HaasEmissionCondition::CoolantMistUnrepresentable,
@@ -186,8 +189,24 @@ impl Adapter for HaasAdapter {
     }
 
     fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
+        self.emit_with_opts(program, &emit::HaasEmissionOpts::default())
+    }
+}
+
+impl HaasAdapter {
+    /// Эмиссия с профильными опциями (этап 8, COVERAGE §5.2): program_end
+    /// M30/M02, allow_r_arcs (R-форма + notice), g59_map (G59.x → G154 Pn +
+    /// notice). Trait Adapter v0.2 заморожен — опции входят НЕ через trait,
+    /// а этим методом (обёртка registry eid-integration HaasNamedAdapter
+    /// хранит Option<ProfileEmissionOpts> и вызывает его). Дефолтные опции
+    /// = [`Adapter::emit`] байт-в-байт.
+    pub fn emit_with_opts(
+        &self,
+        program: &Program,
+        opts: &emit::HaasEmissionOpts,
+    ) -> Result<EmitOutput, Vec<Diagnostic>> {
         let mut warnings = Vec::new();
-        let out = emit::emit_with_warnings(program, &mut warnings)?;
+        let out = emit::emit_with_profile(program, opts, &mut warnings)?;
         Ok(EmitOutput {
             text: out.text,
             warnings: out.warnings,
