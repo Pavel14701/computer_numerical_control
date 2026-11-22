@@ -39,6 +39,11 @@ pub mod smt;
 /// Эвристика «пахнет ли текст L2-конструкциями»:
 /// * `#` — макро-переменные;
 /// * слова `IF`/`WHILE`/`GOTO`;
+/// * O-word-конструкции БЕЗ `#`-переменных (находка D2, 12.2): `o<имя>`
+///   / `o<N>` + O-control keywords (`sub`/`endsub`/`while`/`endwhile`/
+///   `if`/`else`/`endif`/`do`/`call`/`break`/`continue`) — иначе файлы
+///   вида `O<sub> sub` / `o<showstate> call` (corpus m70_m72/m73/g20sub)
+///   уходили в чистый L1-конвейер (нарушение T1-маршрутизации L2-файлов);
 /// * G5.x-параметрика (G5/G5.1/G5.2/G5.3 — сплайны) и макро-вызовы
 ///   G65/G66/G67;
 /// * трансформации G68/G68.1/G68.2/G68.3, G51/G51.1/G50.1;
@@ -54,12 +59,52 @@ pub fn l2_available(src: &str) -> bool {
     if stripped.as_bytes().contains(&b'#') {
         return true;
     }
+    // Пара «O-word + O-control keyword» (`o123 sub`, `O100 while ...`):
+    // bare-ключевое слово без O-word впереди НЕ триггерит (SUB/CALL как
+    // случайные слова чистого L1 — не L2).
+    let mut prev_o_word = false;
     for tok in stripped.split_whitespace() {
         if l2_token_available(tok) {
             return true;
         }
+        if prev_o_word && is_o_control_keyword(tok) {
+            return true;
+        }
+        prev_o_word = is_o_word_token(tok);
     }
     false
+}
+
+/// O-word: `o<имя>` (LinuxCNC named) или `o123` (номерная форма).
+fn is_o_word_token(tok: &str) -> bool {
+    let b = tok.as_bytes();
+    if b.is_empty() || (b[0] != b'o' && b[0] != b'O') {
+        return false;
+    }
+    if b.len() >= 2 && b[1] == b'<' {
+        return true; // o<name>
+    }
+    b.len() >= 2 && b[1..].iter().all(|c| c.is_ascii_digit()) // o123
+}
+
+/// Ключевые слова O-control (LinuxCNC o-codes); значимы только сразу
+/// после O-word (см. [`l2_available`]).
+fn is_o_control_keyword(tok: &str) -> bool {
+    let up = tok.to_ascii_uppercase();
+    matches!(
+        up.as_str(),
+        "SUB"
+            | "ENDSUB"
+            | "WHILE"
+            | "ENDWHILE"
+            | "IF"
+            | "ELSE"
+            | "ENDIF"
+            | "DO"
+            | "CALL"
+            | "BREAK"
+            | "CONTINUE"
+    )
 }
 
 /// Вырезать комментарии: `(...)` — скобочные, `;` — до конца строки.
@@ -113,6 +158,11 @@ fn l2_token_available(tok: &str) -> bool {
     }
     // Ротационные/доп. оси: A90., B[#..] — буква + число/[/-/+.
     let b = up.as_bytes();
+    // O-word с именем: `o<sub>` (LinuxCNC) — сама по себе L2-конструкция
+    // (найдка D2: `O<showstate> sub` / `o<showstate> call` без `#`).
+    if b.len() >= 2 && b[0] == b'O' && b[1] == b'<' {
+        return true;
+    }
     if b.len() >= 2 {
         let axis_word = matches!(b[0], b'A' | b'B' | b'C' | b'U' | b'V' | b'W');
         let value_start = matches!(b[1], b'0'..=b'9' | b'[' | b'-' | b'+');
@@ -166,5 +216,46 @@ mod tests {
     fn x_axis_word_is_not_l2() {
         // X/Z — линейные оси, НЕ ротационные: не L2.
         assert!(!l2_available("G1 X10 Z-5. F100"));
+    }
+
+    #[test]
+    fn pin_o_word_constructs_without_hash_detected() {
+        // Находка D2 (12.2): O-word-файлы без `#`-переменных (corpus
+        // lcnc_m70_m72_demo.ngc / lcnc_m73_demo.ngc / lcnc_nc_files_g20sub.ngc)
+        // обязаны идти в L2-конвейер.
+        // m70_m72-паттерн (реальный корпус, с комментариями):
+        assert!(l2_available(
+            "; Demo M70 save / M72 restore around a subroutine call\n\
+             O<showstate> sub\n\
+             (DEBUG, imperial=#<_imperial>)\n\
+             O<showstate> endsub\n\
+             g21\n\
+             o<showstate> call\n\
+             M72\n\
+             M30"
+        ));
+        // g20sub-паттерн (M70/M71 внутри O-подпрограммы):
+        assert!(l2_available(
+            "O<g20sub> sub\nM70 (save state)\ng20\nG0 X1.\nM71\nO<g20sub> endsub"
+        ));
+        // Номерная форма O-word + keyword (пара):
+        assert!(l2_available("o123 sub\nM99\no123 endsub"));
+        assert!(l2_available("o45 if [#1 lt 3] endif"));
+        assert!(l2_available("O7 while [#100 EQ 1] endwhile"));
+        // Именованный o<...> — сам по себе L2 (даже без keyword рядом).
+        assert!(l2_available("o<repeat> call"));
+        // Регистронезависимость: нижний регистр o<...> и keyword.
+        assert!(l2_available("o<showstate> endwhile"));
+    }
+
+    #[test]
+    fn o_word_regressions_stay_false() {
+        // Голый O-номер программы (Fanuc) без control-keyword — НЕ L2.
+        assert!(!l2_available("O1234\nG0 X0 Y0\nM30"));
+        // Bare-keyword без O-word впереди — не триггер (пара обязательна).
+        assert!(!l2_available("(call the sub when ready)\nG1 X10 F50\nM30"));
+        assert!(!l2_available("G1 X10\nM30\n; sub while if endif call"));
+        // N-слово с номером — не O-word (N100 sub не пары).
+        assert!(!l2_available("N100 G1 X5. F100"));
     }
 }
