@@ -3,6 +3,16 @@ name = "eid-linuxcnc"
 version = "0.1.0"
 edition = "2021"
 
+# `rs274-sim` включает интеграционные Tier A/B тесты реального rs274-сима
+# (tests/_tierb_full.rs, docker eid-linuxcnc-sim, ~551с/запуск).
+# По умолчанию ВЫКЛЮЧЕНА: cargo test / cargo-mutants (дефолт-фичи) собирают
+# _tierb_full.rs как пустой крейт — docker-прогоны не выполняются и не
+# замедляют мутационные раунды. Запуск вручную:
+#   cargo test -p eid-linuxcnc --features rs274-sim
+# Guard: docker недоступен → тесты SKIP (не красные). См. шапку _tierb_full.rs.
+[features]
+rs274-sim = []
+
 [dependencies]
 eid-core = { path = "../eid-core" }
 

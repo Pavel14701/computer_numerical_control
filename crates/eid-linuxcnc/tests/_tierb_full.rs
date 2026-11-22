@@ -11,6 +11,11 @@
 //!
 //! Guard: docker недоступен → SKIP (не красный). Временные файлы — в
 //! target/simwork/stage (монтируется в /work). DoD: crash=0.
+//!
+//! Фича-гейт: файл собирается ТОЛЬКО с `--features rs274-sim`
+//! (см. Cargo.toml); в дефолт-прогоне `cargo test`/cargo-mutants крейт
+//! пуст — docker-прогоны (~551с) не выполняются.
+#![cfg(feature = "rs274-sim")]
 
 use eid_core::adapter::Adapter;
 use eid_grbl::GrblAdapter;
