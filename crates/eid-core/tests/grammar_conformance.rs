@@ -865,7 +865,7 @@ fn src_placeholder_valid() {
                 (src.line_start, src.col_start, src.line_end, src.col_end),
                 (0, 1, 0, 0)
             );
-            assert_eq!(src.file, "conf");
+            assert_eq!(&*src.file, "conf");
         }
         _ => unreachable!(),
     }

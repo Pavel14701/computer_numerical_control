@@ -7,23 +7,23 @@
 //!   (12, src/lexer.rs); вложенный/незакрытый комментарий → lexer; % →
 //!   percent_ignored; N-слова → n_word_line; трейлинг-точка → dpi_point…
 //!   + lexer; целая часть >9 цифр → integer_overflow_limit.
-//! MODAL (01–06): violation → modal_violation_invalid; G90/G91 →
+//!  MODAL (01–06): violation → modal_violation_invalid; G90/G91 →
 //!   g91_incremental; плоскости → arc_g18/arc_g19; G90.1/G91.1 →
 //!   arc_g90_1_absolute_center; G94/G95 → g95_raw_semantics; units G20/G21 +
 //!   G70/G71 → units_alias_g70_g71, dpi_bare_integer_inch; смена units →
 //!   unit_switch_mid_invalid.
-//! MOTION: rapid/linear → eob_full_line_program; модальное продолжение →
+//!  MOTION: rapid/linear → eob_full_line_program; модальное продолжение →
 //!   modal_continuation; голые координаты без motion → naked_coords_invalid;
 //!   zero-length → zero_length_linear_drop.
-//! ARC §6: IJK 3 плоскости × cw/ccw → arc_ijk_cw_helix / arc_ijk_ccw /
+//!  ARC §6: IJK 3 плоскости × cw/ccw → arc_ijk_cw_helix / arc_ijk_ccw /
 //!   arc_g18 / arc_g19; R± → arc_r_positive / arc_r_negative; R+pitch →
 //!   arc_r_helix; helical → arc_ijk_cw_helix; полная окружность →
 //!   full_circle / helical_full_turn; R-полный-круг → r_full_circle_invalid;
 //!   радиус-мисс → radius_mismatch_invalid; хорда>2R → chord_gt_2r_invalid;
 //!   перпендикулярная компонента → plane_perpendicular_invalid.
-//! DPI (§1.2, W_DPI_ASSUMED): dpi_bare_integer_mm / _inch / dpi_point_not…
+//!  DPI (§1.2, W_DPI_ASSUMED): dpi_bare_integer_mm / _inch / dpi_point_not…
 //!   / dpi_all_bare_arc / dpi_pending_f_flushes_to_next_op.
-//! STRUCTURE: auto-PEND → auto_pend_missing_program_end; O-code → o_code_raw;
+//!  STRUCTURE: auto-PEND → auto_pend_missing_program_end; O-code → o_code_raw;
 //!   вне словаря этапа 1 → unknown_g_raw_provisional; block delete →
 //!   block_delete_raw_runtime; этап диагностики → stage_parse_vs_verify.
 //!
@@ -68,6 +68,9 @@
 //!   U-исключение → g4_u_exception_elsewhere_raw; P0 → g4_p0_drop_notice.
 //! PATH META: G61 = exact_stop (value shift) → g61_exact_stop_value_shift;
 //!   G64 bare → g64_blend_bare; переключение → path_switch_mid_invalid.
+// doc-чек-лист в прежнем формате (продолжения строк) — вне скоупа INTERFACE v0.2;
+// lint отключён точечно, форматирование не трогаем.
+#![allow(clippy::doc_lazy_continuation)]
 
 use eid_core::ast::{Op, Point3, Program, StartPoint, Units};
 use eid_core::diag::Diagnostic;
@@ -2719,10 +2722,12 @@ fn mirror_v018_golden_cross_check_19_20_21() {
             std::fs::read_to_string(root.join(dir).join("golden.eid")).expect("golden readable");
         let a = FanucAdapter::new()
             .parse(&source, src_name)
-            .expect("fanuc parse ok");
+            .expect("fanuc parse ok")
+            .program;
         let b = EidTextAdapter::new()
             .parse(&golden, "golden.eid")
-            .expect("golden parses");
+            .expect("golden parses")
+            .program;
         let d = semantic_diff(&a, &b, &DiffConfig::default());
         assert!(d.is_empty(), "{dir}: divergences: {d:?}");
     }
@@ -2758,7 +2763,11 @@ fn mround_g53_machine_nonzero_origin() {
     )
     .expect("ok");
     assert_eq!(known(&p.ops[2]), [20.0, 30.0, 35.0], "M = W + O_wcs");
-    assert_eq!(known(&p.ops[3]), [-5.0, -15.0, -130.0], "reading = M − O_wcs");
+    assert_eq!(
+        known(&p.ops[3]),
+        [-5.0, -15.0, -130.0],
+        "reading = M − O_wcs"
+    );
 }
 
 #[test]
@@ -2781,7 +2790,8 @@ fn mround_g93_linear_feed_len_3d() {
     // G93 inverse-time: 3D-диагональ от ненулевого старта — len = |Δ| = 5,
     // F = 1 → feed = 5 (ранее тесты были осе-выровнены — мутанты len-формулы
     // выживали).
-    let p = parse("G21 G90 G94 G17;\nG0 X1. Y2. Z3.;\nG93;\nG1 X4. Y6. Z3. F1.;\nM30;\n").expect("ok");
+    let p =
+        parse("G21 G90 G94 G17;\nG0 X1. Y2. Z3.;\nG93;\nG1 X4. Y6. Z3. F1.;\nM30;\n").expect("ok");
     assert_eq!(feed_of(&p.ops[1]), Some(5.0));
 }
 
@@ -2806,7 +2816,9 @@ fn mround_arc_quarter_ccw_ok() {
     let p = parse("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0. F100.;\nM30;\n")
         .expect("ok");
     match &p.ops[1] {
-        Op::Arc { center, sweep_deg, .. } => {
+        Op::Arc {
+            center, sweep_deg, ..
+        } => {
             assert_pt(center, 0.0, 0.0, 0.0);
             assert!(
                 (sweep_deg.value() - 90.0).abs() <= 1e-6,
@@ -2834,7 +2846,13 @@ fn mround_g83_unroll_subs_sequence() {
             }
         }
     }
-    assert_eq!(subs, Vec::<u32>::from_iter(1..=subs.len() as u32),
-        "sub-нумерация развёртки — плотная последовательность с 1: {subs:?}");
-    assert!(subs.len() >= 8, "ожидалась многопековая развёртка: {subs:?}");
+    assert_eq!(
+        subs,
+        Vec::<u32>::from_iter(1..=subs.len() as u32),
+        "sub-нумерация развёртки — плотная последовательность с 1: {subs:?}"
+    );
+    assert!(
+        subs.len() >= 8,
+        "ожидалась многопековая развёртка: {subs:?}"
+    );
 }

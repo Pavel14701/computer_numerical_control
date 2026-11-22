@@ -96,30 +96,96 @@ pub struct EmitOut {
 //   позиции — не статично → честный отказ SEMANTICS.
 // ===========================================================================
 
+/// Условие отказа легальности эмиссии в Fanuc mill (типизированное, v0.2
+/// волна 4 — INTERFACE-V0.2 §2.5 В1: enum вместо &'static str; код —
+/// ТОТАЛЬНАЯ функция `code()`, паник-точек «таблица и эмиттер разошлись»
+/// на emit-пути нет; согласие таблицы — тест `legality_table_complete`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanucEmissionCondition {
+    /// `wcs_set_here` — эмиссия запрещена как L20 (ловушка №3).
+    WcsSetHere,
+    /// `wcs_outside_g54_g59` — G59.1/.2/.3 вне словаря Fanuc (правило §5).
+    WcsOutsideG54G59,
+    /// `wcs_define_p_outside_g54_g59` — P вне домена 1..6.
+    WcsDefinePOutsideG54G59,
+    /// `machine_frame_arc` — дуга в G53 не эмитится (ходы прямые).
+    MachineFrameArc,
+    /// `motion_feed_none` — канон-форма §3/§4.
+    MotionFeedNone,
+    /// `arc_unknown_start` — IJK требует числового старта.
+    ArcUnknownStart,
+    /// `arc_normal_non_canonical` — нормаль не единичная +ось (§6).
+    ArcNormalNonCanonical,
+    /// `raw_payload_not_hex` — payload не чётный hex (grammar D9 v0.3).
+    RawPayloadNotHex,
+    /// `program_end_missing` / `_duplicate` / `_not_last` — структура §3
+    /// (с Fanuc-спецификой хвоста: Raw-subs после M30 легальны, ruling 1).
+    ProgramEndMissing,
+    ProgramEndDuplicate,
+    ProgramEndNotLast,
+}
+
+impl FanucEmissionCondition {
+    /// Каноническое имя условия (сохранено 1:1 со строковой таблицы —
+    /// его читают тесты и COVERAGE §5.1; manifest r4_expect хранит КОДЫ).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FanucEmissionCondition::WcsSetHere => "wcs_set_here",
+            FanucEmissionCondition::WcsOutsideG54G59 => "wcs_outside_g54_g59",
+            FanucEmissionCondition::WcsDefinePOutsideG54G59 => "wcs_define_p_outside_g54_g59",
+            FanucEmissionCondition::MachineFrameArc => "machine_frame_arc",
+            FanucEmissionCondition::MotionFeedNone => "motion_feed_none",
+            FanucEmissionCondition::ArcUnknownStart => "arc_unknown_start",
+            FanucEmissionCondition::ArcNormalNonCanonical => "arc_normal_non_canonical",
+            FanucEmissionCondition::RawPayloadNotHex => "raw_payload_not_hex",
+            FanucEmissionCondition::ProgramEndMissing => "program_end_missing",
+            FanucEmissionCondition::ProgramEndDuplicate => "program_end_duplicate",
+            FanucEmissionCondition::ProgramEndNotLast => "program_end_not_last",
+        }
+    }
+
+    /// Код класса отказа — ТОТАЛЬНАЯ функция (исчерпывающий match; классы —
+    /// правило COVERAGE §5).
+    pub fn code(self) -> ErrorCode {
+        use eid_core::diag::ErrorCode::{
+            InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN,
+        };
+        match self {
+            // COVERAGE §5.1: wcs_set_here эмиссия запрещена как L20 —
+            // честный отказ.
+            FanucEmissionCondition::WcsSetHere => USEM,
+            // G59.1/.2/.3 — кодов нет (правило §5: вне словаря → SYNTAX).
+            FanucEmissionCondition::WcsOutsideG54G59 => SYN,
+            FanucEmissionCondition::WcsDefinePOutsideG54G59 => SYN,
+            // G53 ходы прямые (SPEC §5.3) — дуга не представима.
+            FanucEmissionCondition::MachineFrameArc => USEM,
+            FanucEmissionCondition::MotionFeedNone => INVAL, // канон-форма §3/§4
+            FanucEmissionCondition::ArcUnknownStart => INVAL, // IJK требует числового старта
+            FanucEmissionCondition::ArcNormalNonCanonical => INVAL, // нормаль не +ось (§6)
+            FanucEmissionCondition::RawPayloadNotHex => INVAL, // grammar D9 v0.3
+            FanucEmissionCondition::ProgramEndMissing => INVAL, // структура (SPEC §3)
+            FanucEmissionCondition::ProgramEndDuplicate => INVAL,
+            FanucEmissionCondition::ProgramEndNotLast => INVAL,
+        }
+    }
+}
+
 /// Статическая таблица легальности эмиссии в Fanuc mill.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FanucEmissionLegality {
     /// Виды опов, представимые ходами Fanuc (имена = op_kind()).
     pub legal: Vec<&'static str>,
-    /// Условия отказа: (имя условия, код класса легальности).
+    /// Условия отказа: (условие, код класса) — зеркало `cond.code()`.
     /// Классы — правило COVERAGE §5: конструкция вне словаря цели →
     /// E_UNSUPPORTED_SYNTAX; не представима ходами → E_UNSUPPORTED_SEMANTICS;
     /// нарушение канон-формы AST → E_INVALID_INPUT.
-    pub illegal: Vec<(&'static str, ErrorCode)>,
+    pub illegal: Vec<(FanucEmissionCondition, ErrorCode)>,
     /// Легально-но-потерьные условия: (условие, текст warning). Эмиттер пишет
     /// текст в warnings-буфер адаптера, отказом НЕ является.
     pub warnings: Vec<(&'static str, &'static str)>,
 }
 
 impl FanucEmissionLegality {
-    /// Код отказа по имени условия; None = условие не объявлено.
-    pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
-        self.illegal
-            .iter()
-            .find(|(c, _)| *c == condition)
-            .map(|(_, code)| *code)
-    }
-
     /// Текст warning по имени условия; None = не объявлено.
     pub fn warning_of(&self, condition: &str) -> Option<&'static str> {
         self.warnings
@@ -292,7 +358,7 @@ pub fn emit_with_warnings(
         )]);
     }
     // Легальность эмиссии — против таблицы (COVERAGE §5.1), fail-fast.
-    let table = crate::FanucAdapter::default().emission_legality();
+    let table = crate::FanucAdapter::new().emission_legality();
     let problems = validate_fanuc(&table, program);
     if !problems.is_empty() {
         return Err(problems);
@@ -310,12 +376,9 @@ pub fn emit_with_warnings(
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5.1).
 /// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
 fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagnostic> {
-    // Условие обязано быть объявлено в таблице — иначе баг объявления, не паника пути.
-    let code = |cond: &'static str| {
-        table
-            .code_of(cond)
-            .unwrap_or_else(|| panic!("emission-legality: условие `{cond}` не объявлено в таблице"))
-    };
+    // v0.2 волна 4 (§2.5 В1): код отказа — тотальный `cond.code()` на enum;
+    // таблица — данные для интроспекции/тестов. Паник-точек на emit-пути нет.
+    let code = |cond: FanucEmissionCondition| cond.code();
     let mut v = Vec::new();
     // «Последний не-Raw оп = PEND» — Fanuc-хвост (Raw-subs после M30, ruling
     // 1) не нарушает структуру; не-Raw опыт после PEND — нарушение.
@@ -329,37 +392,37 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
         // (защита полноты: новый вид опа ⇒ дополнить таблицу). Код — fallback
         // SYN (`op_kind_not_legal` в таблицу не входит — ветка покрытия).
         let kind = op_kind(op);
-        if !table.is_legal_kind(kind) && !table.illegal.iter().any(|(c, _)| *c == kind) {
+        if !table.is_legal_kind(kind) && !table.illegal.iter().any(|(c, _)| c.as_str() == kind) {
+            // Защитный код — SYN по правилу COVERAGE §5 (вне словаря цели);
+            // ветка покрытия (не в таблице — все 10 видов объявлены).
             v.push(diag_src(
-                table
-                    .code_of("op_kind_not_legal")
-                    .unwrap_or(ErrorCode::UnsupportedSyntax),
+                ErrorCode::UnsupportedSyntax,
                 format!("op_kind_not_legal: `{kind}` не легален для цели Fanuc"),
                 op_src(op),
             ));
         }
         match op {
             Op::WcsSetHere { src, .. } => v.push(diag_src(
-                code("wcs_set_here"),
+                code(FanucEmissionCondition::WcsSetHere),
                 "wcs_set_here: эмиссия в Fanuc запрещена как G10 L20 — Fanuc L20 = запись origin G54.1 Pn, НЕ «set here» (ловушка №3, COVERAGE §5.1); через G92 требует машинной позиции — не статично",
                 src,
             )),
             Op::Arc { start, normal, state, src, .. } => {
                 if matches!(start, StartPoint::Unknown) {
                     v.push(diag_src(
-                        code("arc_unknown_start"),
+                        code(FanucEmissionCondition::ArcUnknownStart),
                         "arc with unknown start — IJK offsets require numeric start (SPEC §2 Q11)",
                         src,
                     ));
                 }
                 let n = [normal.x.clone(), normal.y.clone(), normal.z.clone()];
                 if let Err(m) = plane_of(&n) {
-                    v.push(diag_src(code("arc_normal_non_canonical"), m, src));
+                    v.push(diag_src(code(FanucEmissionCondition::ArcNormalNonCanonical), m, src));
                 }
                 check_motion_state(table, &mut v, state, src, true);
                 if state.frame == Frame::Machine {
                     v.push(diag_src(
-                        code("machine_frame_arc"),
+                        code(FanucEmissionCondition::MachineFrameArc),
                         "machine_frame_arc: дуга в G53 не эмитится (machine-frame ходы прямые; SPEC §5.3)",
                         src,
                     ));
@@ -374,7 +437,7 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
                 check_wcs(table, &mut v, &state.wcs, src);
                 if !(1..=6).contains(p) {
                     v.push(diag_src(
-                        code("wcs_define_p_outside_g54_g59"),
+                        code(FanucEmissionCondition::WcsDefinePOutsideG54G59),
                         format!("wcs_define P{p} вне Fanuc-домена G54–G59 (P1..P6; COVERAGE §5.1 — кодов нет)"),
                         src,
                     ));
@@ -387,7 +450,7 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
                         .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
                 {
                     v.push(diag_src(
-                        code("raw_payload_not_hex"),
+                        code(FanucEmissionCondition::RawPayloadNotHex),
                         "raw_payload_not_hex: payload не чётный hex (grammar D9 v0.3)",
                         src,
                     ));
@@ -404,19 +467,19 @@ fn validate_fanuc(table: &FanucEmissionLegality, program: &Program) -> Vec<Diagn
         .count();
     if end_count == 0 {
         v.push(diag(
-            code("program_end_missing"),
+            code(FanucEmissionCondition::ProgramEndMissing),
             "program_end_missing: PEND обязателен ровно один раз, последним (SPEC §3)",
         ));
     }
     if end_count > 1 {
         v.push(diag(
-            code("program_end_duplicate"),
+            code(FanucEmissionCondition::ProgramEndDuplicate),
             format!("program_end_duplicate: {end_count} × PEND (SPEC §3)"),
         ));
     }
     if !last_is_end && end_count > 0 {
         v.push(diag(
-            code("program_end_not_last"),
+            code(FanucEmissionCondition::ProgramEndNotLast),
             "program_end_not_last: опы после PEND запрещены (SPEC §3)",
         ));
     }
@@ -439,7 +502,7 @@ fn op_src(op: &Op) -> &eid_core::ast::SrcSpan {
 }
 
 fn check_motion_state(
-    table: &FanucEmissionLegality,
+    _table: &FanucEmissionLegality,
     v: &mut Vec<Diagnostic>,
     state: &eid_core::ast::State,
     src: &eid_core::ast::SrcSpan,
@@ -447,25 +510,23 @@ fn check_motion_state(
 ) {
     if need_feed && state.feed.is_none() {
         v.push(diag_src(
-            table
-                .code_of("motion_feed_none")
-                .expect("emission-legality: условие `motion_feed_none` не объявлено в таблице"),
+            FanucEmissionCondition::MotionFeedNone.code(),
             "motion_feed_none: linear/arc без модального feed (SPEC §3/§4)",
             src,
         ));
     }
-    check_wcs(table, v, &state.wcs, src);
+    check_wcs(_table, v, &state.wcs, src);
 }
 
 fn check_wcs(
-    table: &FanucEmissionLegality,
+    _table: &FanucEmissionLegality,
     v: &mut Vec<Diagnostic>,
     wcs: &Wcs,
     src: &eid_core::ast::SrcSpan,
 ) {
     if wcs_word(*wcs).is_none() {
         v.push(diag_src(
-            table.code_of("wcs_outside_g54_g59").expect("emission-legality: условие `wcs_outside_g54_g59` не объявлено в таблице"),
+            FanucEmissionCondition::WcsOutsideG54G59.code(),
             "wcs_outside_g54_g59: state.wcs = G59.1/.2/.3 — в словаре Fanuc кодов нет (COVERAGE §5.1; G54.1 — другая таблица; профиль-маппинг — этап 8, НЕ дефолт)",
             src,
         ));
@@ -552,9 +613,7 @@ impl<'a> Writer<'a> {
         if let Some(pr) = &self.program.frame_preset {
             let w = wcs_word(pr.wcs).ok_or_else(|| {
                 vec![diag(
-                    table
-                        .code_of("wcs_outside_g54_g59")
-                        .expect("emission-legality: условие не объявлено"),
+                    FanucEmissionCondition::WcsOutsideG54G59.code(),
                     "frame_preset.wcs вне словаря Fanuc (G59.x) — кодов нет (COVERAGE §5.1)",
                 )]
             })?;
@@ -815,7 +874,10 @@ impl<'a> Writer<'a> {
                 // иначе повторный F-кадр с тем же значением (G81 F120; G81
                 // F120) теряет маркер кадра при reparse.
                 let first_derived = sub == Some(1);
-                if changed || first_derived {
+                // v0.2 волна 3 (SPEC §7.4a): restated-F теперь из AST —
+                // провенанс «F-слово было в кадре» (точнее sub=1-эвристики).
+                let restated = state.feed_restated;
+                if changed || first_derived || restated {
                     self.cur_feed = Some(f.clone());
                     Ok(format!(" F{}", fmt_num(f.value)))
                 } else {

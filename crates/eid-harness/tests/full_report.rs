@@ -218,8 +218,8 @@ fn full_registry() -> Registry {
     reg.register(Arc::new(EidTextAdapter::new())); // "eid-l1"
     reg.register(Arc::new(GrblAdapter::new())); // "grbl-1.1"
     reg.register(Arc::new(LinuxCncAdapter::new())); // "linuxcnc"
-    // fanuc: ЖИВОЙ адаптер eid-fanuc под manifest-ключом "fanuc"
-    // (диалект-имя крейта "fanuc-mill" != ключ манифеста — см. register_as).
+                                                    // fanuc: ЖИВОЙ адаптер eid-fanuc под manifest-ключом "fanuc"
+                                                    // (диалект-имя крейта "fanuc-mill" != ключ манифеста — см. register_as).
     reg.register_as("fanuc", Arc::new(eid_fanuc::FanucAdapter::new()));
     // haas: ЖИВОЙ адаптер eid-haas под CLI-ключом "haas" (этап 3, agent C;
     // диалект-имя крейта "haas-mill" != ключ словаря — см. register_as;
@@ -239,16 +239,26 @@ fn haas_registered_live_in_full_registry() {
     // Registry-имя !== канону крейта — что и требовало register_as.
     let mut reg2 = Registry::new();
     reg2.register(Arc::new(eid_haas::HaasAdapter::new()));
-    assert!(reg2.get("haas").is_none(), "без register_as ключ = haas-mill");
+    assert!(
+        reg2.get("haas").is_none(),
+        "без register_as ключ = haas-mill"
+    );
     assert!(reg2.get("haas-mill").is_some());
     // Живой parse haas-фрагмента через registry-адаптер.
     let prog = a
-        .parse("G21 G90 G94 G17;
+        .parse(
+            "G21 G90 G94 G17;
 G0 X5. Y5. Z5.;
 M30;
-", "live.haas.ngc")
-        .expect("haas parse ok");
-    assert!(matches!(prog.ops.first(), Some(eid_core::ast::Op::Rapid { .. })));
+",
+            "live.haas.ngc",
+        )
+        .expect("haas parse ok")
+        .program;
+    assert!(matches!(
+        prog.ops.first(),
+        Some(eid_core::ast::Op::Rapid { .. })
+    ));
 }
 
 #[test]
@@ -436,10 +446,7 @@ fn fanuc_tier_b_live_parse_or_diagnose() {
         .iter()
         .filter(|e| e.outcome.starts_with("Err("))
         .count();
-    let no_adapter = fanuc
-        .iter()
-        .filter(|e| e.outcome == "no-adapter")
-        .count();
+    let no_adapter = fanuc.iter().filter(|e| e.outcome == "no-adapter").count();
     let panics = fanuc.iter().filter(|e| e.outcome == "panic").count();
 
     println!("=== ЖИВОЙ ПРОГОН harness: 17 fanuc-файлов tier_b (адаптер eid-fanuc) ===");
@@ -456,7 +463,10 @@ fn fanuc_tier_b_live_parse_or_diagnose() {
         diagnosed, 11,
         "паритет со смоуком: diagnosed=11 (parse-or-diagnose); исходы: {fanuc:?}"
     );
-    assert_eq!(no_adapter, 0, "адаптер зарегистрирован — no-adapter не остаётся");
+    assert_eq!(
+        no_adapter, 0,
+        "адаптер зарегистрирован — no-adapter не остаётся"
+    );
     assert_eq!(panics, 0, "crash=0 инвариант (CORPUS §3)");
     assert!(rep.is_crash_free());
     assert_eq!(ok + diagnosed, 17, "все 17 — parse-or-diagnose");

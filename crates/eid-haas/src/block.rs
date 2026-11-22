@@ -304,13 +304,19 @@ mod tests {
     #[test]
     fn modal_violation_detected() {
         let b = &parse_file("G0 G1 X5.;\n").blocks[0];
-        assert_eq!(b.modal_violation, Some((ModalGroup::Motion01, GCode::Rapid)));
+        assert_eq!(
+            b.modal_violation,
+            Some((ModalGroup::Motion01, GCode::Rapid))
+        );
         // Несколько групп в одном блоке легальны (§1.1).
         let b = &parse_file("G90 G17 G21 G94 G0 X0 Y0;\n").blocks[0];
         assert_eq!(b.modal_violation, None);
         // Два кода группы 15 — нарушение.
         let b = &parse_file("G61 G64;\n").blocks[0];
-        assert_eq!(b.modal_violation, Some((ModalGroup::Path15, GCode::PathExactStop)));
+        assert_eq!(
+            b.modal_violation,
+            Some((ModalGroup::Path15, GCode::PathExactStop))
+        );
     }
 
     #[test]

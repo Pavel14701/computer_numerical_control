@@ -37,9 +37,9 @@ fn round_trip(
     Vec<eid_harness::diff::Divergence>,
 ) {
     let a = adapter();
-    let p1 = a.parse(src, "rt.ngc").expect("parse #1");
-    let text = a.emit(&p1).expect("emit");
-    let p2 = adapter().parse(&text, "rt2.ngc").expect("reparse");
+    let p1 = a.parse(src, "rt.ngc").expect("parse #1").program;
+    let text = a.emit(&p1).expect("emit").text;
+    let p2 = adapter().parse(&text, "rt2.ngc").expect("reparse").program;
     let d = semantic_diff(&p1, &p2, &DiffConfig::default());
     (text, p2, d)
 }
@@ -77,9 +77,9 @@ fn r1_round_trip_all_pilots() {
         let text = assert_rt(&src, dir);
         // Детерминизм: двойной emit байт-в-байт.
         let a = adapter();
-        let p = a.parse(&src, "det.ngc").expect("parse");
-        let t1 = a.emit(&p).expect("emit #1");
-        let t2 = a.emit(&p).expect("emit #2");
+        let p = a.parse(&src, "det.ngc").expect("parse").program;
+        let t1 = a.emit(&p).expect("emit #1").text;
+        let t2 = a.emit(&p).expect("emit #2").text;
         assert_eq!(t1, t2, "{dir}: double emit must be byte-identical");
         assert_eq!(t1, text, "{dir}: emit stable");
     }
@@ -93,12 +93,16 @@ fn r1_round_trip_golden_asts() {
     for (dir, _golden_name) in PILOTS {
         let golden_text = read(&format!("{dir}/golden.eid"));
         let a = EidTextAdapter::new();
-        let golden = a.parse(&golden_text, "golden.eid").expect("golden parses");
+        let golden = a
+            .parse(&golden_text, "golden.eid")
+            .expect("golden parses")
+            .program;
         let d = adapter();
-        let text = d.emit(&golden).expect("emit golden");
+        let text = d.emit(&golden).expect("emit golden").text;
         let reparsed = adapter()
             .parse(&text, "golden_rt.ngc")
-            .expect("reparse golden emit");
+            .expect("reparse golden emit")
+            .program;
         let div = semantic_diff(&golden, &reparsed, &DiffConfig::default());
         assert!(
             div.is_empty(),
@@ -220,16 +224,16 @@ fn spindle_coolant_state_lines() {
 // ===========================================================================
 
 fn parse_str(src: &str) -> eid_core::ast::Program {
-    adapter().parse(src, "unit.ngc").expect("parse")
+    adapter().parse(src, "unit.ngc").expect("parse").program
 }
 
 #[test]
 fn unit_inch_header_g20() {
     let p = parse_str("G20 G90 G94 G17\nG0 X1.0000 Y2.0000 Z3.0000\nM2\n");
     let a = adapter();
-    let text = a.emit(&p).expect("emit");
+    let text = a.emit(&p).expect("emit").text;
     assert_eq!(text.lines().next().unwrap(), "G20 G90 G94 G17 G91.1");
-    let reparsed = adapter().parse(&text, "rt.ngc").expect("reparse");
+    let reparsed = adapter().parse(&text, "rt.ngc").expect("reparse").program;
     assert!(semantic_diff(&p, &reparsed, &DiffConfig::default()).is_empty());
 }
 
@@ -245,13 +249,13 @@ fn unit_path_modes_explicit() {
         ),
     ] {
         let p = parse_str(src);
-        let text = adapter().emit(&p).expect("emit");
+        let text = adapter().emit(&p).expect("emit").text;
         assert_eq!(
             text.lines().nth(1),
             Some(want),
             "path mode line for {src:?}"
         );
-        let reparsed = adapter().parse(&text, "rt.ngc").expect("reparse");
+        let reparsed = adapter().parse(&text, "rt.ngc").expect("reparse").program;
         assert!(semantic_diff(&p, &reparsed, &DiffConfig::default()).is_empty());
     }
 }
@@ -328,16 +332,17 @@ fn unit_raw_payload_verbatim_and_warning_channel() {
     // warnings доступны через take_diagnostics (тот же буфер, что у parse).
     let src = "G21 G90 G94\nG0 X0 Y0 Z0\nM123\nG0 X1.0000 Y0 Z0\nM2\n";
     let a = adapter();
-    let p = a.parse(src, "raw.ngc").expect("parse");
-    assert!(a
-        .take_diagnostics()
+    // v0.2 #22: diagnostics — в owning-результате parse (буфера нет).
+    let out = a.parse(src, "raw.ngc").expect("parse");
+    let p = out.program;
+    assert!(out
+        .diagnostics
         .iter()
         .any(|d| d.code == eid_core::diag::ErrorCode::UnsupportedSemantics));
-    let text = a.emit(&p).expect("emit");
-    assert!(a.take_diagnostics().is_empty(), "ASCII raw: без warnings");
+    let text = a.emit(&p).expect("emit").text;
     assert!(text.contains("\nM123\n"), "RAW verbatim:\n{text}");
     // RAW re-parses в тот же payload (same-dialect fidelity, D9).
-    let p2 = adapter().parse(&text, "raw2.ngc").expect("reparse");
+    let p2 = adapter().parse(&text, "raw2.ngc").expect("reparse").program;
     assert!(semantic_diff(&p, &p2, &DiffConfig::default()).is_empty());
 }
 
@@ -435,8 +440,10 @@ fn unit_tool_jump_warns_but_emits() {
         }
     }
     let a = adapter();
-    let text = a.emit(&p).expect("emit с warning");
-    let warns = a.take_diagnostics();
+    // v0.2 #22: emit-stage diagnostics — в owning-результате emit.
+    let out = a.emit(&p).expect("emit с warning");
+    let text = out.text;
+    let warns = out.diagnostics;
     assert!(
         warns.iter().any(|d| d.message.contains("state.tool")),
         "warning о скачке tool"
@@ -468,6 +475,7 @@ fn unit_validate_rejects_zero_length_before_emit() {
                 tool: None,
                 frame: eid_core::ast::Frame::Wcs,
                 wcs: eid_core::ast::Wcs::G54,
+                feed_restated: false,
             },
             src: eid_core::ast::SrcSpan {
                 file: "unit.ngc".into(),
@@ -568,6 +576,29 @@ fn cycle_g86_restart_emits_m5_then_m3() {
 }
 
 #[test]
+fn restated_f_reemitted_from_ast_flag() {
+    // T8 (v0.2 волна 3): два подряд кадра с F-словом одного значения → F
+    // на обоих (прежде — только на первом по смене значения).
+    let text = assert_rt(
+        "G21 G90 G94 G17\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X20.0000 F120.0\nG1 X30.0000 F120.0\nM2\n",
+        "restated-F",
+    );
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(f_count, 2, "restated-F переизлучён:\n{text}");
+}
+
+#[test]
+fn inherited_f_not_reemitted() {
+    // T8 (б): кадр без F-слова → F не переизлучается.
+    let text = assert_rt(
+        "G21 G90 G94 G17\nG0 X1.0000 Y1.0000 Z1.0000\nG1 X20.0000 F120.0\nG1 X30.0000\nM2\n",
+        "inherited-F",
+    );
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(f_count, 1, "наследованный кадр без F:\n{text}");
+}
+
+#[test]
 fn cycle_f_word_reemitted_on_each_f_frame() {
     // SPEC §7.4a v0.18, эмиссионное следствие: rs274 ассертит SET_FEED_RATE
     // на каждом кадре с F-словом — эмиттер переизлучает F на ПЕРВОМ
@@ -622,18 +653,21 @@ fn regen_cycle_goldens_spec_v018() {
         // D-conformant parse (LinuxCnc-канонизатор, SPEC v0.18).
         let p1 = adapter()
             .parse(&src, &format!("{file} regen-src"))
-            .expect("v0 source parses (D-conformant)");
+            .expect("v0 source parses (D-conformant)")
+            .program;
         let golden_text = EidTextAdapter::new()
             .emit(&p1)
-            .expect("golden.eid emit (eid-text канон)");
+            .expect("golden.eid emit (eid-text канон)")
+            .text;
         let golden_path = corpus(&format!("{dir}/golden.eid"));
         std::fs::write(&golden_path, &golden_text).expect("golden regen write");
         // R1 байт-в-байт: emit(parse(golden)) == golden-файл.
         let eid = EidTextAdapter::new();
         let g1 = eid
             .parse(&golden_text, "golden.eid")
-            .expect("golden parses");
-        let again = eid.emit(&g1).expect("re-emit golden");
+            .expect("golden parses")
+            .program;
+        let again = eid.emit(&g1).expect("re-emit golden").text;
         assert_eq!(
             golden_text, again,
             "{dir}: emit(parse(golden)) != golden — R1 байт-в-байт сломан"
@@ -794,8 +828,9 @@ M2
         );
         let p = LinuxCncAdapter::new()
             .parse(&src, "wcs.ngc")
-            .expect("parses");
-        let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+            .expect("parses")
+            .program;
+        let text = LinuxCncAdapter::new().emit(&p).expect("emit").text;
         assert!(
             text.lines().any(|l| l == want_line),
             "ожидается строка `{want_line}` для {wcs_word}:
@@ -809,8 +844,9 @@ M2
 ";
     let p = LinuxCncAdapter::new()
         .parse(src, "g54.ngc")
-        .expect("parses");
-    let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+        .expect("parses")
+        .program;
+    let text = LinuxCncAdapter::new().emit(&p).expect("emit").text;
     assert!(
         !text.lines().any(|l| l.starts_with("G5")),
         "G54-дефолт без строки:
@@ -818,7 +854,8 @@ M2
     );
     let p2 = LinuxCncAdapter::new()
         .parse(&text, "rt.ngc")
-        .expect("reparse");
+        .expect("reparse")
+        .program;
     assert!(eid_harness::diff::semantic_diff(&p, &p2, &DiffConfig::default()).is_empty());
     // path modes строкой (G61.1 проверен в другом тесте — здесь G64 P).
     for (mode_line, p_word) in [("G64", None), ("G64 P0.0500", Some("P0.0500"))] {
@@ -831,8 +868,9 @@ M2
         );
         let p = LinuxCncAdapter::new()
             .parse(&src, "pm.ngc")
-            .expect("parses");
-        let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+            .expect("parses")
+            .program;
+        let text = LinuxCncAdapter::new().emit(&p).expect("emit").text;
         match p_word {
             None => assert!(
                 text.lines().any(|l| l == "G64"),
@@ -857,7 +895,8 @@ fn mutation_emit_nonfinite_feed_is_err() {
             "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nG1 X5.0000 Y0.0000 Z0.0000 F100.0\nM2\n",
             "nf.ngc",
         )
-        .expect("parses");
+        .expect("parses")
+        .program;
     for op in &mut p.ops {
         if let Op::Linear { state, .. } = op {
             if let Some(f) = &mut state.feed {
@@ -884,11 +923,12 @@ fn mutation_emit_num_minus_zero_canonicalized() {
             "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM2\n",
             "mz.ngc",
         )
-        .expect("parses");
+        .expect("parses")
+        .program;
     if let Op::Rapid { end, .. } = &mut p.ops[0] {
         end.x = eid_core::ast::Num::new("-0.0000".into(), -0.0);
     }
-    let text = LinuxCncAdapter::new().emit(&p).expect("emit");
+    let text = LinuxCncAdapter::new().emit(&p).expect("emit").text;
     assert!(
         text.contains("X0.0000"),
         "-0.0000 канонизуется в 0.0000:\n{text}"
@@ -903,17 +943,17 @@ fn mutation_emit_num_minus_zero_canonicalized() {
 // validate_linuxcnc/code_of/codes/is_legal_kind выживали в крейтовых тестах.
 // ===========================================================================
 
+// 0.7071 — намеренное 4dp-приближение нормали (не FRAC_1_SQRT_2).
+#[allow(clippy::approx_constant)]
 #[test]
 fn mround_emit_noncanonical_normal_rejected() {
     // arc_normal_non_canonical: единичная не-осевая нормаль → Err INVALID
     // (+plane_of axial-проверка в writer-пути).
     let a = adapter();
     let mut p = a
-        .parse(
-            &read("07_arc_90/arc_90.linuxcnc.ngc"),
-            "arc.ngc",
-        )
-        .expect("parse ok");
+        .parse(&read("07_arc_90/arc_90.linuxcnc.ngc"), "arc.ngc")
+        .expect("parse ok")
+        .program;
     for op in &mut p.ops {
         if let Op::Arc { normal, .. } = op {
             normal.y = eid_core::ast::Num::new("0.7071".into(), 0.7071);
@@ -923,18 +963,15 @@ fn mround_emit_noncanonical_normal_rejected() {
     let Err(d) = a.emit(&p) else {
         panic!("не-осевая нормаль обязана быть отклонена на эмиссии")
     };
-    assert!(
-        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
 }
 
 #[test]
 fn mround_emit_legality_table_composition() {
     // Таблица легальности LinuxCNC: все 10 видов опов легальны (COVERAGE §5),
-    // коды отказов объявлены и различимы (code_of/codes — единый путь отказа;
-    // FnValue-мутанты code_of→None / codes→vec![] выживали — крейтовых тестов
-    // таблицы не существовало).
+    // коды отказов объявлены и различимы (v0.2 волна 4: коды — тотальные
+    // match-функции enum'а; FnValue-мутанты code_of→None / codes→vec![]
+    // выживали — крейтовых тестов таблицы не существовало).
     let t = adapter().emission_legality();
     for kind in [
         "rapid",
@@ -955,19 +992,29 @@ fn mround_emit_legality_table_composition() {
         codes.contains(&ErrorCode::InvalidInput) || !codes.is_empty(),
         "таблица объявляет коды отказов: {codes:?}"
     );
-    for cond in [
-        "arc_unknown_start",
-        "arc_normal_non_canonical",
-        "machine_frame_arc",
-        "motion_feed_none",
-        "raw_payload_not_hex",
-        "program_end_missing",
-        "program_end_duplicate",
-        "program_end_not_last",
-    ] {
-        assert!(
-            t.code_of(cond).is_some(),
-            "условие {cond} объявлено в таблице"
+    // T9 (v0.2 волна 4): таблица = данные, КОДЫ — тотальные match-функции:
+    // каждая пара (условие, код) в таблице совпадает с `cond.code()`;
+    // каждое условие объявлено ровно один раз.
+    use eid_linuxcnc::emit::LinuxCncEmissionCondition as Cond;
+    let all = [
+        Cond::ArcUnknownStart,
+        Cond::ArcNormalNonCanonical,
+        Cond::MachineFrameArc,
+        Cond::MotionFeedNone,
+        Cond::RawPayloadNotHex,
+        Cond::ProgramEndMissing,
+        Cond::ProgramEndDuplicate,
+        Cond::ProgramEndNotLast,
+    ];
+    for cond in all {
+        let n = t.illegal.iter().filter(|(c, _)| *c == cond).count();
+        assert_eq!(n, 1, "условие {} в таблице ровно один раз", cond.as_str());
+        let (_, code) = t.illegal.iter().find(|(c, _)| *c == cond).unwrap();
+        assert_eq!(
+            *code,
+            cond.code(),
+            "код {} = тотальный match",
+            cond.as_str()
         );
     }
     let mut dedup = t.codes();
@@ -983,7 +1030,8 @@ fn mround_emit_raw_payload_not_hex_rejected() {
     let a = adapter();
     let mut p = a
         .parse(&read("01_linear_box/linear_box.linuxcnc.ngc"), "t.ngc")
-        .expect("parse ok");
+        .expect("parse ok")
+        .program;
     p.ops.insert(
         0,
         Op::Raw {
@@ -1003,8 +1051,7 @@ fn mround_emit_raw_payload_not_hex_rejected() {
         panic!("не-hex payload обязан быть отклонён")
     };
     assert!(
-        d.iter()
-            .any(|x| x.message.contains("raw_payload_not_hex")),
+        d.iter().any(|x| x.message.contains("raw_payload_not_hex")),
         "{d:?}"
     );
 }
@@ -1015,7 +1062,8 @@ fn mround_emit_nonfinite_coord_rejected() {
     let a = adapter();
     let mut p = a
         .parse(&read("01_linear_box/linear_box.linuxcnc.ngc"), "t.ngc")
-        .expect("parse ok");
+        .expect("parse ok")
+        .program;
     for op in &mut p.ops {
         if let Op::Rapid { end, .. } = op {
             end.x = eid_core::ast::Num::new("NaN".into(), f64::NAN);
@@ -1024,8 +1072,5 @@ fn mround_emit_nonfinite_coord_rejected() {
     let Err(d) = a.emit(&p) else {
         panic!("NaN-координата обязана быть отклонена")
     };
-    assert!(
-        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
 }

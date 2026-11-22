@@ -42,8 +42,10 @@ fn st(feed: Option<f64>, wcs: Wcs, frame: Frame) -> State {
         tool: None,
         frame,
         wcs,
+        feed_restated: false,
     }
 }
+
 fn program(ops: Vec<Op>) -> Program {
     Program {
         eid_version: "EID/L1 v0.3".into(),
@@ -449,6 +451,7 @@ fn spec_5_d4_tool_mismatch() {
                 tool: Some(3),
                 frame: Frame::Wcs,
                 wcs: Wcs::G54,
+                feed_restated: false,
             },
             src: src(),
         },
@@ -1067,6 +1070,7 @@ fn mutants_emit_num_minus_zero_canonicalized() {
                     tool: None,
                     frame: Frame::Wcs,
                     wcs: Wcs::G54,
+                    feed_restated: false,
                 },
                 src: SrcSpan {
                     file: "t".into(),
@@ -1296,10 +1300,7 @@ fn mround_p_out_of_domain_linking_no_panic() {
         pend(),
     ];
     let d = verify::validate(&program(ops));
-    assert!(
-        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
 
     // WcsSetHere с p=10 — тот же guard в связывании set_here.
     let ops2 = vec![
@@ -1341,7 +1342,7 @@ fn mround_verify_diag_carries_src() {
         d.iter().all(|x| x.src.is_some()),
         "все verify-диагностики несут src: {d:?}"
     );
-    assert!(d.iter().all(|x| x.src.as_ref().unwrap().file == "t"));
+    assert!(d.iter().all(|x| &*x.src.as_ref().unwrap().file == "t"));
 }
 
 #[test]
@@ -1454,7 +1455,10 @@ fn mround_preset_cross_wcs_unknown_origin_no_panic() {
         ],
     };
     let d = verify::validate(&prg);
-    assert!(d.is_empty(), "разрыв (b) без origin — Unknown легален: {d:?}");
+    assert!(
+        d.is_empty(),
+        "разрыв (b) без origin — Unknown легален: {d:?}"
+    );
 }
 
 #[test]

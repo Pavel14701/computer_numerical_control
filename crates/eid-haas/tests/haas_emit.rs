@@ -84,15 +84,14 @@ fn state(wcs: Wcs) -> State {
         tool: None,
         frame: Frame::Wcs,
         wcs,
+        feed_restated: false,
     }
 }
 
 /// Минимальная hand-built программа: ops + PEND, mm, ExactPath, без пресетки.
 fn hand_program(ops: Vec<Op>) -> Program {
     let mut ops = ops;
-    ops.push(Op::ProgramEnd {
-        src: src_span(),
-    });
+    ops.push(Op::ProgramEnd { src: src_span() });
     Program {
         eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
@@ -106,23 +105,23 @@ fn parse_haas(src: &str) -> Program {
     HaasAdapter::new()
         .parse(src, "t.ngc")
         .expect("haas parse ok")
+        .program
 }
 
 fn emit_haas(src: &str) -> String {
     let p = parse_haas(src);
-    HaasAdapter::new().emit(&p).expect("emit ok")
+    HaasAdapter::new().emit(&p).expect("emit ok").text
 }
 
-/// Эмиссия через адаптер + warnings-буфер (паттерн fanuc emit_w).
+/// Эмиссия + warnings (v0.2 #22: owning-результат emit — буфера нет).
 fn emit_w(src: &str) -> (String, Vec<String>) {
     let ad = HaasAdapter::new();
-    let p = ad.parse(src, "t.ngc").expect("haas parse ok");
-    let text = ad.emit(&p).expect("emit ok");
-    let warnings = ad.take_warnings();
-    (text, warnings)
+    let p = ad.parse(src, "t.ngc").expect("haas parse ok").program;
+    let out = ad.emit(&p).expect("emit ok");
+    (out.text, out.warnings)
 }
 
-fn err_code_of(r: Result<String, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode {
+fn err_code_of<T>(r: Result<T, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode {
     let Err(d) = r else {
         panic!("ожидался Err")
     };
@@ -133,11 +132,11 @@ fn err_code_of(r: Result<String, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode 
 /// t1 == t2 байт-в-байт; AST-дифф пуст.
 fn roundtrip(src: &str, label: &str) {
     let ad = HaasAdapter::new();
-    let a = ad.parse(src, "t.ngc").expect("parse ok");
-    let t1 = ad.emit(&a).expect("emit ok");
-    let t2 = ad.emit(&a).expect("emit ok");
+    let a = ad.parse(src, "t.ngc").expect("parse ok").program;
+    let t1 = ad.emit(&a).expect("emit ok").text;
+    let t2 = ad.emit(&a).expect("emit ok").text;
     assert_eq!(t1, t2, "{label}: emit недетерминирован");
-    let b = ad.parse(&t1, "rt.ngc").expect("reparse ok");
+    let b = ad.parse(&t1, "rt.ngc").expect("reparse ok").program;
     let d = semantic_diff(&a, &b, &DiffConfig::default());
     // Документированный value shift (COVERAGE §5.2/§2.2): дефолт ExactPath →
     // эмиссия G61 → reparse ExactStop (G61 = exact stop по значению).
@@ -208,9 +207,7 @@ fn golden_path_blend_bare_and_t_warning() {
     let p = Program {
         eid_version: "EID/L1 v0.3".into(),
         units: Units::Mm,
-        path_mode: PathMode::Blend {
-            t: Some(num(0.5)),
-        },
+        path_mode: PathMode::Blend { t: Some(num(0.5)) },
         frame_preset: None,
         ops: vec![
             Op::Rapid {
@@ -224,11 +221,31 @@ fn golden_path_blend_bare_and_t_warning() {
         ],
     };
     let ad = HaasAdapter::new();
-    let text = ad.emit(&p).expect("emit ok");
+    // v0.2 #22: warnings — в owning-результате emit.
+    let out = ad.emit(&p).expect("emit ok");
+    let text = out.text;
     assert!(text.contains("\nG64\n"), "{text:?}");
-    let w = ad.take_warnings();
+    let w = out.warnings;
     assert_eq!(w.len(), 1, "{w:?}");
     assert!(w[0].contains("t теряется"), "{w:?}");
+}
+
+#[test]
+fn restated_f_reemitted_from_ast_flag() {
+    // T8 (v0.2 волна 3): restated-F из AST — F на каждом кадре с F-словом
+    // (dotted-формат числа; Haas DPI: bare F → × least increment, поэтому
+    // F с точкой — verbatim).
+    let text = emit_haas("G21 G90 G94 G17;\nG0 X10.;\nG1 X20. F120.;\nG1 X30. F120.;\nM30;\n");
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(f_count, 2, "restated-F переизлучён:\n{text}");
+}
+
+#[test]
+fn inherited_f_not_reemitted() {
+    // T8 (б): наследованный feed → F не переизлучается.
+    let text = emit_haas("G21 G90 G94 G17;\nG0 X10.;\nG1 X20. F120.;\nG1 X30.;\nM30;\n");
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(f_count, 1, "наследованный кадр без F:\n{text}");
 }
 
 #[test]
@@ -263,10 +280,12 @@ fn preset_extended_wcs_warning() {
         wcs: Wcs::G59_1,
     });
     let ad = HaasAdapter::new();
-    let text = ad.emit(&p).expect("emit ok");
+    // v0.2 #22: warnings — в owning-результате emit.
+    let out = ad.emit(&p).expect("emit ok");
+    let text = out.text;
     assert!(text.contains("\nG110\n"), "{text:?}");
     assert!(text.contains("G92 X1.0000"), "{text:?}");
-    let w = ad.take_warnings();
+    let w = out.warnings;
     assert!(
         w.iter().any(|x| x.contains("G110") && x.contains("G59.1")),
         "wcs_extended_slot warning с оговоркой G59.x: {w:?}"
@@ -283,13 +302,16 @@ fn golden_wcs_select_extended_p7_p9() {
     let (text, w) = emit_w(src);
     assert!(text.contains("\nG110\n"), "{text:?}");
     assert!(text.contains("\nG112\n"), "{text:?}");
-    assert!(!text.contains("G59.1"), "G59.1-кода в словаре Haas нет: {text:?}");
+    assert!(
+        !text.contains("G59.1"),
+        "G59.1-кода в словаре Haas нет: {text:?}"
+    );
     let ext = w.iter().filter(|x| x.contains("wcs_extended_slot")).count();
     assert_eq!(ext, 2, "warning на G110 и G112: {w:?}");
     // reparse ≡ источник (расширенный слот туда-обратно).
     let ad = HaasAdapter::new();
-    let a = ad.parse(src, "t.ngc").expect("parse ok");
-    let b = ad.parse(&text, "rt.ngc").expect("reparse ok");
+    let a = ad.parse(src, "t.ngc").expect("parse ok").program;
+    let b = ad.parse(&text, "rt.ngc").expect("reparse ok").program;
     let d = semantic_diff(&a, &b, &DiffConfig::default());
     assert!(d.is_empty(), "{d:?}");
 }
@@ -348,14 +370,25 @@ fn golden_arc_plane_switch_and_ij_pairs() {
     assert!(text.contains("\nG19\n"), "{text:?}");
     assert!(!text.contains(" R"), "R не эмитится: {text:?}");
     // G18-дуга: пара I+K (Y — нормаль), инкремент от старта (0,0,5).
-    let line18 = text.lines().find(|l| l.starts_with("G3 ")).expect("G3 line");
-    assert_eq!(line18, "G3 X5.0000 Y0.0000 Z0.0000 I0.0000 K-5.0000 F100.0000", "{line18}");
-    // G19-дуга: пара J+K (X — нормаль), инкремент от старта (5,0,0);
-    // F модален — без повтора (не F-кадр развёртки, sub = None).
-    let line19 = text.lines().find(|l| l.starts_with("G2 ")).expect("G2 line");
+    let line18 = text
+        .lines()
+        .find(|l| l.starts_with("G3 "))
+        .expect("G3 line");
     assert_eq!(
-        line19,
-        "G2 X5.0000 Y5.0000 Z-5.0000 J0.0000 K-5.0000",
+        line18, "G3 X5.0000 Y0.0000 Z0.0000 I0.0000 K-5.0000 F100.0000",
+        "{line18}"
+    );
+    // G19-дуга: пара J+K (X — нормаль), инкремент от старта (5,0,0).
+    // v0.2 волна 3 (SPEC §7.4a): кадр-источник несёт F-слово (restated —
+    // то же значение) → эмиттер ПЕРЕИЗЛУЧАЕТ F (rs274 ассертит SET_FEED_
+    // RATE на каждом F-кадре; прежнее «F модален — без повтора» теряло
+    // маркер кадра — закрытый класс дыры e2e48 #21).
+    let line19 = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("G2 line");
+    assert_eq!(
+        line19, "G2 X5.0000 Y5.0000 Z-5.0000 J0.0000 K-5.0000 F100.0000",
         "{line19}"
     );
 }
@@ -367,12 +400,15 @@ fn golden_full_circle_no_end_words() {
     // в zero-length drop.
     let src = "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG2 I-5. J0. F100.;\nM30;\n";
     let text = emit_haas(src);
-    let line = text.lines().find(|l| l.starts_with("G2 ")).expect("G2 line");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("G2 line");
     assert_eq!(line, "G2 I-5.0000 J0.0000 F100.0000", "без X/Y/Z end-слов");
     // reparse: end-слова отсутствуют → полный круг по геометрии (§3 v0.18).
     let ad = HaasAdapter::new();
-    let a = ad.parse(src, "t.ngc").expect("parse ok");
-    let b = ad.parse(&text, "rt.ngc").expect("reparse ok");
+    let a = ad.parse(src, "t.ngc").expect("parse ok").program;
+    let b = ad.parse(&text, "rt.ngc").expect("reparse ok").program;
     let d = semantic_diff(&a, &b, &DiffConfig::default());
     // value shift ExactPath→ExactStop (эмиссия G61 — COVERAGE §5.2).
     let d: Vec<_> = d
@@ -390,10 +426,12 @@ fn golden_full_circle_no_end_words() {
 fn golden_helical_full_turn_end_word() {
     // Винтовой полный оборот (sweep=360°, pitch≠0) — ТОЛЬКО end-слово
     // вне-плоскостной оси (in-plane наследуют старт).
-    let text = emit_haas(
-        "G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG2 X10. Y10. Z6. I-5. J0. F100.;\nM30;\n",
-    );
-    let line = text.lines().find(|l| l.starts_with("G2 ")).expect("G2 line");
+    let text =
+        emit_haas("G21 G90 G94 G17;\nG0 X10. Y10. Z5.;\nG2 X10. Y10. Z6. I-5. J0. F100.;\nM30;\n");
+    let line = text
+        .lines()
+        .find(|l| l.starts_with("G2 "))
+        .expect("G2 line");
     assert_eq!(line, "G2 Z6.0000 I-5.0000 J0.0000 F100.0000", "{line}");
 }
 
@@ -403,10 +441,7 @@ fn golden_machine_frame() {
     let text = emit_haas(
         "G21 G90;\nG10 L2 P1 G90 X1. Y2. Z3.;\nG0 X5. Y5. Z5.;\nG53 G0 X0 Y0 Z0;\nM30;\n",
     );
-    assert!(
-        text.contains("G53 G0 X0.0000 Y0.0000 Z0.0000"),
-        "{text:?}"
-    );
+    assert!(text.contains("G53 G0 X0.0000 Y0.0000 Z0.0000"), "{text:?}");
 }
 
 #[test]
@@ -478,7 +513,7 @@ fn golden_feed_first_derived_sub1() {
 // ===========================================================================
 
 fn legality_table() -> eid_haas::emit::HaasEmissionLegality {
-    HaasAdapter::default().emission_legality()
+    HaasAdapter::new().emission_legality()
 }
 
 /// Таблица = данные, КОДЫ — тотальные match-функции: каждая пара
@@ -503,14 +538,15 @@ fn legality_table_complete() {
         HaasEmissionCondition::ProgramEndNotLast,
     ];
     for cond in all {
-        let n = t
-            .illegal
-            .iter()
-            .filter(|(c, _)| *c == cond)
-            .count();
+        let n = t.illegal.iter().filter(|(c, _)| *c == cond).count();
         assert_eq!(n, 1, "условие {} в таблице ровно один раз", cond.as_str());
         let (_, code) = t.illegal.iter().find(|(c, _)| *c == cond).unwrap();
-        assert_eq!(*code, cond.code(), "код {} = тотальный match", cond.as_str());
+        assert_eq!(
+            *code,
+            cond.code(),
+            "код {} = тотальный match",
+            cond.as_str()
+        );
     }
     // Тексты warning нетривиальны и соответствуют match-функции.
     for w in [
@@ -531,8 +567,16 @@ fn legality_table_complete() {
     for kind in t.legal.clone() {
         assert!(
             [
-                "rapid", "linear", "arc", "dwell", "tool_change", "wcs_define",
-                "program_stop", "program_end", "raw", "frame_preset",
+                "rapid",
+                "linear",
+                "arc",
+                "dwell",
+                "tool_change",
+                "wcs_define",
+                "program_stop",
+                "program_end",
+                "raw",
+                "frame_preset",
             ]
             .contains(&kind),
             "{kind}"
@@ -614,6 +658,7 @@ fn legality_behavior_cross_check() {
                 tool: None,
                 frame: Frame::Machine,
                 wcs: Wcs::G54,
+                feed_restated: false,
             },
             src: src_span(),
             sub: None,
@@ -650,8 +695,8 @@ M30;\n";
 fn emit_deterministic_double() {
     let p = parse_haas(FULL_PROGRAM);
     let ad = HaasAdapter::new();
-    let t1 = ad.emit(&p).expect("emit ok");
-    let t2 = ad.emit(&p).expect("emit ok");
+    let t1 = ad.emit(&p).expect("emit ok").text;
+    let t2 = ad.emit(&p).expect("emit ok").text;
     assert_eq!(t1, t2);
 }
 
@@ -725,10 +770,12 @@ fn mirror_v018_golden_cross_check_19_20_21() {
             std::fs::read_to_string(root.join(dir).join("golden.eid")).expect("golden readable");
         let a = HaasAdapter::new()
             .parse(&source, src_name)
-            .expect("haas parse ok");
+            .expect("haas parse ok")
+            .program;
         let b = EidTextAdapter::new()
             .parse(&golden, "golden.eid")
-            .expect("golden parses");
+            .expect("golden parses")
+            .program;
         let d = semantic_diff(&a, &b, &DiffConfig::default());
         assert!(d.is_empty(), "{dir}: divergences: {d:?}");
     }
@@ -751,6 +798,7 @@ fn illegal_feed_none_and_end_invariants() {
             tool: None,
             frame: Frame::Wcs,
             wcs: Wcs::G54,
+            feed_restated: false,
         },
         src: src_span(),
         sub: None,
@@ -826,7 +874,9 @@ fn illegal_feed_none_and_end_invariants() {
     let Err(d) = HaasAdapter::new().emit(&p) else {
         panic!("ожидался Err")
     };
-    assert!(d.iter().any(|x| x.code == HaasEmissionCondition::ArcUnknownStart.code()));
+    assert!(d
+        .iter()
+        .any(|x| x.code == HaasEmissionCondition::ArcUnknownStart.code()));
     let p = hand_program(vec![Op::Arc {
         start: StartPoint::Known(pt(0.0, 0.0, 0.0)),
         end: pt(5.0, 0.0, 0.0),

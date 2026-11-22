@@ -20,8 +20,9 @@
 //! R3 — раздельно (CORPUS §4/§9, ruling оркестратора, контрольная точка 2–3):
 //!  * `R3-golden`: parse_X(f) ≡ golden по отдельности;
 //!  * `R3-consistency`: parse_grbl(f_grbl) ≡ parse_linuxcnc(f_linuxcnc).
-//! Атрибуция: красный consistency при зелёном golden = оба парсера согласны,
-//! оба неверны; красный consistency = адаптеры разошлись.
+//!
+//!   Атрибуция: красный consistency при зелёном golden = оба парсера согласны,
+//!   оба неверны; красный consistency = адаптеры разошлись.
 
 use crate::diff::{self, DiffConfig};
 use crate::manifest::{Manifest, Outcome, Vector};
@@ -283,7 +284,8 @@ fn run_vector(
                     status,
                 });
             }
-            Ok(program) => {
+            Ok(out) => {
+                let program = out.program;
                 let status = match &f.expect {
                     Outcome::Code(expect_code) => Status::Fail(format!(
                         "expected refusal {}, parsed ok (правило двух классов: структурный негатив не может быть Ok)",
@@ -401,7 +403,7 @@ fn run_vector(
                 }
             };
             let pa = match a.parse(&parsed_ok[0].2, prev_l) {
-                Ok(p) => p,
+                Ok(out) => out.program,
                 Err(diags) => {
                     checks.push(Check {
                         relation: "R3-consistency",
@@ -422,7 +424,7 @@ fn run_vector(
                 }
             };
             let pb = match b.parse(text, label) {
-                Ok(p) => p,
+                Ok(out) => out.program,
                 Err(diags) => {
                     checks.push(Check {
                         relation: "R3-consistency",
@@ -633,6 +635,7 @@ fn run_vector(
 
 /// Golden-проверки: R1-AST (parse → emit==файл байт-в-байт → parse → diff=0)
 /// + R2 (parse→emit→parse→emit байт-в-байт — стабильность канона).
+///
 /// Успех → Ok(golden AST) для последующих R3/R4.
 fn run_golden(
     path: &std::path::Path,
@@ -647,8 +650,8 @@ fn run_golden(
             return Err(vec![("R1", r1_exp, format!("cannot read golden: {e}"))]);
         }
     };
-    let p1 = match eid.parse(&text, "golden") {
-        Ok(p) => p,
+    let (p1, golden_notices) = match eid.parse(&text, "golden") {
+        Ok(out) => (out.program, out.notices),
         Err(diags) => {
             return Err(vec![(
                 "R1",
@@ -664,7 +667,8 @@ fn run_golden(
             )]);
         }
     };
-    if !eid.take_notices().is_empty() {
+    // v0.2 #22: notices — в owning-результате parse (буфера адаптера нет).
+    if !golden_notices.is_empty() {
         fails.push((
             "R1",
             r1_exp.clone(),
@@ -673,7 +677,7 @@ fn run_golden(
         ));
     }
     let emitted = match eid.emit(&p1) {
-        Ok(t) => t,
+        Ok(out) => out.text,
         Err(diags) => {
             return Err(vec![(
                 "R1",
@@ -697,7 +701,7 @@ fn run_golden(
         ));
     }
     let p2 = match eid.parse(&emitted, "golden") {
-        Ok(p) => p,
+        Ok(out) => out.program,
         Err(diags) => {
             return Err(vec![(
                 "R1",
@@ -726,7 +730,7 @@ fn run_golden(
     }
     // R2: canon(canon(x)) ≡ canon(x) — второй emit байт-в-байт.
     let stable = match eid.emit(&p2) {
-        Ok(t2) => t2 == emitted,
+        Ok(out2) => out2.text == emitted,
         Err(_) => false,
     };
     if !stable {
@@ -753,7 +757,8 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
     let original = payload_of(program);
     let re = match adapter
         .emit(program)
-        .and_then(|text| adapter.parse(&text, target))
+        .and_then(|out| adapter.parse(&out.text, target))
+        .map(|out| out.program)
     {
         Ok(p) => p,
         Err(diags) => {
@@ -855,7 +860,7 @@ pub fn run_tier_b(
             }
         };
         let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            adapter.parse(&text, &path_str)
+            adapter.parse(&text, &path_str).map(|out| out.program)
         }));
         match run {
             Err(_) => {

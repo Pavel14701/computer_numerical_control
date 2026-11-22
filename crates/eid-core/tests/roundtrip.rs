@@ -392,12 +392,16 @@ fn adapter_is_r1_machine() {
     assert_eq!(adapter.dialect_name(), "eid-l1");
     let f = &golden_files()[0];
     let text = fs::read_to_string(f).unwrap();
-    let p = adapter.parse(&text, "golden").expect("adapter parse");
-    let out = emitter::emit(&p).expect("adapter emit");
-    assert_eq!(out, text);
-    assert!(adapter.take_notices().is_empty());
-    // Повторный вызов после опустошения — пусто
-    assert!(adapter.take_notices().is_empty());
+    // v0.2 #22: owning-результат — notices из каждого parse (повторный
+    // parse больше не «затирает» буфер, а возвращает свои; here — пусто:
+    // golden каноничен).
+    let out = adapter.parse(&text, "golden").expect("adapter parse");
+    assert!(out.notices.is_empty());
+    let p = out.program;
+    let emitted = emitter::emit(&p).expect("adapter emit");
+    assert_eq!(emitted, text);
+    let re = adapter.parse(&text, "golden").expect("re-parse");
+    assert!(re.notices.is_empty());
 }
 
 // ===========================================================================
@@ -1117,6 +1121,7 @@ fn emit_op_number_limit() {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let src = SrcSpan {
         file: "t".into(),
@@ -1216,8 +1221,10 @@ mod astbuild {
             tool,
             frame,
             wcs,
+            feed_restated: false,
         }
     }
+
     pub fn program(ops: Vec<Op>) -> Program {
         Program {
             eid_version: "EID/L1 v0.3".into(),

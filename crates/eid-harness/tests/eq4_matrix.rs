@@ -39,8 +39,35 @@ fn st(feed: Option<f64>) -> State {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     }
 }
+
+// T8 (г) (v0.2 волна 3, EQUIVALENCE §5): feed_restated — провенанс
+// (класс src/sub) — semantic_diff(restated=true) vs (restated=false) пуст.
+#[test]
+fn feed_restated_is_out_of_equivalence() {
+    let mk = |restated: bool| {
+        prog(vec![Op::Linear {
+            start: StartPoint::Unknown,
+            end: p3(10.0, 0.0, 0.0),
+            state: State {
+                feed_restated: restated,
+                ..st(Some(120.0))
+            },
+            src: src(),
+            sub: None,
+        }])
+    };
+    let a = mk(true);
+    let b = mk(false);
+    let d = semantic_diff(&a, &b, &DiffConfig::default());
+    assert!(
+        d.is_empty(),
+        "feed_restated — вне эквивалентности (provenance): {d:?}"
+    );
+}
+
 fn prog(ops: Vec<Op>) -> Program {
     Program {
         eid_version: "EID/L1 v0.3".into(),
@@ -562,7 +589,7 @@ fn tc_manifest_duplicate_ids() {
         "corpus_version = \"t\"\n[[vectors]]\nid = \"X\"\nname = \"a\"\ntier = \"A\"\nkind = \"positive\"\ngolden = \"g.eid\"\n[[vectors]]\nid = \"X\"\nname = \"b\"\ntier = \"A\"\nkind = \"positive\"\n",
     )
     .unwrap();
-    std::fs::write(&dir.join("g.eid"), "").unwrap();
+    std::fs::write(dir.join("g.eid"), "").unwrap();
     let err = manifest::load(&mf).unwrap_err();
     assert!(err.contains("duplicate vector id"), "{err}");
     std::fs::remove_dir_all(&dir).ok();

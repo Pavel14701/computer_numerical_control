@@ -83,7 +83,8 @@ fn golden_47_refuses_both_targets() {
             &read("tier_a/v0/47_raw_crlf_fidelity/golden.eid"),
             "golden47",
         )
-        .unwrap();
+        .unwrap()
+        .program;
     for to in [
         &GrblAdapter::new() as &dyn Adapter,
         &LinuxCncAdapter::new() as &dyn Adapter,
@@ -102,7 +103,8 @@ fn pilots_without_raw_translate_to_both_targets() {
     for name in ["01_linear_box", "03_feed_survives_rapid"] {
         let golden = eid
             .parse(&read(&format!("tier_a/v0/{name}/golden.eid")), name)
-            .unwrap();
+            .unwrap()
+            .program;
         for to in [
             &GrblAdapter::new() as &dyn Adapter,
             &LinuxCncAdapter::new() as &dyn Adapter,

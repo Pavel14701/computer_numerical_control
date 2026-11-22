@@ -42,8 +42,12 @@ impl Expect {
         }
     }
 
-    /// Сверка фактического исхода диалектного адаптера (без notices).
-    pub fn check_dialect(&self, result: &Result<Program, Vec<Diagnostic>>) -> bool {
+    /// Сверка фактического исхода диалектного адаптера (без notices;
+    /// v0.2 #22 — owning-результат parse).
+    pub fn check_dialect(
+        &self,
+        result: &Result<eid_core::adapter::ParseOutput, Vec<Diagnostic>>,
+    ) -> bool {
         match result {
             Err(diags) => match self {
                 Expect::Err(c) => diags.iter().any(|d| d.code == *c),
@@ -270,6 +274,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         tool: None,
                         frame: Frame::Wcs,
                         wcs,
+                        feed_restated: false,
                     },
                     src: SrcSpan {
                         file: "m11".into(),
@@ -297,6 +302,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         tool: None,
                         frame: Frame::Wcs,
                         wcs,
+                        feed_restated: false,
                     },
                     src: SrcSpan {
                         file: "m11".into(),
@@ -353,6 +359,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         tool: None,
                         frame: Frame::Wcs,
                         wcs: Wcs::G54,
+                        feed_restated: false,
                     },
                     src: SrcSpan {
                         file: "m16".into(),

@@ -105,10 +105,11 @@ fn corpus_bytes() -> Vec<(String, Vec<u8>)> {
 
 fn soup_inputs(seed: u64, corpus: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
     let mut rng = Lcg::new(seed);
-    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
-    out.push(("empty".into(), Vec::new()));
-    out.push(("lf-only".into(), b"\n".to_vec()));
-    out.push(("crlf-only".into(), b"\r\n".to_vec()));
+    let mut out: Vec<(String, Vec<u8>)> = vec![
+        ("empty".into(), Vec::new()),
+        ("lf-only".into(), b"\n".to_vec()),
+        ("crlf-only".into(), b"\r\n".to_vec()),
+    ];
     out.push((
         "headers-repeated".into(),
         "G21 G90\n".repeat(100).into_bytes(),
@@ -176,7 +177,7 @@ fn extended_fuzz_run() {
 
         let _base_text = {
             let t = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                eid.emit(&program).expect("base emit")
+                eid.emit(&program).expect("base emit").text
             })) {
                 Ok(t) => t,
                 Err(_) => {
@@ -215,7 +216,7 @@ fn extended_fuzz_run() {
             };
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let t = match eid.emit(&mutated) {
-                    Ok(t) => t,
+                    Ok(t) => t.text,
                     Err(e) => return Err(format!("{e:?}")),
                 };
                 let res = parser::parse_with_notices(&t, "fuzz-ext-m");

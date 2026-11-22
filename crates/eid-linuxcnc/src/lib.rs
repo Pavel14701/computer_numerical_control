@@ -10,9 +10,8 @@
 //! §1.4; warnings → take_diagnostics).
 //!
 //! Правило двух классов (CORPUS §1.2 v0.5): line-level RAW-конструкции дают
-//! `Ok(Program)`; их диагностики буферизуются и доступны через
-//! [`LinuxCncAdapter::take_diagnostics`] (симметрично EidTextAdapter::
-//! take_notices — trait v0.1 не имеет канала diagnostics при Ok).
+//! `Ok(ParseOutput)`; их диагностики возвращаются в owning-результате
+//! (`ParseOutput.diagnostics`, v0.2 #22 — trait имеет Ok-канал diagnostics).
 
 pub mod canonicalize;
 pub mod emit;
@@ -20,28 +19,20 @@ pub mod lexer;
 pub mod parser;
 
 use crate::parser::Notice;
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use std::cell::RefCell;
+use eid_core::verify::Notice as CoreNotice;
 
-pub struct LinuxCncAdapter {
-    diagnostics: RefCell<Vec<Diagnostic>>,
-    notices: RefCell<Vec<Notice>>,
-}
-
-impl Default for LinuxCncAdapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// v0.2 #22: адаптер только-данные (без interior mutability) — Send + Sync;
+/// notices/diagnostics возвращаются в owning-результате [`ParseOutput`] /
+/// [`EmitOutput`].
+#[derive(Debug, Default)]
+pub struct LinuxCncAdapter;
 
 impl LinuxCncAdapter {
     pub fn new() -> Self {
-        Self {
-            diagnostics: RefCell::new(Vec::new()),
-            notices: RefCell::new(Vec::new()),
-        }
+        Self
     }
 
     /// Таблица легальности эмиссии LinuxCNC (COVERAGE §5, LinuxCNC-колонка;
@@ -52,6 +43,7 @@ impl LinuxCncAdapter {
         use eid_core::diag::ErrorCode::{
             InvalidInput as INVAL, RuntimeState as RT, UnsupportedSemantics as SEM,
         };
+        use emit::LinuxCncEmissionCondition as C;
         emit::EmissionLegality {
             legal: vec![
                 "rapid",
@@ -66,47 +58,62 @@ impl LinuxCncAdapter {
                 "program_end",
                 "raw",
             ],
+            // v0.2 волна 4 (§2.5 В1): ключи — типизированный enum; код-зеркало
+            // обязано совпадать с `cond.code()` (тест legality_table_complete).
             illegal: vec![
-                ("arc_unknown_start", RT),           // SPEC §2 Q11
-                ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
-                ("machine_frame_arc", SEM),          // G53 требует G0/G1
-                ("motion_feed_none", INVAL),         // канон-форма §3/§4
-                ("raw_payload_not_hex", INVAL),      // grammar D9 v0.3
-                ("program_end_missing", INVAL),      // структура (CORPUS n14)
-                ("program_end_duplicate", INVAL),    // n13
-                ("program_end_not_last", INVAL),     // n12
+                (C::ArcUnknownStart, RT),          // SPEC §2 Q11
+                (C::ArcNormalNonCanonical, INVAL), // нормаль не +ось (§6)
+                (C::MachineFrameArc, SEM),         // G53 требует G0/G1
+                (C::MotionFeedNone, INVAL),        // канон-форма §3/§4
+                (C::RawPayloadNotHex, INVAL),      // grammar D9 v0.3
+                (C::ProgramEndMissing, INVAL),     // структура (CORPUS n14)
+                (C::ProgramEndDuplicate, INVAL),   // n13
+                (C::ProgramEndNotLast, INVAL),     // n12
             ],
         }
     }
+}
 
-    /// Line-level диагностики последнего `parse` (Ok-путь: RAW-узлы, warnings);
-    /// опустошает буфер.
-    pub fn take_diagnostics(&self) -> Vec<Diagnostic> {
-        std::mem::take(&mut *self.diagnostics.borrow_mut())
-    }
-
-    /// Notices последнего `parse` (отброшенные zero-length опы, SPEC §3);
-    /// опустошает буфер.
-    pub fn take_notices(&self) -> Vec<Notice> {
-        std::mem::take(&mut *self.notices.borrow_mut())
+/// Диалектный Notice → core-Notice: kind уже единый core-тип (v0.2 #22) —
+/// копирование скелета {kind, message, op_index, op}.
+impl From<Notice> for CoreNotice {
+    fn from(n: Notice) -> Self {
+        CoreNotice {
+            kind: n.kind,
+            message: n.message,
+            op_index: n.op_index,
+            op: n.op,
+        }
     }
 }
+
+// T5 (INTERFACE-V0.2-DESIGN §5): compile-time assert Send + Sync —
+// interior mutability у адаптера запрещён контрактом trait v0.2.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<LinuxCncAdapter>();
+};
 
 impl Adapter for LinuxCncAdapter {
     fn dialect_name(&self) -> &'static str {
         "linuxcnc"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         let out = parser::parse_program(src, file)?;
-        *self.diagnostics.borrow_mut() = out.diagnostics;
-        *self.notices.borrow_mut() = out.notices;
-        Ok(out.program)
+        Ok(ParseOutput {
+            program: out.program,
+            notices: out.notices.into_iter().map(Into::into).collect(),
+            diagnostics: out.diagnostics,
+        })
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         let out = emit::emit_program(program)?;
-        *self.diagnostics.borrow_mut() = out.warnings;
-        Ok(out.text)
+        Ok(EmitOutput {
+            text: out.text,
+            warnings: Vec::new(),
+            diagnostics: out.warnings,
+        })
     }
 }

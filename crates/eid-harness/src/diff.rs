@@ -496,6 +496,9 @@ fn diff_start(i: usize, sa: &StartPoint, sb: &StartPoint, eps: f64, d: &mut Vec<
 }
 
 fn diff_state(i: usize, a: &State, b: &State, cfg: &DiffConfig, d: &mut Vec<Divergence>) {
+    // v0.2 волна 3:  — провенанс (класс src/sub, EQUIVALENCE
+    // §5) — НЕ сравнивается: сравниваются поля по отдельности, флаг в дифф
+    // не входит (тест eq4: feed_restated_is_out_of_equivalence).
     match (&a.feed, &b.feed) {
         (None, None) => {}
         (Some(x), Some(y)) => {

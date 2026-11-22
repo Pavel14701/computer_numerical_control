@@ -219,13 +219,14 @@ fn cmd_verify(args: &[String]) -> CliResult<()> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| input.display().to_string());
 
-    // 1. parse адаптером диалекта профиля
-    let mut adapter = match AnyAdapter::for_name(profile.dialect.as_name()) {
+    // 1. parse адаптером диалекта профиля (v0.2 #22: notices — в
+    // owning-результате parse, буфера адаптера нет)
+    let adapter = match AnyAdapter::for_name(profile.dialect.as_name()) {
         Ok(a) => a,
         Err(err) => return Err(report_translate_error(&err)),
     };
-    let program = match adapter.parse(&src, &file_name) {
-        Ok(p) => p,
+    let parse_out = match adapter.parse(&src, &file_name) {
+        Ok(out) => out,
         Err(diags) => {
             eprintln!("verify: parse отверг вход ({} диагностики)", diags.len());
             for d in &diags {
@@ -234,7 +235,8 @@ fn cmd_verify(args: &[String]) -> CliResult<()> {
             return Err(CliError::Failure("verify: parse".to_string()));
         }
     };
-    let notices = adapter.take_notices();
+    let program = parse_out.program;
+    let notices = parse_out.notices;
 
     println!(
         "verify: parse OK, {} опов ({})",

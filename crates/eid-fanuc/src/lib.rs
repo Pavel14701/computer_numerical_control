@@ -24,10 +24,10 @@
 //! explicit-end полный круг (SPEC §3 v0.17) — зеркала аудита.
 #![allow(dead_code)]
 
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use std::cell::RefCell;
+use eid_core::verify::{Notice, NoticeKind};
 
 pub mod block;
 pub mod canonicalize;
@@ -37,21 +37,14 @@ pub mod state;
 
 /// Адаптер Fanuc mill (dialect_name = "fanuc-mill").
 /// drop-with-notice (zero-length / DPI-assumed) — не ошибка: notices
-/// буферизуются, забрать через [`FanucAdapter::take_notices`]
-/// (паттерн GrblAdapter, eid-grbl lib.rs). Warnings эмиссии — через
-/// [`FanucAdapter::take_warnings`] (паттерн GrblAdapter::take_warnings).
+/// возвращаются в owning-результате [`ParseOutput`] (v0.2 #22), warnings
+/// эмиссии — в [`EmitOutput`] (без interior mutability; Send + Sync).
 #[derive(Debug, Default)]
-pub struct FanucAdapter {
-    notices: RefCell<Vec<canonicalize::Notice>>,
-    warnings: RefCell<Vec<String>>,
-}
+pub struct FanucAdapter;
 
 impl FanucAdapter {
     pub fn new() -> Self {
-        Self {
-            notices: RefCell::new(Vec::new()),
-            warnings: RefCell::new(Vec::new()),
-        }
+        Self
     }
 
     /// ConversionTarget-таблица легальности эмиссии в Fanuc mill
@@ -64,6 +57,7 @@ impl FanucAdapter {
         use eid_core::diag::ErrorCode::{
             InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN,
         };
+        use emit::FanucEmissionCondition as C;
         emit::FanucEmissionLegality {
             // 9 из 10 видов опов (wcs_set_here запрещён ловушкой №3);
             // frame_preset — мета программы (G92, EQUIVALENCE §1.4).
@@ -79,23 +73,25 @@ impl FanucAdapter {
                 "raw",
                 "frame_preset",
             ],
+            // v0.2 волна 4 (§2.5 В1): ключи — типизированный enum; код-зеркало
+            // обязано совпадать с `cond.code()` (тест legality_table_complete).
             illegal: vec![
                 // COVERAGE §5.1: wcs_set_here эмиссия запрещена как L20
                 // (Fanuc L20 = запись origin G54.1 Pn) — честный отказ.
-                ("wcs_set_here", USEM),
+                (C::WcsSetHere, USEM),
                 // G59.1/.2/.3 — кодов нет (правило §5: вне словаря → SYNTAX);
                 // профиль «map → G54.1 Pn» с notice — этап 8, НЕ дефолт.
-                ("wcs_outside_g54_g59", SYN),
-                ("wcs_define_p_outside_g54_g59", SYN),
+                (C::WcsOutsideG54G59, SYN),
+                (C::WcsDefinePOutsideG54G59, SYN),
                 // G53 ходы прямые (SPEC §5.3) — дуга не представима.
-                ("machine_frame_arc", USEM),
-                ("motion_feed_none", INVAL),         // канон-форма §3/§4
-                ("arc_unknown_start", INVAL),        // IJK требует числового старта
-                ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
-                ("raw_payload_not_hex", INVAL),      // grammar D9 v0.3
-                ("program_end_missing", INVAL),      // структура (SPEC §3)
-                ("program_end_duplicate", INVAL),
-                ("program_end_not_last", INVAL),
+                (C::MachineFrameArc, USEM),
+                (C::MotionFeedNone, INVAL),         // канон-форма §3/§4
+                (C::ArcUnknownStart, INVAL),        // IJK требует числового старта
+                (C::ArcNormalNonCanonical, INVAL),  // нормаль не +ось (§6)
+                (C::RawPayloadNotHex, INVAL),       // grammar D9 v0.3
+                (C::ProgramEndMissing, INVAL),      // структура (SPEC §3)
+                (C::ProgramEndDuplicate, INVAL),
+                (C::ProgramEndNotLast, INVAL),
             ],
             warnings: vec![
                 // COVERAGE §5.1: exact_path → ближайший G61 консервативно
@@ -112,39 +108,59 @@ impl FanucAdapter {
             ],
         }
     }
+}
 
-    /// Notices последнего `parse` (DPI-assumed, отброшенные zero-length,
-    /// auto-PEND); опустошает буфер.
-    pub fn take_notices(&self) -> Vec<canonicalize::Notice> {
-        std::mem::take(&mut *self.notices.borrow_mut())
-    }
-
-    /// Warnings последнего `emit` (потери path_mode/снапшотов); опустошает
-    /// буфер.
-    pub fn take_warnings(&self) -> Vec<String> {
-        std::mem::take(&mut *self.warnings.borrow_mut())
+/// Диалектный Notice → единый core-Notice (NoticeKind-супермножество v0.2;
+/// ZeroLengthDwell унифицирован на core-имя ZeroDwell).
+impl From<canonicalize::Notice> for Notice {
+    fn from(n: canonicalize::Notice) -> Self {
+        Notice {
+            kind: match n.kind {
+                canonicalize::NoticeKind::ZeroLengthMotion => NoticeKind::ZeroLengthMotion,
+                canonicalize::NoticeKind::ZeroLengthArc => NoticeKind::ZeroLengthArc,
+                canonicalize::NoticeKind::ZeroLengthDwell => NoticeKind::ZeroDwell,
+                canonicalize::NoticeKind::MissingProgramEnd => NoticeKind::MissingProgramEnd,
+                canonicalize::NoticeKind::NearDegenerateRArc => NoticeKind::NearDegenerateRArc,
+                canonicalize::NoticeKind::DpiAssumed => NoticeKind::DpiAssumed,
+                canonicalize::NoticeKind::ModalOnRaw => NoticeKind::ModalOnRaw,
+            },
+            message: n.message,
+            op_index: n.op_index,
+            op: n.op,
+        }
     }
 }
+
+// T5 (INTERFACE-V0.2-DESIGN §5): compile-time assert Send + Sync —
+// interior mutability у адаптера запрещён контрактом trait v0.2.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<FanucAdapter>();
+};
 
 impl Adapter for FanucAdapter {
     fn dialect_name(&self) -> &'static str {
         "fanuc-mill"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         let out = canonicalize::canonicalize_with_notices(src, file)?;
-        *self.notices.borrow_mut() = out.notices;
-        Ok(out.program)
+        Ok(ParseOutput {
+            program: out.program,
+            notices: out.notices.into_iter().map(Into::into).collect(),
+            diagnostics: Vec::new(),
+        })
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         let mut warnings = Vec::new();
-        let result = emit::emit_with_warnings(program, &mut warnings);
-        // Warnings — в буфер адаптера (забрать take_warnings); emit_with_
-        // warnings опустошает переданный Vec — берём из EmitOut.
-        if let Ok(out) = &result {
-            *self.warnings.borrow_mut() = out.warnings.clone();
-        }
-        result.map(|out| out.text)
+        let out = emit::emit_with_warnings(program, &mut warnings)?;
+        // EmitOut.warnings и sink-Vec дублируют друг друга (fanuc
+        // emit_with_warnings заполняет оба) — берём из EmitOut.
+        Ok(EmitOutput {
+            text: out.text,
+            warnings: out.warnings,
+            diagnostics: Vec::new(),
+        })
     }
 }

@@ -39,12 +39,13 @@ fn state() -> State {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     }
 }
 
 fn src() -> SrcSpan {
     SrcSpan {
-        file: "fixture".to_string(),
+        file: "fixture".into(),
         line_start: 1,
         col_start: 1,
         line_end: 1,

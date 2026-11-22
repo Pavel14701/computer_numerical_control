@@ -38,22 +38,14 @@ use eid_core::ast::{
     Dir, Frame, Num, Op, PathMode, Program, SrcSpan, StartPoint, State, Units, Wcs,
 };
 use eid_core::diag::{Diagnostic, ErrorCode, Stage};
+use std::sync::Arc;
 
-/// Локальные kind'и notice'ов канонизатора LinuxCNC (зеркально eid-grbl).
-/// MissingProgramEnd — SPEC §3 v0.16: отсутствие M2/M30 = неявный конец
-/// (ProgramEnd добавлен последним опом + notice), не отказ; 18+/32 Tier B —
-/// реальные посты не пишут program-end.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoticeKind {
-    /// rapid/linear: start == end (SPEC §3).
-    ZeroLengthMotion,
-    /// arc: start == end при sweep != 360° и pitch == 0 (SPEC §3/§6; #13).
-    ZeroLengthArc,
-    /// dwell: seconds == 0 (SPEC §5.2).
-    ZeroDwell,
-    /// Программа без M2/M30: ProgramEnd добавлен автоматически последним.
-    MissingProgramEnd,
-}
+/// Kind'и notice'ов канонизатора LinuxCNC — ЕДИНЫЙ core-тип (v0.2 #22,
+/// NoticeKind-супермножество; локальный дубль удалён — конверсия на границе
+/// адаптера больше не нужна). MissingProgramEnd — SPEC §3 v0.16: отсутствие
+/// M2/M30 = неявный конец (ProgramEnd добавлен последним опом + notice),
+/// не отказ; 18+/32 Tier B — реальные посты не пишут program-end.
+pub use eid_core::verify::NoticeKind;
 
 /// Отброшенный/добавленный оп + контекст notice'а.
 #[derive(Debug, Clone)]
@@ -131,7 +123,7 @@ struct LastMotion {
 }
 
 struct St {
-    file: String,
+    file: Arc<str>,
     units: Option<Units>,
     path: Option<PathKind>,
     path_t: Option<Num>,
@@ -141,6 +133,11 @@ struct St {
     feed_inverse: bool, // G93 / G94
     wcs: Wcs,
     feed: Option<Num>,
+    /// Провенанс: F-слово было в кадре-источнике текущей строки (v0.2
+    /// волна 3, §2.4); сброс/установка — в секции «Состояние кадра» хода
+    /// строки; в снапшот — через snapshot() (производные развёртки 2..n —
+    /// m_rapid/m_linear/m_dwell гасят по sub).
+    feed_restated: bool,
     last_s: Option<Num>,
     spindle: Spindle,
     coolant: Coolant,
@@ -168,6 +165,7 @@ impl St {
             tool: self.tool,
             frame,
             wcs: self.wcs,
+            feed_restated: self.feed_restated,
         }
     }
 
@@ -229,7 +227,7 @@ impl St {
 }
 
 fn fatal(
-    file: &str,
+    file: &Arc<str>,
     code: ErrorCode,
     msg: impl Into<String>,
     line_no: usize,
@@ -240,7 +238,7 @@ fn fatal(
         code,
         message: msg.into(),
         src: Some(SrcSpan {
-            file: file.to_string(),
+            file: file.clone(),
             line_start: line_no as u32,
             col_start: 1,
             line_end: line_no as u32,
@@ -280,7 +278,7 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
     }
 
     let mut st = St {
-        file: file.to_string(),
+        file: Arc::from(file),
         units: None,
         path: None,
         path_t: None,
@@ -290,6 +288,7 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
         feed_inverse: false,
         wcs: Wcs::G54,
         feed: None,
+        feed_restated: false,
         last_s: None,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
@@ -764,8 +763,13 @@ fn parse_block(
     // `G91 G28 Z0` терял G91 → следующий `G0 X10 Y10` молча абсолютный).
     // В raw-ветку попадает только построение motion/ops.
     let mut pending: Vec<Op> = Vec::new();
+    // Провенанс F-кадра — по строке (v0.2 волна 3): сброс до абсорбции.
+    st.feed_restated = false;
     if let Some(f) = f_word.clone() {
         st.feed = Some(f);
+        // F-слово было в кадре (restated-F, SPEC §7.4a): маркер кадра важен
+        // независимо от того, изменилось ли ЗНАЧЕНИЕ модального feed.
+        st.feed_restated = true;
     }
     if let Some(s) = s_word.clone() {
         match st.spindle {
@@ -1754,10 +1758,15 @@ fn eps_pos(a: &[f64; 3], b: &[f64; 3]) -> f64 {
 /// Производный ход развёртки (SPEC §11): src исходного блока + sub=<i>.
 /// §7.7: каждый ход несёт полный resolved-state (feed — модальный).
 fn m_rapid(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
+    let mut state = st.snapshot(Frame::Wcs);
+    // Флаг кадра несёт только первый производный (sub == 1).
+    if sub != 1 {
+        state.feed_restated = false;
+    }
     Op::Rapid {
         start: StartPoint::Known(p3_snap(from)),
         end: p3_snap(to),
-        state: st.snapshot(Frame::Wcs),
+        state,
         src,
         sub: Some(sub),
     }
@@ -1765,6 +1774,10 @@ fn m_rapid(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op 
 
 fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
     let mut state = st.snapshot(Frame::Wcs);
+    // Флаг кадра несёт только первый производный (sub == 1).
+    if sub != 1 {
+        state.feed_restated = false;
+    }
     if st.feed_inverse {
         // G93: feed = len(траектории) × F (SPEC §4).
         if let Some(f) = &st.feed {
@@ -1784,9 +1797,14 @@ fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op
 }
 
 fn m_dwell(st: &St, seconds: &Num, src: SrcSpan, sub: u32) -> Op {
+    let mut state = st.snapshot(Frame::Wcs);
+    // Флаг кадра несёт только первый производный (sub == 1).
+    if sub != 1 {
+        state.feed_restated = false;
+    }
     Op::Dwell {
         seconds: seconds.clone(),
-        state: st.snapshot(Frame::Wcs),
+        state,
         src,
         sub: Some(sub),
     }
@@ -2149,21 +2167,15 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
     if !report.diagnostics.is_empty() {
         return Err(report.diagnostics);
     }
-    // Конвертация Notice-типов core → локальные (ZeroLengthMotion/ZeroDwell;
-    // ZeroLengthArc до сюда не доходит — degenerate-дуги отбрасываются на
-    // ходе разбора с notice, но конвертация тотальная для полноты).
-    for n in report.notices {
-        notices.push(Notice {
-            kind: match n.kind {
-                eid_core::verify::NoticeKind::ZeroLengthMotion => NoticeKind::ZeroLengthMotion,
-                eid_core::verify::NoticeKind::ZeroLengthArc => NoticeKind::ZeroLengthArc,
-                eid_core::verify::NoticeKind::ZeroDwell => NoticeKind::ZeroDwell,
-            },
-            message: n.message,
-            op_index: n.op_index,
-            op: n.op,
-        });
-    }
+    // Notice-тип kind'а един (core, v0.2 #22); скелет локальной структуры —
+    // копирование в диалектный Notice (ZeroLengthArc до сюда не доходит —
+    // degenerate-дуги отбрасываются на ходе разбора).
+    notices.extend(report.notices.into_iter().map(|n| Notice {
+        kind: n.kind,
+        message: n.message,
+        op_index: n.op_index,
+        op: n.op,
+    }));
 
     let program = Program {
         eid_version: EID_VERSION.to_string(),

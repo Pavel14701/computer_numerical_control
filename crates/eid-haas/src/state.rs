@@ -97,10 +97,10 @@ pub enum GCode {
     // Группа 00 — one-shot
     Dwell,      // G4 (P-dot dwell: точка = сек / без = мс; X/U-форм НЕТ)
     DataRecord, // G10 (L2 P1–P6 → wcs_define; L2 P0 = слот G52 → Raw RT;
-                // L20 → Raw RT НЕ wcs_set_here; L1/L10–L13 → Raw RT)
-    LocalCs,    // G52 → Err(E_UNSUPPORTED_SEMANTICS) — 2-й жёсткий отказ
-    MachineCs,  // G53 (разовый ход в machine CS, правило §5.3 SPEC)
-    Preset,     // G92 (только пресетка; S-слово → Raw SEM — кламп-формы нет)
+    // L20 → Raw RT НЕ wcs_set_here; L1/L10–L13 → Raw RT)
+    LocalCs,   // G52 → Err(E_UNSUPPORTED_SEMANTICS) — 2-й жёсткий отказ
+    MachineCs, // G53 (разовый ход в machine CS, правило §5.3 SPEC)
+    Preset,    // G92 (только пресетка; S-слово → Raw SEM — кламп-формы нет)
     // Группа 15 — path (семейство exact-stop; СДВИГ значения vs LinuxCNC:
     // G61 = exact_stop, G64 = cancel G61 — bare, квантификатора t НЕТ)
     PathExactStop, // G61
@@ -120,28 +120,28 @@ pub enum GCode {
 ///   → RUNTIME_STATE.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MCode {
-    ProgramEnd,     // M2 / M30 — различие вне L1 (SPEC §5.2)
-    ProgramStop,    // M0 (optional=false)
-    OptionalStop,   // M1 (optional=true; Q8)
-    SpindleCw,      // M3
-    SpindleCcw,     // M4
-    SpindleOff,     // M5
-    ToolChange,     // M6 (+T в блоке; идиома `T01 M06`)
-    ToolChangeAlt,  // M16 — альтернативный код смены
-    CoolantFlood,   // M8 (1:1; M07 Shower/M88 TSC — другие каналы, Raw)
-    CoolantOff,     // M9
-    CoolantShower,  // M7 → Raw{SEMANTICS} — Shower, НЕ mist (≠ Fanuc!)
-    Brake4Engage,   // M10 → Raw{SEMANTICS} — тормоз 4-й оси
-    Brake4Release,  // M11 → Raw{SEMANTICS}
-    Brake5Engage,   // M12 → Raw{SEMANTICS} — тормоз 5-й оси
-    Brake5Release,  // M13 → Raw{SEMANTICS} (≠ Fanuc-идиома шпиндель+СОЖ)
-    SpindleOrient,  // M19 → Raw{SEMANTICS} (энкодер)
-    OutputRelay,    // M29 → Raw{SEMANTICS} — output relay (≠ Fanuc rigid-tap!)
-    SubCallLocal,   // M97 → Raw{SYNTAX} — вызов по N-номеру (Haas-специфика)
-    SubCall,        // M98 → Raw{SYNTAX} (subs, P = O#)
-    SubReturn,      // M99 → Raw{SYNTAX} (возврат / loop в main)
-    JumpLine,       // M46 → Raw{SYNTAX} — jump to line (`?` §10(12))
-    JumpIfNoInput,  // M96 → Raw{SYNTAX} — условный переход по входу
+    ProgramEnd,       // M2 / M30 — различие вне L1 (SPEC §5.2)
+    ProgramStop,      // M0 (optional=false)
+    OptionalStop,     // M1 (optional=true; Q8)
+    SpindleCw,        // M3
+    SpindleCcw,       // M4
+    SpindleOff,       // M5
+    ToolChange,       // M6 (+T в блоке; идиома `T01 M06`)
+    ToolChangeAlt,    // M16 — альтернативный код смены
+    CoolantFlood,     // M8 (1:1; M07 Shower/M88 TSC — другие каналы, Raw)
+    CoolantOff,       // M9
+    CoolantShower,    // M7 → Raw{SEMANTICS} — Shower, НЕ mist (≠ Fanuc!)
+    Brake4Engage,     // M10 → Raw{SEMANTICS} — тормоз 4-й оси
+    Brake4Release,    // M11 → Raw{SEMANTICS}
+    Brake5Engage,     // M12 → Raw{SEMANTICS} — тормоз 5-й оси
+    Brake5Release,    // M13 → Raw{SEMANTICS} (≠ Fanuc-идиома шпиндель+СОЖ)
+    SpindleOrient,    // M19 → Raw{SEMANTICS} (энкодер)
+    OutputRelay,      // M29 → Raw{SEMANTICS} — output relay (≠ Fanuc rigid-tap!)
+    SubCallLocal,     // M97 → Raw{SYNTAX} — вызов по N-номеру (Haas-специфика)
+    SubCall,          // M98 → Raw{SYNTAX} (subs, P = O#)
+    SubReturn,        // M99 → Raw{SYNTAX} (возврат / loop в main)
+    JumpLine,         // M46 → Raw{SYNTAX} — jump to line (`?` §10(12))
+    JumpIfNoInput,    // M96 → Raw{SYNTAX} — условный переход по входу
     InteractiveInput, // M109 → Raw{RUNTIME_STATE} — ожидание ввода оператора
 }
 
@@ -400,8 +400,9 @@ pub fn modal_group(g: GCode) -> Option<ModalGroup> {
         | GCode::Wcs154 => ModalGroup::Wcs12,
         GCode::PathExactStop | GCode::PathBlend => ModalGroup::Path15,
         // Группа 00 (one-shot) — без модальной группы.
-        GCode::Dwell | GCode::DataRecord | GCode::LocalCs | GCode::MachineCs
-        | GCode::Preset => return None,
+        GCode::Dwell | GCode::DataRecord | GCode::LocalCs | GCode::MachineCs | GCode::Preset => {
+            return None
+        }
     })
 }
 
@@ -501,13 +502,13 @@ pub fn g_raw_disposition(value: f64) -> Option<(eid_core::diag::ErrorCode, &'sta
 /// G70/G71/G72; **циклы-отказы G74/G76/G77/G84/G156/G174/G184** (этап 2 —
 /// кадр цикла = ход к отверстию); rapid-% G266.
 pub const RAW_MOTION_G: &[i64] = &[
-    280, 290,   // G28/G29 — home
-    310,        // G31 — probing skip
+    280, 290, // G28/G29 — home
+    310, // G31 — probing skip
     350, 360, 370, 1360, // G35/G36/G37/G136 — автоизмерение
-    120, 130,   // G12/G13 — circular pocket
+    120, 130, // G12/G13 — circular pocket
     700, 710, 720, // G70/G71/G72 — болтовые паттерны
     740, 760, 770, 840, 1560, 1740, 1840, // циклы-отказы (этап 2)
-    2660,       // G266 — rapid %
+    2660, // G266 — rapid %
 ];
 
 /// Плоскость → (axis_0, axis_1, axis_linear) — пары как LinuxCNC/GRBL/Fanuc
@@ -698,7 +699,10 @@ mod tests {
         assert_eq!(g(93.0), Some(GCode::FeedInverse));
         assert_eq!(g(94.0), Some(GCode::FeedPerMin));
         assert_eq!(g(95.0), Some(GCode::FeedPerRev));
-        assert_eq!(modal_group(GCode::FeedInverse), Some(ModalGroup::FeedMode05));
+        assert_eq!(
+            modal_group(GCode::FeedInverse),
+            Some(ModalGroup::FeedMode05)
+        );
         // Единицы — БЕЗ псевдонимов (§2.2: псевдонимов G70/G71 НЕТ).
         assert_eq!(g(20.0), Some(GCode::UnitsIn));
         assert_eq!(g(21.0), Some(GCode::UnitsMm));
@@ -726,7 +730,9 @@ mod tests {
     #[test]
     fn out_of_dictionary_is_none_but_raw_table_known() {
         // G28/G31/G43/G65/G84/G92.1/G113 → вне enum (raw-таблица/generic).
-        for v in [28.0, 31.0, 43.0, 65.0, 84.0, 92.1, 113.0, 129.0, 141.0, 143.0] {
+        for v in [
+            28.0, 31.0, 43.0, 65.0, 84.0, 92.1, 113.0, 129.0, 141.0, 143.0,
+        ] {
             assert_eq!(g(v), None, "G{v} — вне enum");
         }
         // Raw-таблица даёт фиксированные коды.
@@ -753,13 +759,34 @@ mod tests {
             assert_eq!(c, ErrorCode::UnsupportedSemantics, "G{t}");
         }
         // Компенсации: G41/G42/G141 SEMANTICS; G43/G44/G143 MACHINE_TABLE.
-        assert_eq!(g_raw_disposition(41.0).unwrap().0, ErrorCode::UnsupportedSemantics);
-        assert_eq!(g_raw_disposition(42.0).unwrap().0, ErrorCode::UnsupportedSemantics);
-        assert_eq!(g_raw_disposition(141.0).unwrap().0, ErrorCode::UnsupportedSemantics);
-        assert_eq!(g_raw_disposition(43.0).unwrap().0, ErrorCode::RequiresMachineTable);
-        assert_eq!(g_raw_disposition(44.0).unwrap().0, ErrorCode::RequiresMachineTable);
-        assert_eq!(g_raw_disposition(143.0).unwrap().0, ErrorCode::RequiresMachineTable);
-        assert_eq!(g_raw_disposition(234.0).unwrap().0, ErrorCode::UnsupportedSemantics);
+        assert_eq!(
+            g_raw_disposition(41.0).unwrap().0,
+            ErrorCode::UnsupportedSemantics
+        );
+        assert_eq!(
+            g_raw_disposition(42.0).unwrap().0,
+            ErrorCode::UnsupportedSemantics
+        );
+        assert_eq!(
+            g_raw_disposition(141.0).unwrap().0,
+            ErrorCode::UnsupportedSemantics
+        );
+        assert_eq!(
+            g_raw_disposition(43.0).unwrap().0,
+            ErrorCode::RequiresMachineTable
+        );
+        assert_eq!(
+            g_raw_disposition(44.0).unwrap().0,
+            ErrorCode::RequiresMachineTable
+        );
+        assert_eq!(
+            g_raw_disposition(143.0).unwrap().0,
+            ErrorCode::RequiresMachineTable
+        );
+        assert_eq!(
+            g_raw_disposition(234.0).unwrap().0,
+            ErrorCode::UnsupportedSemantics
+        );
         // G113–G129 — слоты вне EID p-домена.
         let (c, r) = g_raw_disposition(113.0).unwrap();
         assert_eq!(c, ErrorCode::UnsupportedSemantics);
@@ -768,9 +795,16 @@ mod tests {
         assert_eq!(c, ErrorCode::UnsupportedSemantics);
         // Неизвестный код → None (generic-ведро SYNTAX).
         assert_eq!(g_raw_disposition(88.8), None);
-        assert_eq!(g_raw_disposition(107.0).map(|(c, _)| c), Some(ErrorCode::UnsupportedSemantics), "G107 — таблица");
+        assert_eq!(
+            g_raw_disposition(107.0).map(|(c, _)| c),
+            Some(ErrorCode::UnsupportedSemantics),
+            "G107 — таблица"
+        );
         // RAW_MOTION_G покрывает движение-класс (включая циклы-отказы этапа 2).
-        for t in [280, 290, 310, 350, 360, 370, 1360, 120, 130, 700, 710, 720, 740, 760, 770, 840, 1560, 1740, 1840, 2660] {
+        for t in [
+            280, 290, 310, 350, 360, 370, 1360, 120, 130, 700, 710, 720, 740, 760, 770, 840, 1560,
+            1740, 1840, 2660,
+        ] {
             assert!(RAW_MOTION_G.contains(&t), "t={t}");
         }
     }
@@ -831,9 +865,21 @@ mod tests {
         assert_eq!(g(54.0).and_then(|c| c.wcs()), Some(Wcs::G54));
         assert_eq!(g(59.0).and_then(|c| c.wcs()), Some(Wcs::G59));
         // НАТИВНАЯ СИММЕТРИЯ: G110–G112 → слоты #7–#9 = Wcs::G59_1..G59_3.
-        assert_eq!(g(110.0).and_then(|c| c.wcs()), Some(Wcs::G59_1), "G110 → p7");
-        assert_eq!(g(111.0).and_then(|c| c.wcs()), Some(Wcs::G59_2), "G111 → p8");
-        assert_eq!(g(112.0).and_then(|c| c.wcs()), Some(Wcs::G59_3), "G112 → p9");
+        assert_eq!(
+            g(110.0).and_then(|c| c.wcs()),
+            Some(Wcs::G59_1),
+            "G110 → p7"
+        );
+        assert_eq!(
+            g(111.0).and_then(|c| c.wcs()),
+            Some(Wcs::G59_2),
+            "G111 → p8"
+        );
+        assert_eq!(
+            g(112.0).and_then(|c| c.wcs()),
+            Some(Wcs::G59_3),
+            "G112 → p9"
+        );
         assert_eq!(modal_group(GCode::Wcs110), Some(ModalGroup::Wcs12));
         assert_eq!(modal_group(GCode::Wcs154), Some(ModalGroup::Wcs12));
         assert_eq!(g(154.0), Some(GCode::Wcs154));
@@ -846,7 +892,10 @@ mod tests {
         assert_eq!(g(40.0), Some(GCode::CompCancel));
         assert_eq!(g(49.0), Some(GCode::LenCompCancel));
         assert_eq!(modal_group(GCode::CompCancel), Some(ModalGroup::Comp07));
-        assert_eq!(modal_group(GCode::LenCompCancel), Some(ModalGroup::LenComp08));
+        assert_eq!(
+            modal_group(GCode::LenCompCancel),
+            Some(ModalGroup::LenComp08)
+        );
         // One-shot коды — без модальной группы.
         for v in [4.0, 10.0, 52.0, 53.0, 92.0] {
             assert_eq!(modal_group(g(v).unwrap()), None, "G{v} — one-shot");
@@ -898,7 +947,10 @@ mod tests {
         // Дефолты NGC (§4.4): G17/G90/инкрементальный центр/G94/mm/G54/G99.
         assert_eq!(m.plane, GCode::PlaneXY);
         assert!(m.dist_abs);
-        assert!(!m.arc_center_abs, "дефолт — инкрементальный центр (группы 04 нет)");
+        assert!(
+            !m.arc_center_abs,
+            "дефолт — инкрементальный центр (группы 04 нет)"
+        );
         assert!(m.feed_per_min);
         assert!(!m.feed_inverse);
         assert_eq!(m.units, Units::Mm);

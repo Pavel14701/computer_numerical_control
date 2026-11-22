@@ -44,10 +44,9 @@ fn e2e_dir() -> PathBuf {
 
 /// parse текста заданным диалектом (регистр адаптеров напрямую).
 fn parse(dialect: &str, src: &str, file: &str) -> eid_core::ast::Program {
-    let mut a = AnyAdapter::for_name(dialect).expect("адаптер диалекта");
-    let p = a.parse(src, file).expect("parse должен пройти");
-    let _ = a.take_notices();
-    p
+    let a = AnyAdapter::for_name(dialect).expect("адаптер диалекта");
+    // v0.2 #22: owning-результат — notices в ParseOutput (буфера нет).
+    a.parse(src, file).expect("parse должен пройти").program
 }
 
 fn assert_equivalent(a: &eid_core::ast::Program, b: &eid_core::ast::Program, what: &str) {
@@ -666,7 +665,11 @@ M2
         .expect("haas-цель live: translate linuxcnc → haas");
     assert_eq!(out.from, "linuxcnc");
     assert_eq!(out.to, "haas", "registry-имя обёртки HaasNamedAdapter");
-    assert!(out.emitted.contains("G61"), "exact_stop эмиссия — G61: {:?}", out.emitted);
+    assert!(
+        out.emitted.contains("G61"),
+        "exact_stop эмиссия — G61: {:?}",
+        out.emitted
+    );
     assert!(out.emitted.contains("M30"), "program_end haas — M30");
     assert!(
         !out.emitted.contains("G91.1"),
@@ -687,11 +690,7 @@ M2
     // haas-профиль жив: mock-sim принимает эмиссию (verify-путь #10/#27)
     let profile = MachineProfile::haas_default();
     let report = mock_sim(&profile, &out.emitted, "out.haas.ngc");
-    assert!(
-        report.is_ok(),
-        "mock-sim haas-профиль: {:?}",
-        report.errors
-    );
+    assert!(report.is_ok(), "mock-sim haas-профиль: {:?}", report.errors);
 }
 
 #[test]
@@ -743,7 +742,11 @@ fn e2e_fanuc_live_target_parse_back_equiv() {
         .expect("fanuc-цель live: translate linuxcnc → fanuc");
     assert_eq!(out.from, "linuxcnc");
     assert_eq!(out.to, "fanuc", "registry-имя обёртки FanucNamedAdapter");
-    assert!(out.emitted.contains("G61"), "exact_stop эмиссия — G61: {:?}", out.emitted);
+    assert!(
+        out.emitted.contains("G61"),
+        "exact_stop эмиссия — G61: {:?}",
+        out.emitted
+    );
     assert!(out.emitted.contains("M30"), "program_end fanuc — M30");
     assert!(
         out.q3_warnings.is_empty(),

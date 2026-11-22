@@ -39,10 +39,11 @@ fn pilot_01_canonical_comparison_zero_divergences() {
     let grbl_adapter = GrblAdapter::new();
     let translated = grbl_adapter
         .parse(&grbl_src, "pilot01.grbl")
-        .expect("grbl parses");
+        .expect("grbl parses")
+        .program;
     // эмитим linuxcnc-текст через LinuxCncAdapter (перевод)
     let lcnc = eid_linuxcnc::LinuxCncAdapter::new();
-    let translated_text = lcnc.emit(&translated).expect("translate to linuxcnc");
+    let translated_text = lcnc.emit(&translated).expect("translate to linuxcnc").text;
 
     // кладём оба в simwork-каталог (монтируемый в docker)
     let work = simwork();

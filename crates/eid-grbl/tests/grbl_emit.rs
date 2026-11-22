@@ -23,6 +23,7 @@ fn parse_grbl(src: &str) -> eid_core::ast::Program {
     GrblAdapter::new()
         .parse(src, "t.ngc")
         .expect("grbl parse ok")
+        .program
 }
 
 /// R1 round-trip: parse → emit → parse → semantic_diff = 0; emit дважды
@@ -31,8 +32,8 @@ fn roundtrip(rel: &str) {
     let src = corpus(rel);
     let a = parse_grbl(&src);
     let ad = GrblAdapter::new();
-    let text1 = ad.emit(&a).expect("emit ok");
-    let text2 = ad.emit(&a).expect("emit ok");
+    let text1 = ad.emit(&a).expect("emit ok").text;
+    let text2 = ad.emit(&a).expect("emit ok").text;
     assert_eq!(text1, text2, "{rel}: emit недетерминирован");
     let b = parse_grbl(&text1);
     let d = semantic_diff(&a, &b, &DiffConfig::default());
@@ -97,17 +98,19 @@ fn regen_v1_13_grbl_from_golden_ast() {
     let golden_text = corpus("13_arc_degenerate_zero_sweep/golden.eid");
     let golden = EidTextAdapter::new()
         .parse(&golden_text, "13.golden.eid")
-        .expect("golden parses");
+        .expect("golden parses")
+        .program;
     let ad = GrblAdapter::new();
-    let text = ad.emit(&golden).expect("emit golden → grbl");
+    let text = ad.emit(&golden).expect("emit golden → grbl").text;
     let v1_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../corpus/tier_a/v1/13_arc_degenerate_zero_sweep");
     let v1_path = v1_dir.join("arc_degenerate_zero_sweep.grbl.ngc");
     std::fs::create_dir_all(&v1_dir).expect("v1 dir");
     std::fs::write(&v1_path, &text).expect("v1 grbl regen write");
     // R1 байт-в-байт: re-emit от re-parse совпадает с файлом.
-    let reparsed = ad.parse(&text, "13_regen.ngc").expect("regen parses");
-    let text2 = ad.emit(&reparsed).expect("re-emit");
+    let reparsed_out = ad.parse(&text, "13_regen.ngc").expect("regen parses");
+    let reparsed = reparsed_out.program;
+    let text2 = ad.emit(&reparsed).expect("re-emit").text;
     assert_eq!(
         text, text2,
         "emit(parse(file)) != file — R1 байт-в-байт сломан"
@@ -116,7 +119,7 @@ fn regen_v1_13_grbl_from_golden_ast() {
     let div = semantic_diff(&golden, &reparsed, &DiffConfig::default());
     assert!(div.is_empty(), "regen divergences vs golden: {div:?}");
     assert!(
-        ad.take_notices().is_empty(),
+        reparsed_out.notices.is_empty(),
         "regen-файл не должен давать drop-notice (полный круг — живой оп)"
     );
     // Полный круг в тексте: 4-опная программа — G0 + ARC-360 (без end-слов)
@@ -148,7 +151,7 @@ fn roundtrip_47_crlf_dollar_dollar() {
         }
         other => panic!("ops[0] не Raw: {other:?}"),
     }
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("$$\r\n"), "CRLF при $$ потерян: {text:?}");
     assert!(!text.contains("$$\r\n\n"), "двойной терминатор после Raw");
 }
@@ -157,7 +160,7 @@ fn roundtrip_47_crlf_dollar_dollar() {
 fn emit_never_uses_r_form() {
     // EQUIVALENCE §4 политика: R не эмитится никогда — только IJK-пара.
     let a = parse_grbl(&corpus("11_arc_R_semicircle/arc_R_semicircle.grbl.ngc"));
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     let arc_line = text
         .lines()
         .find(|l| l.starts_with("G2 "))
@@ -174,7 +177,8 @@ fn vector_27_tool_change_is_syntax() {
     // eid-core magic v0.3 (commit 655d194) — golden.eid снова через R1-парсер.
     let golden = EidTextAdapter::new()
         .parse(&corpus("27_tool_change/golden.eid"), "27.golden.eid")
-        .expect("golden parses");
+        .expect("golden parses")
+        .program;
     let Err(diags) = GrblAdapter::new().emit(&golden) else {
         panic!("#27: ожидался Err(E_UNSUPPORTED_SYNTAX)");
     };
@@ -188,7 +192,7 @@ fn vector_36_preset_order_e14() {
     let a = parse_grbl(&corpus(
         "36_preset_G54_then_switch/preset_G54_then_switch.grbl.ngc",
     ));
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "G21 G90 G94", "заголовок всегда явно");
     assert_eq!(lines[1], "G54", "выборка preset.wcs — строка 2");
@@ -216,7 +220,7 @@ fn negative_n3_config_verbatim() {
     // RAW: payload hex → исходные байты verbatim (same-dialect fidelity).
     let rel = "n3_raw_vendor_block/raw_vendor_block.grbl.ngc";
     let a = parse_grbl(&corpus(rel));
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("$110=250.000"), "{text}");
     roundtrip(rel);
 }
@@ -226,7 +230,7 @@ fn raw_crlf_preserved_byte_exact() {
     // CRLF сохраняется байт-в-байт (бриф п.7; #47 не в GRBL-наборе — синтетика).
     let src = "$110=250.000\r\nG21 G90 G94 G17\nG0 X1.0 Y1.0 Z1.0\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("$110=250.000\r\n"), "CRLF потерян: {text:?}");
 }
 
@@ -235,7 +239,7 @@ fn g53_prefix_and_g10_define_roundtrip() {
     // frame=machine → префикс "G53 " на строке хода; WcsDefine → G10 L2 P..
     let src = "G21 G90 G94 G17\nG10 L2 P1 X1.0 Y2.0 Z3.0\nG0 X1.0 Y0 Z0\nG53 G0 X0.0 Y0.0 Z-5.0\nG0 X1.0 Y0 Z0\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("G10 L2 P1 X1.0000 Y2.0000 Z3.0000"), "{text}");
     assert!(text.contains("G53 G0 X0.0000 Y0.0000 Z-5.0000"), "{text}");
     let b = parse_grbl(&text);
@@ -248,7 +252,7 @@ fn plane_switch_and_g18_pair() {
     // G18 → пара I+K; смена плоскости эмитится перед дугой (бриф п.1/п.4).
     let src = "G21 G90 G94\nG0 X0 Y0 Z0\nG18\nG3 X0.0 Y5.0 Z0.0 I0.0 K5.0 F100.0\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     let arc_line = text
         .lines()
         .find(|l| l.starts_with("G3"))
@@ -267,7 +271,7 @@ fn plane_switch_and_g18_pair() {
 fn dwell_and_stops_emission() {
     let src = "G21 G90 G94\nG0 X1 Y1 Z1\nG4 P1.5\nM0\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("G4 P1.5000"), "{text}");
     assert!(text.contains("M0"), "{text}");
     assert!(
@@ -280,8 +284,42 @@ fn dwell_and_stops_emission() {
 // EmissionLegality — ConversionTarget-таблица (итерация 4)
 // ---------------------------------------------------------------------------
 
+// v0.2 волна 4 (§2.5 В1): коды условий — тотальные match-функции enum'а
+// (таблица — данные; согласие — legality_table_complete ниже).
+use eid_grbl::emit::GrblEmissionCondition as Cond;
+
 fn legality_table() -> eid_grbl::emit::EmissionLegality {
     GrblAdapter::new().emission_legality()
+}
+
+/// T9 (v0.2 волна 4): таблица = данные, КОДЫ — тотальные match-функции:
+/// каждая пара (условие, код) в таблице обязана совпадать с `cond.code()`;
+/// каждое условие объявлено ровно один раз.
+#[test]
+fn legality_table_complete() {
+    let t = legality_table();
+    let all = [
+        Cond::ToolChange,
+        Cond::WcsOutsideG54G59,
+        Cond::MotionFeedNone,
+        Cond::ArcUnknownStart,
+        Cond::ArcNormalNonCanonical,
+        Cond::RawPayloadNotHex,
+        Cond::ProgramEndMissing,
+        Cond::ProgramEndDuplicate,
+        Cond::ProgramEndNotLast,
+    ];
+    for cond in all {
+        let n = t.illegal.iter().filter(|(c, _)| *c == cond).count();
+        assert_eq!(n, 1, "условие {} в таблице ровно один раз", cond.as_str());
+        let (_, code) = t.illegal.iter().find(|(c, _)| *c == cond).unwrap();
+        assert_eq!(
+            *code,
+            cond.code(),
+            "код {} = тотальный match",
+            cond.as_str()
+        );
+    }
 }
 
 #[test]
@@ -308,10 +346,8 @@ fn legality_table_matches_manifest_r4_expect() {
 
     let mut manifest_codes: Vec<ErrorCode> = Vec::new();
     for v in &manifest.vectors {
-        if let Some(outcome) = v.r4_expect.get("grbl-1.1") {
-            if let eid_harness::manifest::Outcome::Code(code) = outcome {
-                manifest_codes.push(*code);
-            }
+        if let Some(eid_harness::manifest::Outcome::Code(code)) = v.r4_expect.get("grbl-1.1") {
+            manifest_codes.push(*code);
         }
     }
     assert!(
@@ -330,13 +366,15 @@ fn legality_table_matches_manifest_r4_expect() {
         if *code == ErrorCode::UnsupportedSyntax {
             assert!(
                 manifest_codes.contains(code),
-                "SYNTAX-условие `{cond}` таблицы не покрыто manifest r4_expect"
+                "SYNTAX-условие `{}` таблицы не покрыто manifest r4_expect",
+                cond.as_str()
             );
         } else {
             assert_eq!(
                 *code,
                 ErrorCode::InvalidInput,
-                "условие `{cond}`: не-SYNTAX класс таблицы обязан быть канон-формой (INVALID)"
+                "условие `{}`: не-SYNTAX класс таблицы обязан быть канон-формой (INVALID)",
+                cond.as_str()
             );
         }
     }
@@ -347,9 +385,9 @@ fn legality_negative_tool_change_via_table() {
     // Отказ #27 идёт ЧЕРЕЗ таблицу: код диагностики == code_of("tool_change").
     let golden = EidTextAdapter::new()
         .parse(&corpus("27_tool_change/golden.eid"), "27.golden.eid")
-        .expect("golden parses");
-    let table = legality_table();
-    let expected = table.code_of("tool_change").expect("tool_change в таблице");
+        .expect("golden parses")
+        .program;
+    let expected = Cond::ToolChange.code();
     assert_eq!(expected, ErrorCode::UnsupportedSyntax);
     let Err(diags) = GrblAdapter::new().emit(&golden) else {
         panic!("#27: ожидался Err из таблицы легальности");
@@ -380,7 +418,7 @@ fn legality_table_shape_invariants() {
     }
     assert!(!table.is_legal_kind("tool_change"));
     // illegal: условия уникальны.
-    let mut conds: Vec<&str> = table.illegal.iter().map(|(c, _)| *c).collect();
+    let mut conds: Vec<&str> = table.illegal.iter().map(|(c, _)| c.as_str()).collect();
     conds.sort_unstable();
     conds.dedup();
     assert_eq!(conds.len(), table.illegal.len(), "дубли условий в illegal");
@@ -408,6 +446,7 @@ fn two_move_prog(
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let lin = |s: StartPoint, e: Point3, coolant: Coolant, feed: Option<f64>| Op::Linear {
         start: s,
@@ -491,7 +530,8 @@ fn spec_cov_emit_coolant_all_transitions() {
     for (a, b, pre, mid) in cases {
         let text = ad
             .emit(&two_move_prog(a, b, Spindle::Off, Some(100.0)))
-            .expect("emit ok");
+            .expect("emit ok")
+            .text;
         let head = format!("G21 G90 G94\nG54\n{pre}G1 X1.0000 Y0.0000 Z0.0000 F100.0000\n{mid}");
         assert!(
             text.starts_with(&head),
@@ -511,7 +551,7 @@ fn spec_cov_emit_coolant_partial_off_reenables() {
         Spindle::Off,
         Some(100.0),
     );
-    let text = ad.emit(&flood_to_mist).expect("emit ok");
+    let text = ad.emit(&flood_to_mist).expect("emit ok").text;
     assert!(text.contains("F100.0000\nM9\nM7\nG1 X2.0000"), "{text}");
     let mist_to_flood = two_move_prog(
         coolant(false, true),
@@ -519,7 +559,7 @@ fn spec_cov_emit_coolant_partial_off_reenables() {
         Spindle::Off,
         Some(100.0),
     );
-    let text = ad.emit(&mist_to_flood).expect("emit ok");
+    let text = ad.emit(&mist_to_flood).expect("emit ok").text;
     assert!(
         text.contains("M7\nG1 X1.0000 Y0.0000 Z0.0000 F100.0000\nM9\nM8\nG1 X2.0000"),
         "{text}"
@@ -531,7 +571,7 @@ fn spec_cov_emit_spindle_transitions() {
     // off→cw→off→ccw; S-ревизия на работающем шпинделе (cw 10000→12000).
     let src = "G21 G90 G94 G17\nG0 X1 Y1 Z1\nM3 S10000\nG0 X2 Y1 Z1\nM5\nG0 X3 Y1 Z1\nM4 S8000\nG0 X4 Y1 Z1\nS12000\nG0 X5 Y1 Z1\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     let want = "G21 G90 G94\nG54\nG0 X1.0000 Y1.0000 Z1.0000\nM3 S10000.0000\nG0 X2.0000 Y1.0000 Z1.0000\nM5\nG0 X3.0000 Y1.0000 Z1.0000\nM4 S8000.0000\nG0 X4.0000 Y1.0000 Z1.0000\nM4 S12000.0000\nG0 X5.0000 Y1.0000 Z1.0000\nM2\n";
     assert_eq!(text, want, "шпиндельная дельта");
     let b = parse_grbl(&text);
@@ -548,7 +588,6 @@ fn spec_cov_emit_legality_conditions_via_table() {
     // (защита раньше по потоку; код отказа тот же).
     use eid_core::diag::Stage;
     let ad = GrblAdapter::new();
-    let table = ad.emission_legality();
     let n = |v: f64| Num::new(format!("{v}"), v);
     let span0 = || SrcSpan {
         file: "t".into(),
@@ -564,6 +603,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         tool: None,
         frame: Frame::Wcs,
         wcs,
+        feed_restated: false,
     };
     let lin = |unknown_start: bool, feed: Option<f64>, wcs: Wcs| Op::Linear {
         start: if unknown_start {
@@ -639,8 +679,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         panic!("feed_none: ожидался Err")
     };
     assert!(
-        d.iter()
-            .all(|x| x.code == table.code_of("motion_feed_none").unwrap()),
+        d.iter().all(|x| x.code == Cond::MotionFeedNone.code()),
         "motion_feed_none: фактические диагностики: {d:?}"
     );
     // 2. wcs_outside_g54_g59 — гейт Emit или Verify (eid-core дублирует).
@@ -648,8 +687,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         panic!("wcs: ожидался Err")
     };
     assert!(
-        d.iter()
-            .all(|x| x.code == table.code_of("wcs_outside_g54_g59").unwrap()),
+        d.iter().all(|x| x.code == Cond::WcsOutsideG54G59.code()),
         "wcs: {d:?}"
     );
     // 3. raw_payload_not_hex — гейт Emit.
@@ -664,23 +702,22 @@ fn spec_cov_emit_legality_conditions_via_table() {
     ])) else {
         panic!("raw_hex: ожидался Err")
     };
-    assert!(
-        d.iter()
-            .all(|x| x.code == table.code_of("raw_payload_not_hex").unwrap()
-                && x.stage == Stage::Emit)
-    );
+    assert!(d
+        .iter()
+        .all(|x| x.code == Cond::RawPayloadNotHex.code() && x.stage == Stage::Emit));
     // 4–5. arc_unknown_start / arc_normal_non_canonical — Err INVALID
     // (код из таблицы; eid-core может сработать тем же классом раньше).
     for (arc_op, cond) in [
-        (arc(true, [0.0, 0.0, 1.0]), "arc_unknown_start"),
-        (arc(false, [0.6, 0.8, 0.0]), "arc_normal_non_canonical"),
+        (arc(true, [0.0, 0.0, 1.0]), Cond::ArcUnknownStart),
+        (arc(false, [0.6, 0.8, 0.0]), Cond::ArcNormalNonCanonical),
     ] {
         let Err(d) = ad.emit(&prog(vec![arc_op, end()])) else {
-            panic!("{cond}: ожидался Err")
+            panic!("{}: ожидался Err", cond.as_str())
         };
         assert!(
-            d.iter().all(|x| x.code == table.code_of(cond).unwrap()),
-            "{cond}: код не из таблицы"
+            d.iter().all(|x| x.code == cond.code()),
+            "{}: код не из таблицы",
+            cond.as_str()
         );
     }
     // 6–8. program_end missing/duplicate/not_last — INVALID; структура
@@ -688,20 +725,21 @@ fn spec_cov_emit_legality_conditions_via_table() {
     for (ops, cond) in [
         (
             vec![lin(false, Some(100.0), Wcs::G54)],
-            "program_end_missing",
+            Cond::ProgramEndMissing,
         ),
-        (vec![end(), end()], "program_end_duplicate"),
+        (vec![end(), end()], Cond::ProgramEndDuplicate),
         (
             vec![end(), lin(false, Some(100.0), Wcs::G54)],
-            "program_end_not_last",
+            Cond::ProgramEndNotLast,
         ),
     ] {
         let Err(d) = ad.emit(&prog(ops)) else {
-            panic!("{cond}: ожидался Err")
+            panic!("{}: ожидался Err", cond.as_str())
         };
         assert!(
-            d.iter().all(|x| x.code == table.code_of(cond).unwrap()),
-            "{cond}: код не из таблицы"
+            d.iter().all(|x| x.code == cond.code()),
+            "{}: код не из таблицы",
+            cond.as_str()
         );
     }
 
@@ -726,8 +764,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         panic!("wcs-rapid: ожидался Err")
     };
     assert!(
-        d.iter()
-            .all(|x| x.code == table.code_of("wcs_outside_g54_g59").unwrap()),
+        d.iter().all(|x| x.code == Cond::WcsOutsideG54G59.code()),
         "wcs-rapid: {d:?}"
     );
     let Err(d) = ad.emit(&prog(vec![
@@ -742,8 +779,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         panic!("wcs-dwell: ожидался Err")
     };
     assert!(
-        d.iter()
-            .all(|x| x.code == table.code_of("wcs_outside_g54_g59").unwrap()),
+        d.iter().all(|x| x.code == Cond::WcsOutsideG54G59.code()),
         "wcs-dwell: {d:?}"
     );
     let Err(d) = ad.emit(&prog(vec![
@@ -781,7 +817,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
     };
     assert!(
         d.iter()
-            .all(|x| x.code == table.code_of("arc_normal_non_canonical").unwrap()),
+            .all(|x| x.code == Cond::ArcNormalNonCanonical.code()),
         "normal: {d:?}"
     );
 }
@@ -792,7 +828,7 @@ fn spec_cov_emit_planes_exact_text() {
     // (I+K для G18; J+K для G19); non-unit normal → Err INVALID из plane_of.
     let src = "G21 G90 G94 G18\nG0 X0 Y0 Z0\nG2 X5.0 Y2.0 Z-5.0 I5.0 K0.0 F100.0\nG19\nG3 X5.0 Y7.0 Z-10.0 J5.0 K0.0 F100.0\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert!(text.contains("G18\n"), "{text}");
     assert!(text.contains("G19\n"), "{text}");
     assert!(
@@ -819,7 +855,7 @@ fn spec_cov_emit_wcs_cycle_exact_text() {
     }
     src.push_str("M2\n");
     let a = parse_grbl(&src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     for g in ["G54\n", "G55\n", "G56\n", "G57\n", "G58\n", "G59\n"] {
         assert!(text.contains(g), "{g} отсутствует: {text}");
     }
@@ -833,7 +869,7 @@ fn spec_cov_emit_spindle_same_value_not_reemitted() {
     // (дельта по spindle_eq; ловит re-emit мутантов).
     let src = "G21 G90 G94 G17\nM3 S10000\nG0 X1 Y1 Z1\nG0 X2 Y1 Z1\nG0 X3 Y1 Z1\nM2\n";
     let a = parse_grbl(src);
-    let text = GrblAdapter::new().emit(&a).expect("emit ok");
+    let text = GrblAdapter::new().emit(&a).expect("emit ok").text;
     assert_eq!(text.matches("M3").count(), 1, "повторная M3: {text}");
 }
 
@@ -877,6 +913,7 @@ fn spec_cov_emit_f_bootstrap_on_rapid() {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let span0 = || SrcSpan {
         file: "t".into(),
@@ -920,7 +957,7 @@ fn spec_cov_emit_f_bootstrap_on_rapid() {
             Op::ProgramEnd { src: span0() },
         ],
     };
-    let text = GrblAdapter::new().emit(&prog).expect("emit ok");
+    let text = GrblAdapter::new().emit(&prog).expect("emit ok").text;
     assert!(
         text.contains("G0 X1.0000 Y0.0000 Z0.0000 F150.0000"),
         "F не забутстрапился на rapid: {text}"
@@ -959,9 +996,11 @@ fn spec_cov_emit_path_mode_warnings() {
     for (rel, want) in cases {
         let g = EidTextAdapter::new()
             .parse(&corpus(rel), rel)
-            .expect("golden parses");
-        let text = ad.emit(&g).expect("emit Ok (warning, не отказ)");
-        let warnings = ad.take_warnings();
+            .expect("golden parses")
+            .program;
+        let out = ad.emit(&g).expect("emit Ok (warning, не отказ)");
+        let text = out.text;
+        let warnings = out.warnings;
         assert_eq!(
             warnings.len(),
             1,
@@ -999,6 +1038,7 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let st_none = State {
         feed: None,
@@ -1007,6 +1047,7 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let p3 = |x: f64, y: f64, z: f64| Point3 {
         x: n(x),
@@ -1061,7 +1102,7 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
         ],
     };
     let ad = GrblAdapter::new();
-    let text = ad.emit(&prog).expect("emit ok");
+    let text = ad.emit(&prog).expect("emit ok").text;
     // Второй блок: traverse с F (sub=1 переизлучение при неизменном значении),
     // подход/feed/отвод без F — только traverse несёт F120.
     let second_block: Vec<&str> = text
@@ -1081,13 +1122,14 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
     let f_count = text.lines().filter(|l| l.contains(" F120.0000")).count();
     assert_eq!(f_count, 2, "оба блока с F:\n{text}");
     // Детерминизм: emit дважды байт-в-байт.
-    let text2 = ad.emit(&prog).expect("emit ok 2");
+    let text2 = ad.emit(&prog).expect("emit ok 2").text;
     assert_eq!(text, text2, "emit недетерминирован");
     // R1-семантика: F-переизлучение на sub=1 не меняет AST при парс-бэке
     // (feed модален) — semantic_diff = 0 против исходного АСТа.
     let reparsed = GrblAdapter::new()
         .parse(&text, "t_reparse.ngc")
-        .expect("reparse");
+        .expect("reparse")
+        .program;
     let d = semantic_diff(&prog, &reparsed, &DiffConfig::default());
     assert!(d.is_empty(), "round-trip divergences: {d:?}");
 }
@@ -1101,7 +1143,9 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
 fn mround_grbl_free_fn_emit_wrapper() {
     // Свободная функция eid_grbl::emit::emit = обёртка emit_with_warnings
     // (ни один тест её не вызывал — FnValue-мутанты выживали).
-    let a = parse_grbl(&corpus("03_feed_survives_rapid/feed_survives_rapid.grbl.ngc"));
+    let a = parse_grbl(&corpus(
+        "03_feed_survives_rapid/feed_survives_rapid.grbl.ngc",
+    ));
     let text = eid_grbl::emit::emit(&a).expect("free emit ok");
     assert!(text.contains("G21"), "{text}");
     assert!(text.contains("G0") || text.contains("G1"), "{text}");
@@ -1120,14 +1164,35 @@ fn mround_grbl_flipped_normal_rejected() {
     let Err(d) = GrblAdapter::new().emit(&p) else {
         panic!("перевёрнутая нормаль обязана быть отклонена")
     };
-    assert!(
-        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
-        "{d:?}"
-    );
-    assert!(
-        d.iter().any(|x| x.message.contains("+axis")),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
+    assert!(d.iter().any(|x| x.message.contains("+axis")), "{d:?}");
+}
+
+#[test]
+fn restated_f_reemitted_from_ast_flag() {
+    // T8 (v0.2 волна 3): restated-F из AST — F на каждом кадре с F-словом,
+    // включая тот же значение (GRBL излучает F даже на rapid-кадре).
+    let ad = GrblAdapter::new();
+    let p = ad
+        .parse("G21\nG90\nG1 X10. F100.\nG1 X20. F100.\nM2\n", "t.ngc")
+        .expect("parse ok")
+        .program;
+    let text = ad.emit(&p).expect("emit ok").text;
+    let f_count = text.matches("F100").count();
+    assert_eq!(f_count, 2, "restated-F переизлучён:\n{text}");
+}
+
+#[test]
+fn inherited_f_not_reemitted() {
+    // T8 (б): наследованный feed (нет F-слова) → F ровно одно.
+    let ad = GrblAdapter::new();
+    let p = ad
+        .parse("G21\nG90\nG1 X10. F100.\nG1 X20.\nM2\n", "t.ngc")
+        .expect("parse ok")
+        .program;
+    let text = ad.emit(&p).expect("emit ok").text;
+    let f_count = text.matches("F100").count();
+    assert_eq!(f_count, 1, "наследованный кадр без F:\n{text}");
 }
 
 #[test]
@@ -1137,8 +1202,9 @@ fn mround_grbl_feed_word_not_repeated() {
     let ad = GrblAdapter::new();
     let p = ad
         .parse("G21\nG90\nG1 X10. F100.\nG1 X20.\nG1 X30.\nM2\n", "t.ngc")
-        .expect("parse ok");
-    let text = ad.emit(&p).expect("emit ok");
+        .expect("parse ok")
+        .program;
+    let text = ad.emit(&p).expect("emit ok").text;
     let f_count = text.matches("F100").count();
     assert_eq!(f_count, 1, "F при том же feed не повторяется:\n{text}");
 }
@@ -1151,7 +1217,8 @@ fn mround_grbl_duplicate_program_end_rejected() {
     let ad = GrblAdapter::new();
     let mut p = ad
         .parse("G21\nG1 X10. F100.\nM2\n", "t.ngc")
-        .expect("parse ok");
+        .expect("parse ok")
+        .program;
     p.ops.push(Op::ProgramEnd {
         src: eid_core::ast::SrcSpan {
             file: "t.ngc".into(),
@@ -1164,8 +1231,5 @@ fn mround_grbl_duplicate_program_end_rejected() {
     let Err(d) = ad.emit(&p) else {
         panic!("дубликат program_end обязан быть отклонён")
     };
-    assert!(
-        d.iter().any(|x| x.message.contains("duplicate")),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.message.contains("duplicate")), "{d:?}");
 }

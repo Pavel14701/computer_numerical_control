@@ -5,12 +5,12 @@ ERR | published | linuxcnc | gcb_ContourHolesOnGrid_90deg.ngc | E_INVALID_INPUT 
 ERR | published | linuxcnc | gcb_ContourRect_G40.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRect_G41.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 0ms
-OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 28ms
-OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 1ms
-OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 1ms
+OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 1ms
+OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 36ms
+OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 2ms
+OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 2ms
 ERR | published | linuxcnc | gcb_contourMillHolesGrid_001.gcode.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 0ms
+OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 1ms
 ERR | published | linuxcnc | gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 OK | published | linuxcnc | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | 101 ops | 2ms
 OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 6ms
@@ -29,8 +29,8 @@ OK | published | grbl | grbljs_circle.gcode | 8 ops | 0ms
 ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
 OK | published | grbl | grbljs_g2-arc.gcode | 10 ops | 0ms
 OK | published | grbl | grbljs_helical-thread-milling.gcode | 14 ops | 0ms
-OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 26ms
-OK | published | grbl | grbljs_jsdc.gcode | 2378 ops | 26ms
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 28ms
+OK | published | grbl | grbljs_jsdc.gcode | 2378 ops | 27ms
 ERR | published | grbl | grbljs_sample.gcode | E_UNSUPPORTED_SEMANTICS | G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)
 ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
 ERR | published | grbl-подобный | mit_cws_torno.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
@@ -47,26 +47,26 @@ ERR | published | grbl-подобный | mit_pycnc_test_parser.gcode | E_INVALI
 OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 23ms
 ERR | published | grbl-подобный | mit_shpk_ncdrill1.tap | E_INVALID_INPUT | naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)
 OK | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | 80 ops | 1ms
-OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 12ms
+OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 11ms
 OK | published | grbl-подобный | mit_svg2g_square.gcode | 51 ops | 0ms
 ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
-OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 38ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 31ms
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 36ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 28ms
 ERR | published | fanuc-подобный | mpe_g65_macro_centerline_probe.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 ERR | published | fanuc-подобный | mpe_g65_macro_deep_drill.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 ERR | published | fanuc-подобный | mpe_g65_macro_material_verify.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 ERR | published | fanuc-подобный | mpe_while_clear_variables.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 OK | published | linuxcnc | olle_bricka_short_wall.tap | 436 ops | 6ms
 OK | published | linuxcnc | olle_bricka_slots.tap | 12 ops | 0ms
-OK | published | linuxcnc | olle_ivar_engraving_test.tap | 1847 ops | 22ms
-OK | published | linuxcnc | olle_top_cont.tap | 419 ops | 5ms
+OK | published | linuxcnc | olle_ivar_engraving_test.tap | 1847 ops | 21ms
+OK | published | linuxcnc | olle_top_cont.tap | 419 ops | 6ms
 OK | published | linuxcnc | olle_top_trace_finish.tap | 188 ops | 2ms
 OK | published | grbl-подобный | vince_BewareOfDog_v10.nc | 1 ops | 0ms
 ERR | published | grbl-подобный | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
 ERR | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
 OK | published | grbl-подобный | vince_BrushRabbitv4.nc | 1 ops | 0ms
-OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 13ms
-OK | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | 118562 ops | 1476ms
+OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 12ms
+OK | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | 118562 ops | 1412ms
 ERR | published | grbl-подобный | vis_hse1p.tap | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.1291 vs ρ_end 0.1302 (SPEC §6; CORPUS n5a)
 ERR | published | grbl-подобный | vis_knight.tap | E_INVALID_INPUT | program end is not the last block (CORPUS n12)
 OK | local-dev | linuxcnc | cncsim_g154_g43_haas_vf2.nc | 47 ops | 0ms
@@ -83,7 +83,7 @@ ERR | local-dev | linuxcnc | lcnc_m70_m72_demo.ngc | E_UNSUPPORTED_SEMANTICS | �
 ERR | local-dev | linuxcnc | lcnc_m73_demo.ngc | E_UNSUPPORTED_SEMANTICS | переключение единиц в середине программы — одна система единиц (SPEC §2.5/§3, N7)
 ERR | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
 OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 20ms
+OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 21ms
 OK | local-dev | linuxcnc | lcnc_nc_files_b-index.ngc | 11 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 4ms
 OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 0ms

@@ -135,7 +135,13 @@ use crate::diag::{Diagnostic, ErrorCode, Stage};
 // только R1-AST).
 // ===========================================================================
 
-/// Класс отброшенного опа.
+/// Класс отброшенного/пометнённого опа. v0.2 (#22, INTERFACE-V0.2-DESIGN
+/// §2.2): супермножество всех диалектных NoticeKind (фактические множества
+/// по коду: grbl += NearDegenerateRArc/MissingProgramEnd/ModalOnRaw;
+/// linuxcnc += MissingProgramEnd; fanuc/haas += ZeroLengthDwell(→ZeroDwell)/
+/// MissingProgramEnd/NearDegenerateRArc/DpiAssumed/ModalOnRaw; haas также
+/// WcsExtended/CycleParamAssumed). Диалектные структуры Notice остаются
+/// внутренними и конвертируют на границе адаптера (From-impl).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
     /// rapid/linear: start == end (SPEC §3).
@@ -143,8 +149,38 @@ pub enum NoticeKind {
     /// arc: start == end при sweep != 360° и pitch == 0 (SPEC §3/§6; включает
     /// sweep=0 — CORPUS вектор #13).
     ZeroLengthArc,
-    /// dwell: seconds == 0 (SPEC §5.2).
+    /// dwell: seconds == 0 (SPEC §5.2). (Диалектное имя fanuc/haas —
+    /// ZeroLengthDwell — унифицировано на core-имя.)
     ZeroDwell,
+    /// R-форма около 180°: амплитификация погрешности центра
+    /// (EQUIVALENCE §4) — notice при живом опе (grbl/fanuc/haas).
+    NearDegenerateRArc,
+    /// Программа без M2/M30: неявный конец — ProgramEnd добавлен последним
+    /// (SPEC §3 v0.16; grbl/linuxcnc/fanuc/haas).
+    MissingProgramEnd,
+    /// raw-motion-G с осевыми словами: модальное состояние абсорбировано,
+    /// но motion-режим НЕ продолжается (SPEC §8.6 правило 6, v0.17;
+    /// grbl/fanuc/haas).
+    ModalOnRaw,
+    /// bare-integer в слове дробного домена прочитан по DPI/machinists
+    /// notation (fanuc ruling 2 / haas Setting 77/162).
+    DpiAssumed,
+    /// Расширенные слоты WCS #7–#9 (haas G110–G112/G154 P1–P3 → p=7..9).
+    WcsExtended,
+    /// G73 retract-δ применена канон-константа (haas, COVERAGE §6.19).
+    CycleParamAssumed,
+}
+
+impl std::fmt::Display for Notice {
+    /// Единый строковый формат notice (формат AnyAdapter::take_notices v0.1
+    /// сохранён 1:1): `{kind:?}: {message} (op {op_index})`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?}: {} (op {})",
+            self.kind, self.message, self.op_index
+        )
+    }
 }
 
 /// Отброшенный оп + контекст отброса.

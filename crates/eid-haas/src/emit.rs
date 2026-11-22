@@ -431,7 +431,7 @@ pub fn emit_with_warnings(
     // Легальность эмиссии — против таблицы (COVERAGE §5.2), fail-fast; коды —
     // только из тотальных match-функций enum'ов (единый путь отказа, без
     // паник «таблица и эмиттер разошлись» — INTERFACE-V0.2 §2.5).
-    let table = crate::HaasAdapter::default().emission_legality();
+    let table = crate::HaasAdapter::new().emission_legality();
     let problems = validate_haas(program);
     if !problems.is_empty() {
         return Err(problems);
@@ -450,7 +450,7 @@ pub fn emit_with_warnings(
 /// исключительтельно `cond.code()` (тотальный match; единый путь отказа).
 fn validate_haas(program: &Program) -> Vec<Diagnostic> {
     let mut v = Vec::new();
-    let table = crate::HaasAdapter::default().emission_legality();
+    let table = crate::HaasAdapter::new().emission_legality();
     // «Последний не-Raw оп = PEND» — Haas-хвост (Raw-subs после M30, §4.4)
     // не нарушает структуру; не-Raw опыт после PEND — нарушение.
     let mut last_is_end = true; // отсутствует не-Raw оп ⇒ handled end_count==0
@@ -760,11 +760,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    fn op(
-        &mut self,
-        op: &Op,
-        warnings: &mut Vec<String>,
-    ) -> Result<(), Vec<Diagnostic>> {
+    fn op(&mut self, op: &Op, warnings: &mut Vec<String>) -> Result<(), Vec<Diagnostic>> {
         match op {
             Op::Rapid {
                 end, state, sub, ..
@@ -973,7 +969,10 @@ impl<'a> Writer<'a> {
                 // Some(1)) — иначе повторный F-кадр с тем же значением теряет
                 // маркер кадра при reparse.
                 let first_derived = sub == Some(1);
-                if changed || first_derived {
+                // v0.2 волна 3 (SPEC §7.4a): restated-F теперь из AST —
+                // провенанс «F-слово было в кадре» (точнее sub=1-эвристики).
+                let restated = state.feed_restated;
+                if changed || first_derived || restated {
                     self.cur_feed = Some(f.clone());
                     Ok(format!(" F{}", fmt_num(f.value)))
                 } else {

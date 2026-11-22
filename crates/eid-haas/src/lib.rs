@@ -56,28 +56,21 @@ pub mod emit;
 pub mod lexer;
 pub mod state;
 
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use std::cell::RefCell;
+use eid_core::verify::{Notice, NoticeKind};
 
 /// Адаптер Haas mill NGC (dialect_name = "haas-mill").
 /// drop-with-notice (zero-length / DPI-assumed) — не ошибка: notices
-/// буферизуются, забрать через [`HaasAdapter::take_notices`]
-/// (паттерн GrblAdapter/FanucAdapter). Warnings эмиссии — через
-/// [`HaasAdapter::take_warnings`].
+/// возвращаются в owning-результате [`ParseOutput`] (v0.2 #22), warnings
+/// эмиссии — в [`EmitOutput`] (без interior mutability; Send + Sync).
 #[derive(Debug, Default)]
-pub struct HaasAdapter {
-    notices: RefCell<Vec<canonicalize::Notice>>,
-    warnings: RefCell<Vec<String>>,
-}
+pub struct HaasAdapter;
 
 impl HaasAdapter {
     pub fn new() -> Self {
-        Self {
-            notices: RefCell::new(Vec::new()),
-            warnings: RefCell::new(Vec::new()),
-        }
+        Self
     }
 
     /// ConversionTarget-таблица легальности эмиссии в Haas mill NGC
@@ -109,10 +102,7 @@ impl HaasAdapter {
                 (emit::HaasEmissionCondition::WcsSetHere, USEM),
                 // L2-домен Haas P0..P6 (p7..9 = расширенные origin — L20,
                 // profile-опция НЕ дефолт; COVERAGE §5.2).
-                (
-                    emit::HaasEmissionCondition::WcsDefinePOutsideL2Domain,
-                    SYN,
-                ),
+                (emit::HaasEmissionCondition::WcsDefinePOutsideL2Domain, SYN),
                 // M07 = Shower — другой канал СОЖ; mist-spray не представим.
                 (
                     emit::HaasEmissionCondition::CoolantMistUnrepresentable,
@@ -149,41 +139,63 @@ impl HaasAdapter {
             ],
         }
     }
+}
 
-    /// Notices последнего `parse` (DPI-assumed, отброшенные zero-length,
-    /// auto-PEND, W_WCS_EXTENDED); опустошает буфер.
-    pub fn take_notices(&self) -> Vec<canonicalize::Notice> {
-        std::mem::take(&mut *self.notices.borrow_mut())
-    }
-
-    /// Warnings последнего `emit` (потери path_mode/расширенные слоты/
-    /// снапшотов); опустошает буфер.
-    pub fn take_warnings(&self) -> Vec<String> {
-        std::mem::take(&mut *self.warnings.borrow_mut())
+/// Диалектный Notice → единый core-Notice (NoticeKind-супермножество v0.2;
+/// ZeroLengthDwell унифицирован на core-имя ZeroDwell).
+impl From<canonicalize::Notice> for Notice {
+    fn from(n: canonicalize::Notice) -> Self {
+        Notice {
+            kind: match n.kind {
+                canonicalize::NoticeKind::ZeroLengthMotion => NoticeKind::ZeroLengthMotion,
+                canonicalize::NoticeKind::ZeroLengthArc => NoticeKind::ZeroLengthArc,
+                canonicalize::NoticeKind::ZeroLengthDwell => NoticeKind::ZeroDwell,
+                canonicalize::NoticeKind::NearDegenerateRArc => NoticeKind::NearDegenerateRArc,
+                canonicalize::NoticeKind::MissingProgramEnd => NoticeKind::MissingProgramEnd,
+                canonicalize::NoticeKind::DpiAssumed => NoticeKind::DpiAssumed,
+                canonicalize::NoticeKind::ModalOnRaw => NoticeKind::ModalOnRaw,
+                canonicalize::NoticeKind::WcsExtended => NoticeKind::WcsExtended,
+                canonicalize::NoticeKind::CycleParamAssumed => NoticeKind::CycleParamAssumed,
+            },
+            message: n.message,
+            op_index: n.op_index,
+            op: n.op,
+        }
     }
 }
+
+// T5 (INTERFACE-V0.2-DESIGN §5): compile-time assert Send + Sync —
+// interior mutability у адаптера запрещён контрактом trait v0.2.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<HaasAdapter>();
+};
 
 impl Adapter for HaasAdapter {
     fn dialect_name(&self) -> &'static str {
         "haas-mill"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         let out = canonicalize::canonicalize_with_notices(src, file)?;
-        *self.notices.borrow_mut() = out.notices;
-        Ok(out.program)
+        Ok(ParseOutput {
+            program: out.program,
+            notices: out.notices.into_iter().map(Into::into).collect(),
+            diagnostics: Vec::new(),
+        })
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         let mut warnings = Vec::new();
-        let result = emit::emit_with_warnings(program, &mut warnings);
-        // Warnings — в буфер адаптера (забрать take_warnings); паттерн
-        // FanucAdapter.
-        if let Ok(out) = &result {
-            *self.warnings.borrow_mut() = out.warnings.clone();
-        }
-        result.map(|out| out.text)
+        let out = emit::emit_with_warnings(program, &mut warnings)?;
+        Ok(EmitOutput {
+            text: out.text,
+            warnings: out.warnings,
+            diagnostics: Vec::new(),
+        })
     }
 }
 
-use eid_core::diag::ErrorCode::{InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN};
+use eid_core::diag::ErrorCode::{
+    InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN,
+};

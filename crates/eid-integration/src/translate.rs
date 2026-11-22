@@ -30,10 +30,11 @@
 //! меняются (золотовые R1-тексты байт-в-байт). Комментарии эквивалентность
 //! не меняют (semantic_diff их не видит).
 
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
 use eid_core::ast::{Op, Program, SrcSpan};
 use eid_core::diag::LimitInfo;
 use eid_core::diag::{raw_refusal, Diagnostic, ErrorCode, Stage};
+use eid_core::verify::Notice;
 use eid_fanuc::FanucAdapter;
 use eid_grbl::GrblAdapter;
 use eid_haas::HaasAdapter;
@@ -100,57 +101,12 @@ impl AnyAdapter {
         }
     }
 
-    /// Notices последнего parse (drop-with-notice, SPEC §3) — единый строковый
-    /// формат для CLI/sim.
-    pub fn take_notices(&mut self) -> Vec<String> {
-        match self {
-            AnyAdapter::Grbl(a) => a
-                .take_notices()
-                .into_iter()
-                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
-                .collect(),
-            AnyAdapter::LinuxCnc(a) => a
-                .take_notices()
-                .into_iter()
-                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
-                .collect(),
-            AnyAdapter::Fanuc(a) => a
-                .take_notices()
-                .into_iter()
-                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
-                .collect(),
-            AnyAdapter::Haas(a) => a
-                .take_notices()
-                .into_iter()
-                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
-                .collect(),
-            AnyAdapter::EidText(a) => a
-                .take_notices()
-                .into_iter()
-                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
-                .collect(),
-        }
-    }
-
-    /// Emit-стадия diagnostics последнего emit (LinuxCnc: Diagnostic-канал).
-    pub fn take_emit_diagnostics(&mut self) -> Vec<Diagnostic> {
-        match self {
-            AnyAdapter::LinuxCnc(a) => a.take_diagnostics(),
-            _ => Vec::new(),
-        }
-    }
-
-    /// Q3-warning-строки последнего emit (Grbl/Fanuc/Haas: warnings-буфер
-    /// адаптера, напр. path_mode-потеря #40/#41/#45 — COVERAGE §6.1/§5.1/
-    /// §5.2 Haas-расширенные слоты G110–G112).
-    pub fn take_q3_warnings(&mut self) -> Vec<String> {
-        match self {
-            AnyAdapter::Grbl(a) => a.take_warnings(),
-            AnyAdapter::Fanuc(a) => a.take_warnings(),
-            AnyAdapter::Haas(a) => a.take_warnings(),
-            _ => Vec::new(),
-        }
-    }
+    // v0.2 #22 (INTERFACE-V0.2-DESIGN §2.2): take_notices/take_emit_
+    // diagnostics/take_q3_warnings-троица УДАЛЕНА — parse/emit возвращают
+    // owning-результат (ParseOutput/EmitOutput); тройка «notices =
+    // Vec<String> через format!» заменена типизированным Vec<core Notice>
+    // с Display (`{kind:?}: {message} (op {op_index})` — формат строк
+    // сохранён 1:1).
 }
 
 // ---------------------------------------------------------------------------
@@ -175,16 +131,6 @@ impl FanucNamedAdapter {
             inner: FanucAdapter::new(),
         }
     }
-
-    /// Notices последнего parse (drop-with-notice; паттерн Grbl).
-    pub fn take_notices(&mut self) -> Vec<eid_fanuc::canonicalize::Notice> {
-        self.inner.take_notices()
-    }
-
-    /// Warnings последнего emit (потери path_mode/снапшотов; паттерн Grbl).
-    pub fn take_warnings(&mut self) -> Vec<String> {
-        self.inner.take_warnings()
-    }
 }
 
 impl Adapter for FanucNamedAdapter {
@@ -192,11 +138,11 @@ impl Adapter for FanucNamedAdapter {
         "fanuc"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         self.inner.parse(src, file)
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         self.inner.emit(program)
     }
 }
@@ -222,17 +168,6 @@ impl HaasNamedAdapter {
             inner: HaasAdapter::new(),
         }
     }
-
-    /// Notices последнего parse (drop-with-notice; паттерн Grbl/Fanuc).
-    pub fn take_notices(&mut self) -> Vec<eid_haas::canonicalize::Notice> {
-        self.inner.take_notices()
-    }
-
-    /// Warnings последнего emit (path_mode/расширенные слоты/снапшоты;
-    /// паттерн Grbl/Fanuc).
-    pub fn take_warnings(&mut self) -> Vec<String> {
-        self.inner.take_warnings()
-    }
 }
 
 impl Adapter for HaasNamedAdapter {
@@ -240,11 +175,11 @@ impl Adapter for HaasNamedAdapter {
         "haas"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         self.inner.parse(src, file)
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         self.inner.emit(program)
     }
 }
@@ -254,11 +189,11 @@ impl Adapter for AnyAdapter {
         self.as_adapter().dialect_name()
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         self.as_adapter().parse(src, file)
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         self.as_adapter().emit(program)
     }
 }
@@ -369,7 +304,10 @@ pub struct TranslateOutcome {
     pub program: Program,
     pub emitted: String,
     /// Parse-stage notices источника (drop-with-notice — не ошибка).
-    pub notices: Vec<String>,
+    /// v0.2 #22: типизированный core Notice (строковый формат печати —
+    /// `Display for Notice`, формат `{kind:?}: {message} (op {op_index})`
+    /// сохранён 1:1; kind/op_index — machine-readable).
+    pub notices: Vec<Notice>,
     /// Emit-stage warnings цели (Ok-путь; Q3, Diagnostic-канал LinuxCnc).
     pub emit_warnings: Vec<Diagnostic>,
     /// Q3-warning-строки цели (Ok-путь; Grbl warnings-буфер, #40/#41/#45).
@@ -397,7 +335,7 @@ fn limit_diag(
         code: ErrorCode::LimitExceeded,
         message,
         src: Some(SrcSpan {
-            file: file.to_string(),
+            file: file.into(),
             line_start: line,
             col_start: 1,
             line_end: line,
@@ -571,11 +509,12 @@ pub fn translate_text_with_profile(
     // Текстовые guard'ы — до parse (guard зависания лексера, COVERAGE §1.2).
     enforce_source_limits(src, file, limits)?;
 
-    let mut source = AnyAdapter::for_name(from)?;
-    let mut target = AnyAdapter::for_name(to)?;
+    let source = AnyAdapter::for_name(from)?;
+    let target = AnyAdapter::for_name(to)?;
 
-    let program = source.parse(src, file).map_err(TranslateError::Parse)?;
-    let notices = source.take_notices();
+    let source_out = source.parse(src, file).map_err(TranslateError::Parse)?;
+    let program = source_out.program;
+    let notices = source_out.notices;
 
     // AST-пороги профиля — после parse (ops + развёртка sub-индексами).
     enforce_ast_limits(&program, file, limits)?;
@@ -590,17 +529,17 @@ pub fn translate_text_with_profile(
         return Err(TranslateError::Emit(vec![raw_refusal(&spans)]));
     }
 
-    let raw_emitted = target.emit(&program).map_err(TranslateError::Emit)?;
+    let target_out = target.emit(&program).map_err(TranslateError::Emit)?;
     // #11: преамбулу ставит ТОЛЬКО integration-слой (emit() адаптеров не
     // меняются — золотовые R1-тексты байт-в-байт; комментарий семантику не
     // меняет — EQUIVALENCE игнорирует комментарии).
     let emitted = if preamble {
-        format!("{GENERATED_PREAMBLE}\n{raw_emitted}")
+        format!("{GENERATED_PREAMBLE}\n{}", target_out.text)
     } else {
-        raw_emitted
+        target_out.text
     };
-    let emit_warnings = target.take_emit_diagnostics();
-    let q3_warnings = target.take_q3_warnings();
+    let emit_warnings = target_out.diagnostics;
+    let q3_warnings = target_out.warnings;
 
     Ok(TranslateOutcome {
         from: source.name().to_string(),
@@ -647,8 +586,7 @@ pub fn translate_file_with_profile(
 
 /// Разбор текста конкретным диалектом (verify, e2e).
 pub fn parse_with(dialect: &str, src: &str, file: &str) -> Result<Program, TranslateError> {
-    let mut adapter = AnyAdapter::for_name(dialect)?;
-    let program = adapter.parse(src, file).map_err(TranslateError::Parse)?;
-    let _ = adapter.take_notices(); // verify печатает их отдельно при желании; здесь гасим
-    Ok(program)
+    let adapter = AnyAdapter::for_name(dialect)?;
+    let out = adapter.parse(src, file).map_err(TranslateError::Parse)?;
+    Ok(out.program)
 }

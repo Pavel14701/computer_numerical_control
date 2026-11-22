@@ -70,6 +70,7 @@ fn state(feed: Option<f64>) -> State {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     }
 }
 
@@ -742,7 +743,7 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     }
     // новые векторы присутствуют с ожидаемыми диалектами
     assert!(
-        v("47").files.len() >= 1,
+        !v("47").files.is_empty(),
         "raw_crlf_fidelity — минимум GRBL-файл (динамически: v1-regen добавил linuxcnc)"
     );
     assert_eq!(v("05").files.len(), 2);
@@ -773,7 +774,7 @@ golden = \"nope/golden.eid\"
     let err = manifest::load(&mf).unwrap_err();
     assert!(err.contains("does not exist"), "{err}");
     // invalid expect-строка: путь файла существует, строка "banana" — не исход
-    std::fs::write(&dir.join("real.nc"), "mock").unwrap();
+    std::fs::write(dir.join("real.nc"), "mock").unwrap();
     std::fs::write(
         &mf,
         "corpus_version = \"t\"
@@ -870,7 +871,7 @@ fn golden_47_raw_payload_byte_exact() {
     let eid = EidTextAdapter::new();
     let path = golden_path("47_raw_crlf_fidelity/golden.eid");
     let text = std::fs::read_to_string(&path).unwrap();
-    let p = eid.parse(&text, "golden47").unwrap();
+    let p = eid.parse(&text, "golden47").unwrap().program;
     let payload = p.ops.iter().find_map(|o| match o {
         Op::Raw {
             payload_hex, code, ..
@@ -881,12 +882,12 @@ fn golden_47_raw_payload_byte_exact() {
     // '$$' + CRLF — вычислено реально: 24 24 0D 0A
     assert_eq!(hex, "24240D0A");
     assert_eq!(code, ErrorCode::UnsupportedSyntax);
-    let emitted = eid.emit(&p).unwrap();
+    let emitted = eid.emit(&p).unwrap().text;
     assert_eq!(
         emitted, text,
         "emit(golden 47) байт-в-байт (payload не нормализуется, D9)"
     );
-    let p2 = eid.parse(&emitted, "golden47").unwrap();
+    let p2 = eid.parse(&emitted, "golden47").unwrap().program;
     assert!(semantic_diff(&p, &p2, &DiffConfig::default()).is_empty());
 }
 
@@ -898,8 +899,9 @@ fn golden_13_is_canonical_full_circle() {
     let eid = EidTextAdapter::new();
     let path = golden_path("13_arc_degenerate_zero_sweep/golden.eid");
     let text = std::fs::read_to_string(&path).unwrap();
-    let p = eid.parse(&text, "golden13").unwrap();
-    assert!(eid.take_notices().is_empty(), "golden AST каноничен");
+    let out13 = eid.parse(&text, "golden13").unwrap();
+    let p = out13.program;
+    assert!(out13.notices.is_empty(), "golden AST каноничен");
     assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
     assert!(matches!(p.ops[0], Op::Rapid { .. }));
     match &p.ops[1] {
@@ -920,7 +922,7 @@ fn golden_13_is_canonical_full_circle() {
         other => panic!("op 1 must be Arc, got {other:?}"),
     }
     assert!(matches!(p.ops[2], Op::Linear { .. }));
-    let emitted = eid.emit(&p).unwrap();
+    let emitted = eid.emit(&p).unwrap().text;
     assert_eq!(emitted, text);
 }
 
@@ -928,9 +930,9 @@ fn golden_13_is_canonical_full_circle() {
 fn golden_10_is_inch() {
     let eid = EidTextAdapter::new();
     let text = std::fs::read_to_string(golden_path("10_arc_helix_inch/golden.eid")).unwrap();
-    let p = eid.parse(&text, "golden10").unwrap();
+    let p = eid.parse(&text, "golden10").unwrap().program;
     assert!(matches!(p.units, Units::In));
-    let emitted = eid.emit(&p).unwrap();
+    let emitted = eid.emit(&p).unwrap().text;
     assert_eq!(emitted, text);
 }
 
@@ -942,10 +944,11 @@ fn all_goldens_roundtrip_diff_zero() {
     for v in m.vectors.iter().filter(|v| v.golden.is_some()) {
         let g = v.golden.as_ref().unwrap();
         let text = std::fs::read_to_string(g).unwrap();
-        let p1 = eid.parse(&text, &v.id).expect("golden parses");
-        assert!(eid.take_notices().is_empty(), "golden {} каноничен", v.id);
-        let emitted = eid.emit(&p1).expect("golden emits");
-        let p2 = eid.parse(&emitted, &v.id).expect("re-parses");
+        let out1 = eid.parse(&text, &v.id).expect("golden parses");
+        let p1 = out1.program;
+        assert!(out1.notices.is_empty(), "golden {} каноничен", v.id);
+        let emitted = eid.emit(&p1).expect("golden emits").text;
+        let p2 = eid.parse(&emitted, &v.id).expect("re-parses").program;
         assert!(
             semantic_diff(&p1, &p2, &cfg).is_empty(),
             "golden {}: parse(emit(parse)) diverges",
@@ -1017,20 +1020,36 @@ impl Adapter for MockAdapter {
     fn dialect_name(&self) -> &'static str {
         self.name
     }
-    fn parse(&self, s: &str, f: &str) -> Result<Program, Vec<Diagnostic>> {
-        match &self.behavior {
-            Mock::Refuse(code) => Err(vec![diag(*code)]),
-            Mock::OkWithRaw(code) => Ok(mock_program(Some(*code))),
-            Mock::OkClean => Ok(mock_program(None)),
-            Mock::RoundTrip => eid_core::parser::parse_with_notices(s, f).map(|o| o.program),
-        }
+    fn parse(&self, s: &str, f: &str) -> Result<eid_core::adapter::ParseOutput, Vec<Diagnostic>> {
+        let (program, notices, diagnostics) = match &self.behavior {
+            Mock::Refuse(code) => return Err(vec![diag(*code)]),
+            Mock::OkWithRaw(code) => (mock_program(Some(*code)), Vec::new(), Vec::new()),
+            Mock::OkClean => (mock_program(None), Vec::new(), Vec::new()),
+            Mock::RoundTrip => {
+                let out = eid_core::parser::parse_with_notices(s, f)?;
+                (out.program, out.notices, Vec::new())
+            }
+        };
+        Ok(eid_core::adapter::ParseOutput {
+            program,
+            notices,
+            diagnostics,
+        })
     }
-    fn emit(&self, p: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, p: &Program) -> Result<eid_core::adapter::EmitOutput, Vec<Diagnostic>> {
         match &self.behavior {
             Mock::Refuse(code) => Err(vec![diag(*code)]),
-            Mock::RoundTrip => eid_core::emitter::emit(p),
+            Mock::RoundTrip => eid_core::emitter::emit(p).map(|text| eid_core::adapter::EmitOutput {
+                text,
+                warnings: Vec::new(),
+                diagnostics: Vec::new(),
+            }),
             // «Эмитит успешно, но текст не парсится обратно» — для Fail-путей R1-text
-            _ => Ok("EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n".to_string()),
+            _ => Ok(eid_core::adapter::EmitOutput {
+                text: "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\nOP 001 PEND\nEND\n".to_string(),
+                warnings: Vec::new(),
+                diagnostics: Vec::new(),
+            }),
         }
     }
 }
@@ -1330,14 +1349,22 @@ impl Adapter for RawRefuseAdapter {
     fn dialect_name(&self) -> &'static str {
         "mock-rawrefuse"
     }
-    fn parse(&self, _s: &str, _f: &str) -> Result<Program, Vec<Diagnostic>> {
-        Ok(mock_program(None))
+    fn parse(&self, _s: &str, _f: &str) -> Result<eid_core::adapter::ParseOutput, Vec<Diagnostic>> {
+        Ok(eid_core::adapter::ParseOutput {
+            program: mock_program(None),
+            notices: Vec::new(),
+            diagnostics: Vec::new(),
+        })
     }
-    fn emit(&self, p: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, p: &Program) -> Result<eid_core::adapter::EmitOutput, Vec<Diagnostic>> {
         if p.ops.iter().any(|o| matches!(o, Op::Raw { .. })) {
             Err(vec![diag(ErrorCode::RawUntranslatable)])
         } else {
-            Ok(MINIMAL_GOLDEN.to_string())
+            Ok(eid_core::adapter::EmitOutput {
+                text: MINIMAL_GOLDEN.to_string(),
+                warnings: Vec::new(),
+                diagnostics: Vec::new(),
+            })
         }
     }
 }
@@ -1401,13 +1428,13 @@ fn runner_r4_negative_file_as_source() {
         .iter()
         .find(|c| c.target.ends_with("→mock-raw-sem"))
         .expect("same-dialect check");
-    assert!(matches!(same.status, Status::Skipped(_)), "{:?}", same);
+    assert!(matches!(same.status, Status::Skipped(_)), "{same:?}");
     // кросс (source mock-raw-sem → цель mock-rawrefuse): Pass — E_RAW_UNTRANSLATABLE.
     let cross = r4
         .iter()
         .find(|c| c.target.ends_with("→mock-rawrefuse"))
         .expect("cross check");
-    assert!(matches!(cross.status, Status::Pass), "{:?}", cross);
+    assert!(matches!(cross.status, Status::Pass), "{cross:?}");
     // Источник — файл, не golden.
     assert!(!cross.target.starts_with("golden"), "{}", cross.target);
 

@@ -21,6 +21,7 @@ use eid_core::diag::{raw_refusal, Diagnostic};
 ///    `E_RAW_UNTRANSLATABLE` (ровно одна диагностика; все Raw-спаны
 ///    перечислены в `options`, первый — в `src`);
 /// 3) иначе `to.emit`.
+///
 /// Same-dialect → plain emit (verbatim RAW легален, SPEC §8.1; замороженный
 /// trait остаётся без source-dialect — правило замыкается здесь).
 pub fn translate_checked(
@@ -29,9 +30,9 @@ pub fn translate_checked(
     src: &str,
     file: &str,
 ) -> Result<(Program, String), Vec<Diagnostic>> {
-    let program = from.parse(src, file)?;
+    let out = from.parse(src, file)?;
     let cross = to.dialect_name() != from.dialect_name();
-    checked_emit(to, &program, cross)
+    checked_emit(to, &out.program, cross)
 }
 
 /// golden-AST (`src_dialect` отсутствует): любой Raw-оп → отказ любой цели
@@ -59,13 +60,14 @@ fn checked_emit(
     if cross && !raw_spans.is_empty() {
         return Err(vec![raw_refusal(&raw_spans)]);
     }
-    let text = to.emit(program)?;
+    let text = to.emit(program)?.text;
     Ok((program.clone(), text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eid_core::adapter::{EmitOutput, ParseOutput};
     use eid_core::ast::{Coolant, Frame, Num, PathMode, Spindle, SrcSpan, State, Units, Wcs};
     use eid_core::diag::{ErrorCode, Stage};
 
@@ -114,10 +116,14 @@ mod tests {
         fn dialect_name(&self) -> &'static str {
             self.name
         }
-        fn parse(&self, _s: &str, _f: &str) -> Result<Program, Vec<Diagnostic>> {
-            Ok(raw_program(1))
+        fn parse(&self, _s: &str, _f: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
+            Ok(ParseOutput {
+                program: raw_program(1),
+                notices: Vec::new(),
+                diagnostics: Vec::new(),
+            })
         }
-        fn emit(&self, p: &Program) -> Result<String, Vec<Diagnostic>> {
+        fn emit(&self, p: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
             let raw = p.ops.iter().any(|o| matches!(o, Op::Raw { .. }));
             if raw && self.refuse_raw_cross {
                 return Err(vec![Diagnostic {
@@ -129,7 +135,11 @@ mod tests {
                     limit: None,
                 }]);
             }
-            Ok("emitted".into())
+            Ok(EmitOutput {
+                text: "emitted".into(),
+                warnings: Vec::new(),
+                diagnostics: Vec::new(),
+            })
         }
     }
 
@@ -197,6 +207,7 @@ mod tests {
                     tool: None,
                     frame: Frame::Wcs,
                     wcs: Wcs::G54,
+                    feed_restated: false,
                 },
                 src: src(),
                 sub: None,
@@ -235,10 +246,14 @@ mod tests {
             fn dialect_name(&self) -> &'static str {
                 "broken"
             }
-            fn parse(&self, _s: &str, _f: &str) -> Result<Program, Vec<Diagnostic>> {
-                Ok(raw_program(0))
+            fn parse(&self, _s: &str, _f: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
+                Ok(ParseOutput {
+                    program: raw_program(0),
+                    notices: Vec::new(),
+                    diagnostics: Vec::new(),
+                })
             }
-            fn emit(&self, _p: &Program) -> Result<String, Vec<Diagnostic>> {
+            fn emit(&self, _p: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
                 Err(vec![Diagnostic {
                     stage: Stage::Emit,
                     code: ErrorCode::UnsupportedSyntax,

@@ -5,10 +5,10 @@
 //! G61.1/path_mode → warning (Q3), не отказ; G43 H → E_REQUIRES_MACHINE_TABLE.
 #![allow(dead_code)]
 
-use eid_core::adapter::Adapter;
+use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
 use eid_core::ast::Program;
 use eid_core::diag::Diagnostic;
-use std::cell::RefCell;
+use eid_core::verify::{Notice, NoticeKind};
 
 pub mod block;
 pub mod canonicalize;
@@ -18,26 +18,14 @@ pub mod lexer;
 
 /// Адаптер GRBL 1.1 (dialect_name = "grbl-1.1").
 /// drop-with-notice (zero-length / near-degenerate R-arc) — не ошибка:
-/// notices буферизуются, забрать через [`GrblAdapter::take_notices`]
-/// (паттерн EidTextAdapter, eid-core adapter.rs).
+/// notices возвращаются в owning-результате [`ParseOutput`] (v0.2 #22 —
+/// без interior mutability; адаптер только-данные, Send + Sync).
 #[derive(Debug, Default)]
-pub struct GrblAdapter {
-    notices: RefCell<Vec<canonicalize::Notice>>,
-    warnings: RefCell<Vec<String>>,
-}
+pub struct GrblAdapter;
 
 impl GrblAdapter {
     pub fn new() -> Self {
-        Self {
-            notices: RefCell::new(Vec::new()),
-            warnings: RefCell::new(Vec::new()),
-        }
-    }
-
-    /// Q3-warnings последнего `emit` (потери метаданных цели, напр.
-    /// path_mode на GRBL); опустошает буфер.
-    pub fn take_warnings(&self) -> Vec<String> {
-        std::mem::take(&mut *self.warnings.borrow_mut())
+        Self
     }
 
     /// ConversionTarget-таблица легальности эмиссии в GRBL 1.1 (COVERAGE §5).
@@ -48,6 +36,7 @@ impl GrblAdapter {
     /// (Агент E, SPEC §8.2), не same-dialect эмиссия.
     pub fn emission_legality(&self) -> emit::EmissionLegality {
         use eid_core::diag::ErrorCode::{InvalidInput as INVAL, UnsupportedSyntax as SYN};
+        use emit::GrblEmissionCondition as C;
         emit::EmissionLegality {
             legal: vec![
                 "rapid",
@@ -61,16 +50,18 @@ impl GrblAdapter {
                 "program_end",
                 "raw",
             ],
+            // v0.2 волна 4 (§2.5 В1): ключи — типизированный enum; код-зеркало
+            // обязано совпадать с `cond.code()` (тест legality_table_complete).
             illegal: vec![
-                ("tool_change", SYN),                // M6 вне словаря GRBL (#27)
-                ("wcs_outside_g54_g59", SYN),        // G59.x вне словаря GRBL
-                ("motion_feed_none", INVAL),         // канон-форма §3/§4
-                ("arc_unknown_start", INVAL),        // IJK требует числового старта
-                ("arc_normal_non_canonical", INVAL), // нормаль не +ось (§6)
-                ("raw_payload_not_hex", INVAL),      // grammar D9 v0.3
-                ("program_end_missing", INVAL),      // структура (CORPUS n14)
-                ("program_end_duplicate", INVAL),    // n13
-                ("program_end_not_last", INVAL),     // n12
+                (C::ToolChange, SYN),              // M6 вне словаря GRBL (#27)
+                (C::WcsOutsideG54G59, SYN),        // G59.x вне словаря GRBL
+                (C::MotionFeedNone, INVAL),        // канон-форма §3/§4
+                (C::ArcUnknownStart, INVAL),       // IJK требует числового старта
+                (C::ArcNormalNonCanonical, INVAL), // нормаль не +ось (§6)
+                (C::RawPayloadNotHex, INVAL),      // grammar D9 v0.3
+                (C::ProgramEndMissing, INVAL),     // структура (CORPUS n14)
+                (C::ProgramEndDuplicate, INVAL),   // n13
+                (C::ProgramEndNotLast, INVAL),     // n12
             ],
             warnings: vec![
                 // Q3 (COVERAGE §6.1/§5): PATH_MODE не выражается в GRBL-шапке.
@@ -89,29 +80,56 @@ impl GrblAdapter {
             ],
         }
     }
+}
 
-    /// Notices последнего `parse` (отброшенные zero-length / near-degenerate);
-    /// опустошает буфер.
-    pub fn take_notices(&self) -> Vec<canonicalize::Notice> {
-        std::mem::take(&mut *self.notices.borrow_mut())
+/// Диалектный Notice → единый core-Notice (NoticeKind-супермножество v0.2;
+/// INTERFACE-V0.2-DESIGN §2.2 В2 — конверсия на границе адаптера).
+impl From<canonicalize::Notice> for Notice {
+    fn from(n: canonicalize::Notice) -> Self {
+        Notice {
+            kind: match n.kind {
+                canonicalize::NoticeKind::ZeroLengthMotion => NoticeKind::ZeroLengthMotion,
+                canonicalize::NoticeKind::ZeroLengthArc => NoticeKind::ZeroLengthArc,
+                canonicalize::NoticeKind::ZeroDwell => NoticeKind::ZeroDwell,
+                canonicalize::NoticeKind::NearDegenerateRArc => NoticeKind::NearDegenerateRArc,
+                canonicalize::NoticeKind::MissingProgramEnd => NoticeKind::MissingProgramEnd,
+                canonicalize::NoticeKind::ModalOnRaw => NoticeKind::ModalOnRaw,
+            },
+            message: n.message,
+            op_index: n.op_index,
+            op: n.op,
+        }
     }
 }
+
+// T5 (INTERFACE-V0.2-DESIGN §5): compile-time assert Send + Sync —
+// interior mutability у адаптера запрещён контрактом trait v0.2.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<GrblAdapter>();
+};
 
 impl Adapter for GrblAdapter {
     fn dialect_name(&self) -> &'static str {
         "grbl-1.1"
     }
 
-    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+    fn parse(&self, src: &str, file: &str) -> Result<ParseOutput, Vec<Diagnostic>> {
         let out = canonicalize::canonicalize_with_notices(src, file)?;
-        *self.notices.borrow_mut() = out.notices;
-        Ok(out.program)
+        Ok(ParseOutput {
+            program: out.program,
+            notices: out.notices.into_iter().map(Into::into).collect(),
+            diagnostics: Vec::new(),
+        })
     }
 
-    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+    fn emit(&self, program: &Program) -> Result<EmitOutput, Vec<Diagnostic>> {
         let mut warnings = Vec::new();
-        let result = emit::emit_with_warnings(program, &mut warnings);
-        *self.warnings.borrow_mut() = warnings;
-        result
+        let text = emit::emit_with_warnings(program, &mut warnings)?;
+        Ok(EmitOutput {
+            text,
+            warnings,
+            diagnostics: Vec::new(),
+        })
     }
 }

@@ -74,7 +74,7 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
 
             let base_text = {
                 let t = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    eid.emit(&program).expect("base emit")
+                    eid.emit(&program).expect("base emit").text
                 })) {
                     Ok(t) => t,
                     Err(_) => {
@@ -109,7 +109,7 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
             if let Some((mutated, expect)) = mutate::apply(op_id, &program) {
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let t = match eid.emit(&mutated) {
-                        Ok(t) => t,
+                        Ok(t) => t.text,
                         Err(e) => return Err(format!("emit: {e:?}")),
                     };
                     let res = parser::parse_with_notices(&t, "fuzz-m");
@@ -125,8 +125,7 @@ fn m_loop(findings: &mut Vec<Finding>, seed_base: u64, n: usize, lcnc: &LinuxCnc
                             matches!(expect, Expect::OkOrVerifyErr) && msg.contains("InvalidInput");
                         if verified {
                             println!(
-                                "[verify-ok] op={} seed={} — мутант отклонён Verify-этапом (E_INVALID_INPUT), инвариант подтверждён",
-                                op_id, seed
+                                "[verify-ok] op={op_id} seed={seed} — мутант отклонён Verify-этапом (E_INVALID_INPUT), инвариант подтверждён"
                             );
                             continue;
                         }
@@ -270,10 +269,11 @@ fn corpus_bytes() -> Vec<Vec<u8>> {
 
 fn soup_inputs(seed: u64, corpus: &[Vec<u8>]) -> Vec<(String, Vec<u8>)> {
     let mut rng = Lcg::new(seed);
-    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
-    out.push(("empty".into(), Vec::new()));
-    out.push(("lf-only".into(), b"\n".to_vec()));
-    out.push(("crlf-only".into(), b"\r\n".to_vec()));
+    let mut out: Vec<(String, Vec<u8>)> = vec![
+        ("empty".into(), Vec::new()),
+        ("lf-only".into(), b"\n".to_vec()),
+        ("crlf-only".into(), b"\r\n".to_vec()),
+    ];
     out.push((
         "headers-repeated".into(),
         "G21 G90\n".repeat(100).into_bytes(),
@@ -371,14 +371,14 @@ fn metamorphic(findings: &mut Vec<Finding>, cfg: &eid_harness::diff::DiffConfig)
             continue;
         };
         let adapter: &dyn Adapter = if dialect == "grbl-1.1" { &grbl } else { &lcnc };
-        let Ok(ast_a) = adapter.parse(&orig, &name) else {
+        let Ok(ast_a) = adapter.parse(&orig, name).map(|out| out.program) else {
             continue;
         };
         // Компаратор — СЕМАНТИЧЕСКИЙ (EQUIVALENCE §3: src/provenance вне
         // эквивалентности; derive(PartialEq) ломался на line/col-сдвигах).
         let check = |tag: &'static str, txt: &str, findings: &mut Vec<Finding>| {
-            if let Ok(ast_b) = adapter.parse(txt, &name) {
-                if !eid_harness::diff::semantic_diff(&ast_a, &ast_b, &cfg).is_empty() {
+            if let Ok(ast_b) = adapter.parse(txt, name).map(|out| out.program) {
+                if !eid_harness::diff::semantic_diff(&ast_a, &ast_b, cfg).is_empty() {
                     findings.push(Finding {
                         family: "metamorphic",
                         operator: tag,

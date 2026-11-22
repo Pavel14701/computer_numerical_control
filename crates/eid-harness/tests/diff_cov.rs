@@ -47,6 +47,7 @@ fn arc_prog(center_x: f64) -> Program {
                 tool: None,
                 frame: Frame::Wcs,
                 wcs: Wcs::G54,
+                feed_restated: false,
             },
             src: SrcSpan {
                 file: "t".into(),

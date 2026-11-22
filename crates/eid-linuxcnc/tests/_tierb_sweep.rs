@@ -91,11 +91,11 @@ fn tierb_parse_or_diagnose_sweep() {
         let res = adapter.parse(&src, &fname);
         let dt = started.elapsed().as_millis();
         match res {
-            Ok(program) => {
+            Ok(out) => {
                 writeln!(
                     log,
                     "OK | {tier} | {dialect} | {fname} | {} ops | {}ms",
-                    program.ops.len(),
+                    out.program.ops.len(),
                     dt
                 )
                 .unwrap();

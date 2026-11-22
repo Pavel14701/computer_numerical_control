@@ -85,7 +85,7 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
 
 fn src(i: usize) -> SrcSpan {
     SrcSpan {
-        file: format!("gen{i}.ngc"),
+        file: format!("gen{i}.ngc").into(),
         line_start: 1,
         col_start: 1,
         line_end: 1,
@@ -101,6 +101,8 @@ fn state(feed: Option<f64>, wcs: Wcs) -> State {
         tool: None,
         frame: Frame::Wcs,
         wcs,
+        // Провенанс вне генерации (v0.2 волна 3) — всегда false.
+        feed_restated: false,
     }
 }
 
@@ -319,15 +321,16 @@ mod tests {
             let p = generate(&cfg);
             let text = eid
                 .emit(&p)
-                .unwrap_or_else(|d| panic!("seed {seed}: emit: {d:?}"));
+                .unwrap_or_else(|d| panic!("seed {seed}: emit: {d:?}"))
+                .text;
             let back = eid
                 .parse(&text, "gen")
                 .unwrap_or_else(|d| panic!("seed {seed}: parse: {d:?}"));
             assert!(
-                eid.take_notices().is_empty(),
+                back.notices.is_empty(),
                 "seed {seed}: notices — генератор обязан выдавать каноничный AST"
             );
-            let text2 = eid.emit(&back).unwrap();
+            let text2 = eid.emit(&back.program).unwrap().text;
             assert_eq!(text, text2, "seed {seed}: emit нестабилен");
         }
     }

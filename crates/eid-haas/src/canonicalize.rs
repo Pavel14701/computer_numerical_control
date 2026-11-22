@@ -59,6 +59,7 @@ use eid_core::ast::{
 };
 use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 use std::cell::RefCell;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-grbl/eid-linuxcnc/eid-fanuc; SPEC §3/§6)
@@ -172,9 +173,9 @@ fn approach_clearance(units: Units) -> f64 {
 /// max_unroll_iterations (COVERAGE §1.2: 10 000 — сумма L на блок цикла).
 const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 
-fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+fn span(file: &Arc<str>, line: u32, len: usize) -> SrcSpan {
     SrcSpan {
-        file: file.to_string(),
+        file: file.clone(),
         line_start: line,
         col_start: 1,
         line_end: line,
@@ -188,7 +189,7 @@ fn err_staged(
     stage: eid_core::diag::Stage,
     code: ErrorCode,
     msg: impl Into<String>,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
     len: usize,
 ) -> Diagnostic {
@@ -202,7 +203,13 @@ fn err_staged(
     }
 }
 
-fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
+fn err(
+    code: ErrorCode,
+    msg: impl Into<String>,
+    file: &Arc<str>,
+    line: u32,
+    len: usize,
+) -> Diagnostic {
     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
 }
 
@@ -211,7 +218,7 @@ fn limit_err(
     value: f64,
     actual: f64,
     msg: String,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
 ) -> Diagnostic {
     Diagnostic {
@@ -302,13 +309,19 @@ struct ActiveCycle {
 }
 
 struct Ctx {
-    file: String,
+    file: Arc<str>,
     modal: ModalState,
     feed: Option<Num>, // модальный F (переживает G0, SPEC §4)
+    /// Провенанс: F-слово было в кадре-источнике текущего блока (v0.2
+    /// волна 3, §2.4); сброс — в начале absorb_frame_state, установка —
+    /// при абсорбции F; в снапшот — через state()/state_with_frame
+    /// (первый производный оп развёртки = кадр, sub=1; производные 2..n —
+    /// state_derived).
+    feed_restated: bool,
     spindle: Spindle,
     coolant: Coolant,
-    tool: Option<u32>,  // этап 2 (M6/M16+T)
-    last_s: Option<Num>, // голое S — сохранение оборотов (§3 контракта)
+    tool: Option<u32>,              // этап 2 (M6/M16+T)
+    last_s: Option<Num>,            // голое S — сохранение оборотов (§3 контракта)
     preset: Option<FramePreset>,    // G92 (только пресетка, §3 SPEC)
     origins: [Option<[f64; 3]>; 9], // wcs_define in-text (p 1..9 → idx 0..8)
     prev: Option<Reading>,          // end последнего motion-опа
@@ -341,7 +354,19 @@ impl Ctx {
             tool: self.tool,
             frame,
             wcs: self.modal.wcs,
+            feed_restated: self.feed_restated,
         }
+    }
+
+    /// Снапшот производного опа развёртки: флаг кадра несёт ТОЛЬКО первый
+    /// производный (sub == 1 — оп, соответствующий кадру-источнику с
+    /// F-словом); производные 2..n — false.
+    fn state_derived(&self, sub: u32) -> State {
+        let mut st = self.state();
+        if sub != 1 {
+            st.feed_restated = false;
+        }
+        st
     }
 
     /// Записать pending-notice (прицепится к следующему опу).
@@ -607,6 +632,9 @@ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 }
 
 pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>> {
+    // v0.2 (#21): один Arc<str> на прогон канонизации; span() клонирует хэндл
+    // (refcount) — 0 аллокаций на оп.
+    let file: Arc<str> = Arc::from(file);
     // Лимит max_source_lines (COVERAGE §1.2).
     let line_count = src.lines().count() as f64;
     if line_count > 1_000_000.0 {
@@ -615,7 +643,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             1_000_000.0,
             line_count,
             format!("file has {} lines, limit 1000000", src.lines().count()),
-            file,
+            &file,
             1,
         )]);
     }
@@ -631,12 +659,12 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             .map(|e| match &e.kind {
                 LexErrorKind::WordTooLong => limit_err(
                     "max_word_chars", 32.0, 32.0,
-                    "word value exceeds max_word_chars (32)".into(), file, e.line,
+                    "word value exceeds max_word_chars (32)".into(), &file, e.line,
                 ),
                 LexErrorKind::IntOverflow { digits } => limit_err(
                     "max_integer_digits", 9.0, *digits as f64,
                     format!("integer part of {digits} digits exceeds max_integer_digits (9) — Haas range ±99999.9999-class `?` (analysis §1.2; registry §10(31))"),
-                    file, e.line,
+                    &file, e.line,
                 ),
                 LexErrorKind::SpaceInWord { letter } => err_staged(
                     eid_core::diag::Stage::Parse,
@@ -644,13 +672,13 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
                     format!(
                         "space between word letter '{letter}' and value — strict reject: Haas contract does not specify (`?` COVERAGE §6 registry; real Haas lexer unverified; analysis §1.3)"
                     ),
-                    file, e.line, e.col as usize,
+                    &file, e.line, e.col as usize,
                 ),
                 kind => err_staged(
                     eid_core::diag::Stage::Parse,
                     ErrorCode::InvalidInput,
                     format!("lexical error: {:?} at col {}", kind, e.col),
-                    file, e.line, e.col as usize,
+                    &file, e.line, e.col as usize,
                 ),
             })
             .collect());
@@ -676,9 +704,10 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     let family_g49 = parsed.blocks.iter().any(|b| g_family_t(b, &G49_FAMILY));
 
     let mut ctx = Ctx {
-        file: file.to_string(),
+        file: file.clone(),
         modal: ModalState::default(),
         feed: None,
+        feed_restated: false,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
         tool: None,
@@ -1387,6 +1416,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
 
+    // Провенанс F-кадра — по кадру (v0.2 волна 3): сброс на начале блока.
+    ctx.feed_restated = false;
+
     // (a) Единицы: ровно одна система на программу (SPEC §2.5) — и на
     // RAW-кадре (§8.5: смена units — структурный класс, жёсткий отказ).
     for g in &b.g_codes {
@@ -1436,10 +1468,7 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     continue; // P вне 1..3 — Raw/Err путь в (9)
                 }
                 let pi = b.word('P').expect("p_ok проверено").value as usize;
-                (
-                    "G154",
-                    [Wcs::G59_1, Wcs::G59_2, Wcs::G59_3][pi - 1],
-                )
+                ("G154", [Wcs::G59_1, Wcs::G59_2, Wcs::G59_3][pi - 1])
             }
             _ => continue,
         };
@@ -1480,6 +1509,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     if let Some(f) = b.word('F') {
         let num = ctx.feed_num(f);
         ctx.feed = Some(num);
+        // F-слово было в кадре (restated-F, SPEC §7.4a): маркер кадра важен
+        // независимо от того, изменилось ли ЗНАЧЕНИЕ модального feed.
+        ctx.feed_restated = true;
     }
     if !b.g_codes.contains(&GCode::Preset) {
         if let Some(s) = b.word('S') {
@@ -1646,8 +1678,9 @@ fn unused_word_diagnostic(
     if b.m_codes.contains(&MCode::ToolChange) || b.m_codes.contains(&MCode::ToolChangeAlt) {
         consumed.push('T');
     }
-    for letter in ['T', 'H', 'D', 'U', 'W', 'A', 'B', 'C', 'E', 'O', 'P', 'Q', 'R', 'I', 'J', 'K', 'L']
-    {
+    for letter in [
+        'T', 'H', 'D', 'U', 'W', 'A', 'B', 'C', 'E', 'O', 'P', 'Q', 'R', 'I', 'J', 'K', 'L',
+    ] {
         if b.word(letter).is_none() || consumed.contains(&letter) {
             continue;
         }
@@ -2401,8 +2434,7 @@ fn peck_bottoms(
 ) -> Result<Vec<f64>, Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
-    let inval =
-        |msg: String| vec![err(ErrorCode::InvalidInput, msg, &ctx.file, line, blen)];
+    let inval = |msg: String| vec![err(ErrorCode::InvalidInput, msg, &ctx.file, line, blen)];
     match (cyc.q, cyc.i) {
         (Some(q), _) => {
             // Q-форма: строго > 0 (иначе бесконечные пеки).
@@ -2500,7 +2532,8 @@ fn unroll_cycle(
     if ctx.prev.is_none() {
         return Err(fl(
             ErrorCode::RuntimeState,
-            "cycle as first motion op — position not established by preceding moves (SPEC §7.6)".into(),
+            "cycle as first motion op — position not established by preceding moves (SPEC §7.6)"
+                .into(),
         ));
     }
     let base = match ctx.link_start(false, line, blen)? {
@@ -2588,7 +2621,10 @@ fn unroll_cycle(
             )
         })?;
         if q <= 0.0 {
-            return Err(fl(ErrorCode::InvalidInput, "Q must be > 0 (peck depth)".into()));
+            return Err(fl(
+                ErrorCode::InvalidInput,
+                "Q must be > 0 (peck depth)".into(),
+            ));
         }
     }
 
@@ -2649,7 +2685,7 @@ fn unroll_cycle(
         let traverse = Op::Rapid {
             start: StartPoint::Known(pt(fx, fy, cz)),
             end: pt(cx, cy, cz),
-            state: ctx.state(),
+            state: ctx.state_derived(sub),
             src: src.clone(),
             sub: Some(sub),
         };
@@ -2660,7 +2696,7 @@ fn unroll_cycle(
         let approach = Op::Rapid {
             start: StartPoint::Known(pt(cx, cy, cz)),
             end: pt(cx, cy, r_cur),
-            state: ctx.state(),
+            state: ctx.state_derived(sub),
             src: src.clone(),
             sub: Some(sub),
         };
@@ -2691,7 +2727,7 @@ fn unroll_cycle(
                 if let Some(p) = dwell {
                     let op = Op::Dwell {
                         seconds: num_f64(p),
-                        state: ctx.state(),
+                        state: ctx.state_derived(sub),
                         src: src.clone(),
                         sub: Some(sub),
                     };
@@ -2751,7 +2787,7 @@ fn unroll_cycle(
                         let op = Op::Rapid {
                             start: StartPoint::Known(pt(cx, cy, cz)),
                             end: pt(cx, cy, r_cur),
-                            state: ctx.state(),
+                            state: ctx.state_derived(sub),
                             src: src.clone(),
                             sub: Some(sub),
                         };
@@ -2766,7 +2802,7 @@ fn unroll_cycle(
                     let op = Op::Rapid {
                         start: StartPoint::Known(pt(cx, cy, cz)),
                         end: pt(cx, cy, appr),
-                        state: ctx.state(),
+                        state: ctx.state_derived(sub),
                         src: src.clone(),
                         sub: Some(sub),
                     };
@@ -2806,7 +2842,7 @@ fn unroll_cycle(
                 let op = Op::Rapid {
                     start: StartPoint::Known(pt(cx, cy, cz)),
                     end: pt(cx, cy, retract),
-                    state: ctx.state(),
+                    state: ctx.state_derived(sub),
                     src: src.clone(),
                     sub: Some(sub),
                 };
@@ -2818,7 +2854,7 @@ fn unroll_cycle(
                 let op = Op::Rapid {
                     start: StartPoint::Known(pt(cx, cy, cz)),
                     end: pt(cx, cy, retract),
-                    state: ctx.state(),
+                    state: ctx.state_derived(sub),
                     src: src.clone(),
                     sub: Some(sub),
                 };
@@ -2875,7 +2911,7 @@ fn push_cycle_move(ctx: &mut Ctx, op: Op) {
 /// LINEAR-оп цикла: feed кадра цикла активен для ВСЕХ производных опов
 /// (§7.7 v0.15.1); G93 — разрешение feed = len·F (вертикальный ход).
 fn cyc_linear(ctx: &Ctx, from: [f64; 3], to: [f64; 3], feed: &Num, src: SrcSpan, sub: u32) -> Op {
-    let mut st = ctx.state();
+    let mut st = ctx.state_derived(sub);
     if ctx.modal.feed_inverse {
         let len = (to[2] - from[2]).abs();
         st.feed = Some(num_f64(len * feed.value()));

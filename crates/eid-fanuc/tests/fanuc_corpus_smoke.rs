@@ -92,16 +92,19 @@ fn smoke_17_fanuc_corpus_files() {
         let dt = started.elapsed();
         match result {
             Err(_) => panic!("{}: ПАНИКА парсера (смоук-отказ)", e.path),
-            Ok(Ok(program)) => {
+            Ok(Ok(out)) => {
+                let program = out.program;
                 // Same-dialect эмиссия: fixed-point t1 == t2 (байт-в-байт);
                 // panic/Err на легальном AST = смоук-отказ эмиссии.
                 let ad = FanucAdapter::new();
                 let t1 = ad
                     .emit(&program)
-                    .unwrap_or_else(|diags| panic!("{}: emit crashed: {diags:?}", e.path));
+                    .unwrap_or_else(|diags| panic!("{}: emit crashed: {diags:?}", e.path))
+                    .text;
                 let t2 = ad
                     .emit(&program)
-                    .unwrap_or_else(|diags| panic!("{}: emit#2 crashed: {diags:?}", e.path));
+                    .unwrap_or_else(|diags| panic!("{}: emit#2 crashed: {diags:?}", e.path))
+                    .text;
                 assert_eq!(t1, t2, "{}: emit недетерминирован", e.path);
                 ok += 1;
                 println!(

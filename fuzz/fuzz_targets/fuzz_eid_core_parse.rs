@@ -17,12 +17,13 @@ fuzz_target!(|data: &[u8]| {
     }
     let text = String::from_utf8_lossy(data);
     let adapter = EidTextAdapter::new();
-    if let Ok(program) = adapter.parse(&text, "fuzz.eid") {
+    // v0.2 #22: notices — в owning-результате parse.
+    if let Ok(out) = adapter.parse(&text, "fuzz.eid") {
+        let program = out.program;
         // round-trip стабилизация: emit→parse каноничного AST не паникует
         // (эмиссия может отказать по Unsupported* — это Ok-ветка, не crash).
         if let Ok(repr) = adapter.emit(&program) {
-            let _ = adapter.parse(&repr, "fuzz_rt.eid");
+            let _ = adapter.parse(&repr.text, "fuzz_rt.eid");
         }
-        let _ = adapter.take_notices();
     }
 });

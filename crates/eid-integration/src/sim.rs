@@ -187,7 +187,7 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
 /// профиля → обратный parse адаптером диалекта → structural-проверки.
 /// Ошибки обратного parse (или валидации eid_core) = ошибки sim.
 pub fn mock_sim(profile: &MachineProfile, emitted: &str, file: &str) -> SimReport {
-    let mut adapter = match AnyAdapter::for_name(profile.dialect.as_name()) {
+    let adapter = match AnyAdapter::for_name(profile.dialect.as_name()) {
         Ok(a) => a,
         Err(_) => {
             // Профиль ссылается на диалект без адаптера (grbl-hal/fluidnc) —
@@ -203,26 +203,34 @@ pub fn mock_sim(profile: &MachineProfile, emitted: &str, file: &str) -> SimRepor
             };
         }
     };
-    let program = match adapter.parse(emitted, file) {
-        Ok(p) => p,
+    // v0.2 #22: notices — в owning-результате parse (буфера адаптера нет;
+    // на Err-пути notices нет — прежде буфер был пуст, поведение то же).
+    let parse_out = match adapter.parse(emitted, file) {
+        Ok(out) => out,
         Err(diags) => {
             return SimReport {
                 errors: diags
                     .iter()
                     .map(crate::translate::format_diagnostic)
                     .collect(),
-                warnings: adapter.take_notices(),
+                warnings: Vec::new(),
                 ops_count: 0,
                 bbox: None,
             };
         }
     };
+    let program = parse_out.program;
     let mut report = check_program(profile, &program);
-    let notices = adapter.take_notices();
+    let notices = parse_out.notices;
     if !notices.is_empty() {
-        report
-            .warnings
-            .push(format!("re-parse notices: {}", notices.join("; ")));
+        // Display for Notice — строковый формат сохранён 1:1
+        // ({kind:?}: {message} (op {op_index})).
+        let joined = notices
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        report.warnings.push(format!("re-parse notices: {joined}"));
     }
     report
 }

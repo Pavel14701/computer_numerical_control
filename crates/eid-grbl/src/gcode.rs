@@ -94,7 +94,7 @@ impl GCode {
             281 => GCode::SetHome,
             300 => GCode::Home2,
             301 => GCode::SetHome2,
-            382 | 383 | 384 | 385 => GCode::Probe((t - 380) as u8),
+            382..=385 => GCode::Probe((t - 380) as u8),
             400 => GCode::CutterCompOff,
             431 => GCode::ToolLenDynamic,
             490 => GCode::ToolLenOff,

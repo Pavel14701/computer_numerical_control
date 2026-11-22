@@ -72,24 +72,75 @@ pub struct EmitOut {
 // словарь целевого; «wcs вне enum» — закрытый тип, недостижимо).
 // ===========================================================================
 
+/// Условие отказа легальности эмиссии LinuxCNC (типизированное, v0.2
+/// волна 4 — INTERFACE-V0.2 §2.5 В1: enum вместо &'static str; код —
+/// ТОТАЛЬНАЯ функция `code()`, паник-точек «таблица и эмиттер разошлись»
+/// на emit-пути нет; согласие таблицы — тест `legality_table_complete`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxCncEmissionCondition {
+    /// `arc_unknown_start` — дуга требует числового старта (SPEC §2 Q11).
+    ArcUnknownStart,
+    /// `arc_normal_non_canonical` — нормаль не единичная +ось (SPEC §6).
+    ArcNormalNonCanonical,
+    /// `machine_frame_arc` — G53 с дугой не эмитится (ходы прямые).
+    MachineFrameArc,
+    /// `motion_feed_none` — linear/arc без модального feed (SPEC §3/§4).
+    MotionFeedNone,
+    /// `raw_payload_not_hex` — payload не чётный hex (grammar D9 v0.3).
+    RawPayloadNotHex,
+    /// `program_end_missing` / `_duplicate` / `_not_last` — структура §3.
+    ProgramEndMissing,
+    ProgramEndDuplicate,
+    ProgramEndNotLast,
+}
+
+impl LinuxCncEmissionCondition {
+    /// Каноническое имя условия (сохранено 1:1 со строковой таблицы —
+    /// его читают тесты и COVERAGE §5; manifest r4_expect хранит КОДЫ).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LinuxCncEmissionCondition::ArcUnknownStart => "arc_unknown_start",
+            LinuxCncEmissionCondition::ArcNormalNonCanonical => "arc_normal_non_canonical",
+            LinuxCncEmissionCondition::MachineFrameArc => "machine_frame_arc",
+            LinuxCncEmissionCondition::MotionFeedNone => "motion_feed_none",
+            LinuxCncEmissionCondition::RawPayloadNotHex => "raw_payload_not_hex",
+            LinuxCncEmissionCondition::ProgramEndMissing => "program_end_missing",
+            LinuxCncEmissionCondition::ProgramEndDuplicate => "program_end_duplicate",
+            LinuxCncEmissionCondition::ProgramEndNotLast => "program_end_not_last",
+        }
+    }
+
+    /// Код класса отказа — ТОТАЛЬНАЯ функция (исчерпывающий match; классы —
+    /// правило COVERAGE §5: нарушение канон-формы AST → E_INVALID_INPUT;
+    /// не представимо ходами → E_UNSUPPORTED_SEMANTICS; RuntimeState —
+    /// дуга вне точек разрыва, SPEC §2 Q11).
+    pub fn code(self) -> ErrorCode {
+        use eid_core::diag::ErrorCode::{
+            InvalidInput as INVAL, RuntimeState as RT, UnsupportedSemantics as SEM,
+        };
+        match self {
+            LinuxCncEmissionCondition::ArcUnknownStart => RT, // SPEC §2 Q11
+            LinuxCncEmissionCondition::ArcNormalNonCanonical => INVAL, // нормаль не +ось (§6)
+            LinuxCncEmissionCondition::MachineFrameArc => SEM, // G53 требует G0/G1
+            LinuxCncEmissionCondition::MotionFeedNone => INVAL, // канон-форма §3/§4
+            LinuxCncEmissionCondition::RawPayloadNotHex => INVAL, // grammar D9 v0.3
+            LinuxCncEmissionCondition::ProgramEndMissing => INVAL, // структура (CORPUS n14)
+            LinuxCncEmissionCondition::ProgramEndDuplicate => INVAL, // n13
+            LinuxCncEmissionCondition::ProgramEndNotLast => INVAL, // n12
+        }
+    }
+}
+
 /// Статическая таблица легальности эмиссии LinuxCNC.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmissionLegality {
     /// Виды опов, представимые ходами LinuxCNC (имена = op_kind()).
     pub legal: Vec<&'static str>,
-    /// Условия отказа: (имя условия, код класса легальности).
-    pub illegal: Vec<(&'static str, ErrorCode)>,
+    /// Условия отказа: (условие, код класса) — зеркало `cond.code()`.
+    pub illegal: Vec<(LinuxCncEmissionCondition, ErrorCode)>,
 }
 
 impl EmissionLegality {
-    /// Код отказа по имени условия; None = условие не объявлено.
-    pub fn code_of(&self, condition: &str) -> Option<ErrorCode> {
-        self.illegal
-            .iter()
-            .find(|(c, _)| *c == condition)
-            .map(|(_, code)| *code)
-    }
-
     /// Все коды отказа таблицы (без дубликатов).
     pub fn codes(&self) -> Vec<ErrorCode> {
         let mut v: Vec<ErrorCode> = self.illegal.iter().map(|(_, c)| *c).collect();
@@ -123,24 +174,19 @@ pub fn op_kind(op: &Op) -> &'static str {
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5).
 /// Коды отказов берутся ИСКЛЮЧИТЕЛЬНО из таблицы — единый путь отказа.
 fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic> {
-    // Условие обязано быть объявлено в таблице — иначе баг объявления,
-    // не паника пути.
-    let code = |cond: &'static str| {
-        table
-            .code_of(cond)
-            .unwrap_or_else(|| panic!("emission-legality: условие `{cond}` не объявлено в таблице"))
-    };
+    // v0.2 волна 4 (§2.5 В1): код отказа — тотальный `cond.code()` на enum;
+    // таблица — данные для интроспекции/тестов. Паник-точек на emit-пути нет.
+    let code = |cond: LinuxCncEmissionCondition| cond.code();
     let mut v = Vec::new();
     let mut last_is_end = false;
     for op in &program.ops {
         last_is_end = matches!(op, Op::ProgramEnd { .. });
         // Недостижимо: все 10 видов опов легальны для LinuxCNC (COVERAGE §5);
         // ветка — защита полноты таблицы (новый вид опа ⇒ дополнить таблицу).
+        // Защитный код — SYNTAX по правилу COVERAGE §5 (вне словаря цели).
         if !table.is_legal_kind(op_kind(op)) {
             v.push(diag(
-                table
-                    .code_of("op_kind_not_legal")
-                    .unwrap_or(ErrorCode::UnsupportedSyntax),
+                ErrorCode::UnsupportedSyntax,
                 format!(
                     "op_kind_not_legal: `{}` не легален для цели LinuxCNC",
                     op_kind(op)
@@ -153,7 +199,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                 src,
                 ..
             } => v.push(diag_src(
-                code("arc_unknown_start"),
+                code(LinuxCncEmissionCondition::ArcUnknownStart),
                 "arc_unknown_start: дуга требует числового старта (SPEC §2 Q11)",
                 Some(src.clone()),
             )),
@@ -174,7 +220,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                     && c[(bi + 2) % 3].abs() <= 0.001;
                 if !axial || c[bi] < 0.0 {
                     v.push(diag_src(
-                        code("arc_normal_non_canonical"),
+                        code(LinuxCncEmissionCondition::ArcNormalNonCanonical),
                         format!(
                             "arc_normal_non_canonical: normal = ({:.4},{:.4},{:.4}) — не единичная +ось (SPEC §6)",
                             c[0], c[1], c[2]
@@ -186,7 +232,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                 // требует G0/G1).
                 if state.frame == Frame::Machine {
                     v.push(diag_src(
-                        code("machine_frame_arc"),
+                        code(LinuxCncEmissionCondition::MachineFrameArc),
                         "machine_frame_arc: G53 с дугой не эмитится (ходы machine-frame прямые)",
                         Some(src.clone()),
                     ));
@@ -194,7 +240,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                 // Канон-форма §3: arc требует модального feed.
                 if state.feed.is_none() {
                     v.push(diag_src(
-                        code("motion_feed_none"),
+                        code(LinuxCncEmissionCondition::MotionFeedNone),
                         "motion_feed_none: arc без модального feed (SPEC §3/§4)",
                         Some(src.clone()),
                     ));
@@ -203,7 +249,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
             Op::Linear { state, src, .. } => {
                 if state.feed.is_none() {
                     v.push(diag_src(
-                        code("motion_feed_none"),
+                        code(LinuxCncEmissionCondition::MotionFeedNone),
                         "motion_feed_none: linear без модального feed (SPEC §3/§4)",
                         Some(src.clone()),
                     ));
@@ -218,7 +264,7 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
                         .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
                 {
                     v.push(diag_src(
-                        code("raw_payload_not_hex"),
+                        code(LinuxCncEmissionCondition::RawPayloadNotHex),
                         "raw_payload_not_hex: payload не чётный hex (grammar D9 v0.3)",
                         Some(src.clone()),
                     ));
@@ -235,19 +281,19 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
         .count();
     if end_count == 0 {
         v.push(diag(
-            code("program_end_missing"),
+            code(LinuxCncEmissionCondition::ProgramEndMissing),
             "program_end_missing: PEND обязателен ровно один раз, последним (SPEC §3)",
         ));
     }
     if end_count > 1 {
         v.push(diag(
-            code("program_end_duplicate"),
+            code(LinuxCncEmissionCondition::ProgramEndDuplicate),
             format!("program_end_duplicate: {end_count} × PEND (SPEC §3)"),
         ));
     }
     if !last_is_end && end_count > 0 {
         v.push(diag(
-            code("program_end_not_last"),
+            code(LinuxCncEmissionCondition::ProgramEndNotLast),
             "program_end_not_last: опы после PEND запрещены (SPEC §3)",
         ));
     }
@@ -272,7 +318,7 @@ pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
         )]);
     }
     // Легальность эмиссии — против таблицы (COVERAGE §5), fail-fast до прохода.
-    let table = LinuxCncAdapter::default().emission_legality();
+    let table = LinuxCncAdapter::new().emission_legality();
     let problems = validate_linuxcnc(&table, program);
     if !problems.is_empty() {
         return Err(problems);
@@ -683,7 +729,11 @@ impl<'a> Writer<'a> {
                     Some(c) => c.value != f.value,
                 };
                 let first_derived = sub == Some(1);
-                if changed || first_derived {
+                // v0.2 волна 3 (SPEC §7.4a): restated-F теперь из AST —
+                // провенанс «F-слово было в кадре» (точнее sub=1-эвристики:
+                // покрывает и не-цикловые кадры с повторным F).
+                let restated = state.feed_restated;
+                if changed || first_derived || restated {
                     self.cur_feed = Some(f.clone());
                     Ok(format!(" F{}", num_text(f)))
                 } else {

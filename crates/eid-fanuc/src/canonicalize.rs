@@ -75,6 +75,7 @@ use eid_core::ast::{
 };
 use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 use std::cell::RefCell;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-grbl/eid-linuxcnc; SPEC §3/§5.2/§6/§7)
@@ -176,9 +177,9 @@ fn approach_clearance(units: Units) -> f64 {
 /// max_unroll_iterations (COVERAGE §1.2: 10 000 — сумма L/K на блок цикла).
 const MAX_UNROLL_ITERATIONS: u64 = 10_000;
 
-fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+fn span(file: &Arc<str>, line: u32, len: usize) -> SrcSpan {
     SrcSpan {
-        file: file.to_string(),
+        file: file.clone(),
         line_start: line,
         col_start: 1,
         line_end: line,
@@ -192,7 +193,7 @@ fn err_staged(
     stage: eid_core::diag::Stage,
     code: ErrorCode,
     msg: impl Into<String>,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
     len: usize,
 ) -> Diagnostic {
@@ -206,7 +207,13 @@ fn err_staged(
     }
 }
 
-fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
+fn err(
+    code: ErrorCode,
+    msg: impl Into<String>,
+    file: &Arc<str>,
+    line: u32,
+    len: usize,
+) -> Diagnostic {
     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
 }
 
@@ -215,7 +222,7 @@ fn limit_err(
     value: f64,
     actual: f64,
     msg: String,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
 ) -> Diagnostic {
     Diagnostic {
@@ -300,9 +307,15 @@ struct ActiveCycle {
 }
 
 struct Ctx {
-    file: String,
+    file: Arc<str>,
     modal: ModalState,
     feed: Option<Num>, // модальный F (переживает G0, SPEC §4)
+    /// Провенанс: F-слово было в кадре-источнике текущего блока (v0.2
+    /// волна 3, §2.4). Сброс — на начале absorb_frame_state; установка —
+    /// при абсорбции F-слова; в снапшот — через state()/state_with_frame
+    /// (первый производный оп развёртки = кадр, sub=1; производные 2..n —
+    /// state_derived).
+    feed_restated: bool,
     spindle: Spindle,
     coolant: Coolant,
     tool: Option<u32>,
@@ -339,7 +352,20 @@ impl Ctx {
             tool: self.tool,
             frame,
             wcs: self.modal.wcs,
+            feed_restated: self.feed_restated,
         }
+    }
+
+    /// Снапшот производного опа развёртки: флаг кадра несёт ТОЛЬКО первый
+    /// производный (sub == 1 — оп, соответствующий кадру-источнику с
+    /// F-словом); производные 2..n — false (лишний F на каждом сломал бы
+    /// счёт SET_FEED_RATE в rs274-каноне).
+    fn state_derived(&self, sub: u32) -> State {
+        let mut st = self.state();
+        if sub != 1 {
+            st.feed_restated = false;
+        }
+        st
     }
 
     /// Записать W_DPI_ASSUMED-сообщение (прицепится к следующему опу).
@@ -573,6 +599,9 @@ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 }
 
 pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>> {
+    // v0.2 (#21): один Arc<str> на прогон канонизации; span() клонирует хэндл
+    // (refcount) — 0 аллокаций на оп.
+    let file: Arc<str> = Arc::from(file);
     // Лимит max_source_lines (COVERAGE §1.2).
     let line_count = src.lines().count() as f64;
     if line_count > 1_000_000.0 {
@@ -581,7 +610,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             1_000_000.0,
             line_count,
             format!("file has {} lines, limit 1000000", src.lines().count()),
-            file,
+            &file,
             1,
         )]);
     }
@@ -596,18 +625,18 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             .map(|e| match &e.kind {
                 LexErrorKind::WordTooLong => limit_err(
                     "max_word_chars", 32.0, 32.0,
-                    "word value exceeds max_word_chars (32)".into(), file, e.line,
+                    "word value exceeds max_word_chars (32)".into(), &file, e.line,
                 ),
                 LexErrorKind::IntOverflow { digits } => limit_err(
                     "max_integer_digits", 9.0, *digits as f64,
                     format!("integer part of {digits} digits exceeds max_integer_digits (9) — Fanuc range ±99999.9999 (analysis §1.2)"),
-                    file, e.line,
+                    &file, e.line,
                 ),
                 kind => err_staged(
                     eid_core::diag::Stage::Parse,
                     ErrorCode::InvalidInput,
                     format!("lexical error: {:?} at col {}", kind, e.col),
-                    file, e.line, e.col as usize,
+                    &file, e.line, e.col as usize,
                 ),
             })
             .collect());
@@ -641,9 +670,10 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         .any(|b| b.g_codes.contains(&GCode::DataRecord) && g10_form_is_raw(b));
 
     let mut ctx = Ctx {
-        file: file.to_string(),
+        file: file.clone(),
         modal: ModalState::default(),
         feed: None,
+        feed_restated: false,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
         tool: None,
@@ -1328,6 +1358,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
 
+    // Провенанс F-кадра — по кадру (v0.2 волна 3): сброс на начале блока.
+    ctx.feed_restated = false;
+
     // (a) Единицы: ровно одна система на программу (SPEC §2.5) — и на
     // RAW-кадре (§8.5: смена units — структурный класс, жёсткий отказ).
     for g in &b.g_codes {
@@ -1384,6 +1417,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     if let Some(f) = b.word('F') {
         let num = ctx.feed_num(f);
         ctx.feed = Some(num);
+        // F-слово было в кадре (restated-F, SPEC §7.4a): маркер кадра важен
+        // независимо от того, изменилось ли ЗНАЧЕНИЕ модального feed.
+        ctx.feed_restated = true;
     }
     if !b.g_codes.contains(&GCode::Preset) {
         if let Some(s) = b.word('S') {
@@ -2399,7 +2435,7 @@ fn unroll_cycle(
         let traverse = Op::Rapid {
             start: StartPoint::Known(pt(fx, fy, cz)),
             end: pt(cx, cy, cz),
-            state: ctx.state(),
+            state: ctx.state_derived(sub),
             src: src.clone(),
             sub: Some(sub),
         };
@@ -2410,7 +2446,7 @@ fn unroll_cycle(
         let approach = Op::Rapid {
             start: StartPoint::Known(pt(cx, cy, cz)),
             end: pt(cx, cy, r_cur),
-            state: ctx.state(),
+            state: ctx.state_derived(sub),
             src: src.clone(),
             sub: Some(sub),
         };
@@ -2441,7 +2477,7 @@ fn unroll_cycle(
                 if let Some(p) = dwell {
                     let op = Op::Dwell {
                         seconds: num_f64(p),
-                        state: ctx.state(),
+                        state: ctx.state_derived(sub),
                         src: src.clone(),
                         sub: Some(sub),
                     };
@@ -2508,7 +2544,7 @@ fn unroll_cycle(
                         let op = Op::Rapid {
                             start: StartPoint::Known(pt(cx, cy, cz)),
                             end: pt(cx, cy, r_cur),
-                            state: ctx.state(),
+                            state: ctx.state_derived(sub),
                             src: src.clone(),
                             sub: Some(sub),
                         };
@@ -2523,7 +2559,7 @@ fn unroll_cycle(
                     let op = Op::Rapid {
                         start: StartPoint::Known(pt(cx, cy, cz)),
                         end: pt(cx, cy, appr),
-                        state: ctx.state(),
+                        state: ctx.state_derived(sub),
                         src: src.clone(),
                         sub: Some(sub),
                     };
@@ -2563,7 +2599,7 @@ fn unroll_cycle(
                 let op = Op::Rapid {
                     start: StartPoint::Known(pt(cx, cy, cz)),
                     end: pt(cx, cy, retract),
-                    state: ctx.state(),
+                    state: ctx.state_derived(sub),
                     src: src.clone(),
                     sub: Some(sub),
                 };
@@ -2575,7 +2611,7 @@ fn unroll_cycle(
                 let op = Op::Rapid {
                     start: StartPoint::Known(pt(cx, cy, cz)),
                     end: pt(cx, cy, retract),
-                    state: ctx.state(),
+                    state: ctx.state_derived(sub),
                     src: src.clone(),
                     sub: Some(sub),
                 };
@@ -2632,7 +2668,7 @@ fn push_cycle_move(ctx: &mut Ctx, op: Op) {
 /// LINEAR-оп цикла: feed кадра цикла активен для ВСЕХ производных опов
 /// (§7.7 v0.15.1); G93 — разрешение feed = len·F (вертикальный ход).
 fn cyc_linear(ctx: &Ctx, from: [f64; 3], to: [f64; 3], feed: &Num, src: SrcSpan, sub: u32) -> Op {
-    let mut st = ctx.state();
+    let mut st = ctx.state_derived(sub);
     if ctx.modal.feed_inverse {
         let len = (to[2] - from[2]).abs();
         st.feed = Some(num_f64(len * feed.value()));

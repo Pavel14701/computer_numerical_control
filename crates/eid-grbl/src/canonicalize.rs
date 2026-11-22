@@ -11,6 +11,7 @@ use eid_core::ast::{
 };
 use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-core parser.rs; SPEC §3/§5.2/§6)
@@ -59,7 +60,7 @@ pub struct ParseOut {
 
 /// Вычисленное число → Num: 4 dp, трейлинг-нули нормализованы (SPEC §10.2).
 pub(crate) fn num_f64(v: f64) -> Num {
-    let mut s = format!("{:.4}", v);
+    let mut s = format!("{v:.4}");
     if s.contains('.') {
         while s.ends_with('0') {
             s.pop();
@@ -78,9 +79,9 @@ fn verbatim(n: &Num) -> Num {
     n.clone()
 }
 
-fn span(file: &str, line: u32, len: usize) -> SrcSpan {
+fn span(file: &Arc<str>, line: u32, len: usize) -> SrcSpan {
     SrcSpan {
-        file: file.to_string(),
+        file: file.clone(),
         line_start: line,
         col_start: 1,
         line_end: line,
@@ -94,7 +95,7 @@ fn err_staged(
     stage: eid_core::diag::Stage,
     code: ErrorCode,
     msg: impl Into<String>,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
     len: usize,
 ) -> Diagnostic {
@@ -108,7 +109,13 @@ fn err_staged(
     }
 }
 
-fn err(code: ErrorCode, msg: impl Into<String>, file: &str, line: u32, len: usize) -> Diagnostic {
+fn err(
+    code: ErrorCode,
+    msg: impl Into<String>,
+    file: &Arc<str>,
+    line: u32,
+    len: usize,
+) -> Diagnostic {
     err_staged(eid_core::diag::Stage::Verify, code, msg, file, line, len)
 }
 
@@ -117,7 +124,7 @@ fn limit_err(
     value: f64,
     actual: f64,
     msg: String,
-    file: &str,
+    file: &Arc<str>,
     line: u32,
 ) -> Diagnostic {
     Diagnostic {
@@ -184,7 +191,7 @@ fn wcs_to_p(w: &Wcs) -> u8 {
 fn payload_hex(line: &str) -> String {
     let mut s = String::new();
     for b in line.as_bytes() {
-        s.push_str(&format!("{:02X}", b));
+        s.push_str(&format!("{b:02X}"));
     }
     s
 }
@@ -194,7 +201,7 @@ fn payload_hex(line: &str) -> String {
 // ---------------------------------------------------------------------------
 
 struct Ctx {
-    file: String,
+    file: Arc<str>,
     units: Units,          // G20/G21 (дефолт Mm = дефолт GRBL)
     dist_abs: bool,        // G90=true / G91=false
     feed_inverse: bool,    // G93
@@ -204,6 +211,10 @@ struct Ctx {
     selected_wcs: HashSet<u8>,      // §5.3(b): все выбранные до хода
     wcs_origins: Vec<(u8, Point3)>, // wcs_define (G10 L2) до текущей точки
     feed: Option<Num>,              // модальный F (переживает G0, SPEC §4)
+    /// Провенанс: F-слово было в кадре-источнике текущего блока (v0.2
+    /// волна 3, §2.4); сброс — в начале absorb_frame_state, установка —
+    /// при абсорбции F; в снапшот — через state().
+    feed_restated: bool,
     last_s: Option<Num>,
     spindle: Spindle,
     coolant: Coolant,
@@ -232,6 +243,7 @@ impl Ctx {
             tool: None, // GRBL: M6/T вне словаря — инструмент не устанавливается
             frame,
             wcs: self.wcs,
+            feed_restated: self.feed_restated,
         }
     }
 
@@ -288,6 +300,9 @@ pub fn canonicalize(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
 }
 
 pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>> {
+    // v0.2 (#21): один Arc<str> на прогон канонизации; span() клонирует хэндл
+    // (refcount) — 0 аллокаций на оп.
+    let file: Arc<str> = Arc::from(file);
     // Лимит max_source_lines (COVERAGE §1.2).
     let line_count = src.lines().count() as f64;
     if line_count > 1_000_000.0 {
@@ -296,7 +311,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
             1_000_000.0,
             line_count,
             format!("file has {} lines, limit 1000000", src.lines().count()),
-            file,
+            &file,
             1,
         )]);
     }
@@ -313,14 +328,14 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
                     32.0,
                     32.0,
                     "word value exceeds max_word_chars (32)".into(),
-                    file,
+                    &file,
                     e.line,
                 ),
                 kind => err_staged(
                     eid_core::diag::Stage::Parse,
                     ErrorCode::InvalidInput,
                     format!("lexical error: {:?} at col {}", kind, e.col),
-                    file,
+                    &file,
                     e.line,
                     e.col as usize,
                 ),
@@ -329,7 +344,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
     }
 
     let mut ctx = Ctx {
-        file: file.to_string(),
+        file: file.clone(),
         units: Units::Mm,
         dist_abs: true,
         feed_inverse: false,
@@ -339,6 +354,7 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         selected_wcs: HashSet::from([1]),
         wcs_origins: Vec::new(),
         feed: None,
+        feed_restated: false,
         last_s: None,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
@@ -479,7 +495,7 @@ fn process_block(ctx: &mut Ctx, b: &Block, is_last: bool) -> Result<(), Vec<Diag
     if let Some((group, g)) = b.modal_violation {
         return Err(vec![err(
             ErrorCode::InvalidInput,
-            format!("modal group violation in block: {:?} after {:?}", group, g),
+            format!("modal group violation in block: {group:?} after {g:?}"),
             &ctx.file,
             line,
             blen,
@@ -774,7 +790,7 @@ fn reading_now(ctx: &Ctx, g53: bool) -> Result<Option<Point3>, Vec<Diagnostic>> 
             if ctx.origin_of(*p).is_none() {
                 return Err(vec![err(
                     ErrorCode::RuntimeState,
-                    format!("machine-frame move: WCS P{} selected but not wcs_define'd in text (SPEC §5.3b; CORPUS n1)", p),
+                    format!("machine-frame move: WCS P{p} selected but not wcs_define'd in text (SPEC §5.3b; CORPUS n1)"),
                     &ctx.file, 0, 0,
                 )]);
             }
@@ -830,7 +846,7 @@ fn resolve_end(
     reading: &Option<Point3>,
     allow_controller_default: bool,
 ) -> Result<Option<Point3>, Vec<Diagnostic>> {
-    let rv = reading.as_ref().map(|p| e3(p));
+    let rv = reading.as_ref().map(e3);
     let at_start = allow_controller_default && reading.is_none() && ctx.prev_end.is_none();
     let mut v: [Option<Num>; 3] = std::array::from_fn(|_| None);
     for (i, w) in [(0usize, 'X'), (1, 'Y'), (2, 'Z')] {
@@ -1196,6 +1212,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     let line = b.line_no;
     let blen = b.raw.len();
 
+    // Провенанс F-кадра — по кадру (v0.2 волна 3): сброс на начале блока.
+    ctx.feed_restated = false;
+
     // Единицы: ровно одна система на программу (SPEC §2.5, CORPUS n7).
     // Первое слово G20/G21 устанавливает units программы (inch-файлы легальны,
     // CORPUS #10); повторная смена — отказ (SPEC §3 v0.12); и на RAW-кадре.
@@ -1241,6 +1260,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     // Порядок grbl gcode.c: feed → spindle → coolant.
     if let Some(f) = b.word('F') {
         ctx.feed = Some(verbatim(f));
+        // F-слово было в кадре (restated-F, SPEC §7.4a): маркер кадра важен
+        // независимо от того, изменилось ли ЗНАЧЕНИЕ модального feed.
+        ctx.feed_restated = true;
     }
     let s_word = b.word('S').map(verbatim);
     if let Some(s) = &s_word {

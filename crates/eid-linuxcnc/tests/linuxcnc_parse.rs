@@ -64,13 +64,17 @@ fn read(rel: &str) -> String {
 }
 
 fn parse_linuxcnc(rel: &str) -> Result<eid_core::ast::Program, Vec<eid_core::diag::Diagnostic>> {
-    LinuxCncAdapter::new().parse(&read(rel), rel)
+    // v0.2 #22: owning-результат — program в ParseOutput.
+    LinuxCncAdapter::new()
+        .parse(&read(rel), rel)
+        .map(|out| out.program)
 }
 
 fn parse_golden(rel: &str) -> eid_core::ast::Program {
     EidTextAdapter::new()
         .parse(&read(rel), rel)
         .expect("golden AST parses via eid-core")
+        .program
 }
 
 fn assert_diff_empty(a: &eid_core::ast::Program, b: &eid_core::ast::Program, ctx: &str) {
@@ -99,8 +103,8 @@ fn assert_err_code(rel: &str, code: ErrorCode, ctx: &str) {
 
 fn assert_ok_diag(rel: &str, code: ErrorCode, ctx: &str) -> eid_core::ast::Program {
     let adapter = LinuxCncAdapter::new();
-    let p = match adapter.parse(&read(rel), rel) {
-        Ok(p) => p,
+    let out = match adapter.parse(&read(rel), rel) {
+        Ok(out) => out,
         Err(diags) => panic!(
             "{ctx}: expected Ok + diag {code:?}, got Err: {:?}",
             diags
@@ -109,7 +113,8 @@ fn assert_ok_diag(rel: &str, code: ErrorCode, ctx: &str) -> eid_core::ast::Progr
                 .collect::<Vec<_>>()
         ),
     };
-    let codes: Vec<ErrorCode> = adapter.take_diagnostics().iter().map(|d| d.code).collect();
+    let p = out.program;
+    let codes: Vec<ErrorCode> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&code),
         "{ctx}: expected diagnostics to contain {code:?}, got {codes:?}"
@@ -347,17 +352,18 @@ fn n14_program_end_missing_auto_pend() {
     // SPEC §3 v0.16: отсутствие M2/M30 = неявный конец — parse Ok +
     // notice MissingProgramEnd (ProgramEnd добавлен автоматически).
     let a = LinuxCncAdapter::new();
-    let p = a
+    let out = a
         .parse(
             &read("n14_program_end_missing/program_end_missing.linuxcnc.ngc"),
             "n14",
         )
         .expect("N14: missing PEND теперь Ok (auto-PEND)");
+    let p = out.program;
     assert!(
         matches!(p.ops.last(), Some(Op::ProgramEnd { .. })),
         "auto-PEND последним"
     );
-    let notices = a.take_notices();
+    let notices = out.notices;
     assert!(
         notices
             .iter()
@@ -531,9 +537,10 @@ fn n11_m98_call_line_level_raw() {
     // Ruling итерации 6 (Phase 1.2): M98/M99 → line-level Raw{SYNTAX}
     // (line-local конструкция, правило двух классов), разбор продолжается.
     let a = LinuxCncAdapter::new();
-    let p = a
+    let out = a
         .parse(&read("n11_m98_call/m98_call.linuxcnc.ngc"), "n11")
         .expect("N11: Ok (line-level Raw)");
+    let p = out.program;
     assert!(
         matches!(
             &p.ops[0],
@@ -543,7 +550,7 @@ fn n11_m98_call_line_level_raw() {
         "payload = `M98…`"
     );
     assert!(matches!(&p.ops.last(), Some(Op::ProgramEnd { .. })));
-    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax), "{codes:?}");
 }
 
@@ -552,7 +559,9 @@ fn n11_m98_call_line_level_raw() {
 // ===========================================================================
 
 fn parse_str(src: &str) -> Result<eid_core::ast::Program, Vec<eid_core::diag::Diagnostic>> {
-    LinuxCncAdapter::new().parse(src, "unit.ngc")
+    LinuxCncAdapter::new()
+        .parse(src, "unit.ngc")
+        .map(|out| out.program)
 }
 
 #[test]
@@ -660,8 +669,9 @@ fn unit_g93_inverse_time_feed_resolution() {
 fn unit_zero_length_and_zero_dwell_notice() {
     let src = "G21 G90 G94\nG1 X10.0000 F100.0\nG1 X10.0000\nG4 P0\nM2\n";
     let adapter = LinuxCncAdapter::new();
-    let p = adapter.parse(src, "unit.ngc").expect("parses");
-    let notices = adapter.take_notices();
+    let out = adapter.parse(src, "unit.ngc").expect("parses");
+    let p = out.program;
+    let notices = out.notices;
     assert_eq!(p.ops.len(), 2); // Linear + PEND (нулевые отброшены)
     assert_eq!(notices.len(), 2);
     assert!(notices
@@ -676,7 +686,8 @@ fn unit_zero_length_and_zero_dwell_notice() {
 fn unit_block_delete_raw_runtime_state() {
     let src = "G21 G90 G94\n/ G0 X1.0000 Y1.0000 Z1.0000\nG0 X2.0000 Y2.0000 Z2.0000\nM2\n";
     let adapter = LinuxCncAdapter::new();
-    let p = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
+    let out = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
+    let p = out.program;
     assert!(matches!(
         &p.ops[0],
         Op::Raw {
@@ -684,7 +695,7 @@ fn unit_block_delete_raw_runtime_state() {
             ..
         }
     ));
-    let codes: Vec<_> = adapter.take_diagnostics().iter().map(|d| d.code).collect();
+    let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::RuntimeState));
 }
 
@@ -702,14 +713,15 @@ fn unit_hash_param_err_runtime_state() {
 fn unit_o_code_err_syntax() {
     // Ruling итерации 6: O-code строки → line-level Raw{SYNTAX}, разбор идёт.
     let a = LinuxCncAdapter::new();
-    let p = a.parse("G21 G90\nO100\nM2\n", "o.ngc").expect("Ok + Raw");
+    let out = a.parse("G21 G90\nO100\nM2\n", "o.ngc").expect("Ok + Raw");
+    let p = out.program;
     assert!(
         matches!(&p.ops[0], Op::Raw { code: ErrorCode::UnsupportedSyntax, payload_hex, .. }
         if payload_hex == "4F3130300A"),
         "payload = `O100`"
     );
     assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
-    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
 }
 
@@ -728,10 +740,11 @@ fn unit_bare_t_then_m6_uses_selection() {
     // T5 без M6 → Raw (diag) + предвыбор сохраняется; M6 без T → ToolChange 5.
     let src = "G21 G90 G94\nT5\nM6\nG0 X1.0000 Y1.0000 Z1.0000\nM2\n";
     let adapter = LinuxCncAdapter::new();
-    let p = adapter.parse(src, "unit.ngc").expect("Ok");
+    let out = adapter.parse(src, "unit.ngc").expect("Ok");
+    let p = out.program;
     assert!(matches!(&p.ops[0], Op::Raw { .. }));
     assert!(matches!(&p.ops[1], Op::ToolChange { tool: 5, .. }));
-    let codes: Vec<_> = adapter.take_diagnostics().iter().map(|d| d.code).collect();
+    let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSemantics));
 }
 
@@ -775,7 +788,8 @@ fn unit_wcs_g59_3_selection() {
 fn unit_unknown_g_raw_syntax() {
     let src = "G21 G90 G94\nG11\nG0 X0 Y0 Z0\nM2\n";
     let adapter = LinuxCncAdapter::new();
-    let p = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
+    let out = adapter.parse(src, "unit.ngc").expect("Ok (line-level)");
+    let p = out.program;
     assert!(matches!(
         &p.ops[0],
         Op::Raw {
@@ -914,7 +928,7 @@ fn audit15_explicit_end_quantized_to_start_is_full_circle() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "unit13.ngc").expect("parses");
+    let p = a.parse(src, "unit13.ngc").expect("parses").program;
     assert_eq!(p.ops.len(), 4, "RAPID + ARC(360°) + LINEAR + PEND");
     match &p.ops[1] {
         Op::Arc {
@@ -941,7 +955,14 @@ fn audit15_explicit_end_quantized_to_start_is_full_circle() {
         }
         other => panic!("op 1 must be Arc, got {other:?}"),
     }
-    assert!(a.take_notices().is_empty(), "дуга сохранена — notice нет");
+    // v0.2 #22: notices в owning-результате (повторный parse эквивалентен).
+    assert!(
+        a.parse(src, "unit13.ngc")
+            .expect("parses")
+            .notices
+            .is_empty(),
+        "дуга сохранена — notice нет"
+    );
 }
 
 #[test]
@@ -956,9 +977,10 @@ fn audit15_degenerate_center_start_dropped() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "deg.ngc").expect("parses");
+    let out = a.parse(src, "deg.ngc").expect("parses");
+    let p = out.program;
     assert_eq!(p.ops.len(), 2, "RAPID + PEND (дуга отброшена)");
-    let notices = a.take_notices();
+    let notices = out.notices;
     assert!(
         notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
         "zero-length arc notice отсутствует: {notices:?}"
@@ -977,9 +999,10 @@ fn audit15_degenerate_center_start_inherited_end_dropped() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "deg2.ngc").expect("parses");
+    let out = a.parse(src, "deg2.ngc").expect("parses");
+    let p = out.program;
     assert_eq!(p.ops.len(), 2, "RAPID + PEND (дуга отброшена)");
-    let notices = a.take_notices();
+    let notices = out.notices;
     assert!(
         notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
         "{notices:?}"
@@ -1199,13 +1222,14 @@ fn unit_cycle_l_repeat_g90_dedup_zero_moves() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "l2.ngc").expect("parses");
+    let out = a.parse(src, "l2.ngc").expect("parses");
+    let p = out.program;
     // iter1: traverse, rapid R, feed, retract (4); iter2: traverse/R нулевые
     // (drop), feed + retract живы (2) → initial + 6 + PEND = 8.
     assert_eq!(p.ops.len(), 8);
     assert!(matches!(&p.ops[5], Op::Linear { sub: Some(7), .. }));
     assert!(matches!(&p.ops[6], Op::Rapid { sub: Some(8), .. }));
-    let notices = a.take_notices();
+    let notices = out.notices;
     assert_eq!(
         notices
             .iter()
@@ -1619,7 +1643,8 @@ fn unit_unknown_dollar_line_raw_syntax() {
     // байты строки С терминатором (D9 v0.15).
     let src = "G21 G90 G94\n$$\nG0 X1.0000 Y1.0000 Z1.0000\nM2\n";
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "dollar.ngc").expect("Ok (line-level)");
+    let out = a.parse(src, "dollar.ngc").expect("Ok (line-level)");
+    let p = out.program;
     assert!(
         matches!(
             &p.ops[0],
@@ -1632,7 +1657,7 @@ fn unit_unknown_dollar_line_raw_syntax() {
         matches!(&p.ops[1], Op::Rapid { .. }),
         "разбор продолжается после raw"
     );
-    let codes: Vec<_> = a.take_diagnostics().iter().map(|d| d.code).collect();
+    let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&ErrorCode::UnsupportedSyntax));
 }
 
@@ -1642,21 +1667,22 @@ fn unit_raw_crlf_payload_terminator() {
     // терминатор дословно (не нормализует); reparse — payload равен.
     let src = "G21 G90 G94\r\n$$\r\nG0 X1.0000 Y1.0000 Z1.0000\r\nM2\r\n";
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "crlf.ngc").expect("parses");
+    let p = a.parse(src, "crlf.ngc").expect("parses").program;
     match &p.ops[0] {
         Op::Raw { payload_hex, .. } => {
             assert_eq!(payload_hex, "24240D0A", "`$$\r\n` — зеркально golden #47");
         }
         other => panic!("op 0 must be Raw: {other:?}"),
     }
-    let text = a.emit(&p).expect("emit");
+    let text = a.emit(&p).expect("emit").text;
     assert!(
         text.contains("$$\r\n"),
         "CRLF-терминатор сохранён дословно:\n{text:?}"
     );
     let p2 = LinuxCncAdapter::new()
         .parse(&text, "rt.ngc")
-        .expect("reparse");
+        .expect("reparse")
+        .program;
     match (&p.ops[0], &p2.ops[0]) {
         (
             Op::Raw {
@@ -1690,7 +1716,7 @@ fn spec_cov_lcnc_nurbs_p_words_raw_semantics() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "nurbs.ngc").expect("Ok (line-level)");
+    let p = a.parse(src, "nurbs.ngc").expect("Ok (line-level)").program;
     assert!(
         matches!(
             &p.ops[1],
@@ -1955,7 +1981,7 @@ fn spec_cov_lcnc_stage_attribution() {
 
     // Parse: line-level Raw (O-code) — диагностика stage=Parse, разбор идёт.
     let a = LinuxCncAdapter::new();
-    let p = a
+    let out = a
         .parse(
             "G21 G90 G94
 O100
@@ -1965,6 +1991,7 @@ M2
             "o.ngc",
         )
         .expect("O-code: Ok + Raw");
+    let p = out.program;
     assert!(matches!(
         &p.ops[0],
         Op::Raw {
@@ -1972,7 +1999,7 @@ M2
             ..
         }
     ));
-    let d1 = a.take_diagnostics();
+    let d1 = out.diagnostics;
     assert!(d1
         .iter()
         .all(|d| d.stage == Stage::Parse && d.code == ErrorCode::UnsupportedSyntax));
@@ -2018,10 +2045,12 @@ M2
 fn assert_meta_invariant(base_src: &str, variant_src: &str, tag: &str) {
     let a = LinuxCncAdapter::new()
         .parse(base_src, tag)
-        .expect("base parses");
+        .expect("base parses")
+        .program;
     let b = LinuxCncAdapter::new()
         .parse(variant_src, tag)
-        .expect("variant parses");
+        .expect("variant parses")
+        .program;
     let d = eid_harness::diff::semantic_diff(&a, &b, &DiffConfig::default());
     assert!(d.is_empty(), "{tag}: semantic divergences: {d:?}");
 }
@@ -2197,7 +2226,8 @@ fn mutation_l_word_boundary_pass_and_fail() {
     );
     let p = LinuxCncAdapter::new()
         .parse(ok, "l_ok.ngc")
-        .expect("L=10000 — ровно лимит");
+        .expect("L=10000 — ровно лимит")
+        .program;
     assert!(p.ops.len() >= 3);
     let over = concat!(
         "G21 G90 G94 G17\n",
@@ -2278,7 +2308,10 @@ fn audit33_units_absorbed_on_raw_line_g20_g43() {
     // следующая строка читается в inch (до фикса units терялись → mm).
     let adapter = LinuxCncAdapter::new();
     let src = concat!("G20 G43 H2 X5.\n", "G1 X1.0 F10.0\n", "M2\n",);
-    let p = adapter.parse(src, "a33_units.ngc").expect("parses Ok");
+    let p = adapter
+        .parse(src, "a33_units.ngc")
+        .expect("parses Ok")
+        .program;
     assert_eq!(
         p.units,
         eid_core::ast::Units::In,
@@ -2330,9 +2363,10 @@ fn audit33_w_modal_on_raw_notice_on_motion_g() {
         "G1 X8.0\n",
         "M2\n",
     );
-    let p = adapter.parse(src, "a33_notice.ngc").expect("parses Ok");
+    let out = adapter.parse(src, "a33_notice.ngc").expect("parses Ok");
+    let p = out.program;
     assert!(p.ops.iter().any(|o| matches!(o, Op::Raw { .. })));
-    let diags = adapter.take_diagnostics();
+    let diags = out.diagnostics;
     assert!(
         diags.iter().any(|d| d.message.contains("W_MODAL_ON_RAW")
             && d.message.contains("модальное состояние абсорбировано")),
@@ -2413,7 +2447,8 @@ fn audit29_t_word_out_of_range_is_err_not_silent_t0() {
     let a = LinuxCncAdapter::new();
     let p = a
         .parse("G21 G90\nT4294967295\nM2\n", "t_max.ngc")
-        .expect("T = u32::MAX легален");
+        .expect("T = u32::MAX легален")
+        .program;
     assert!(
         p.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
         "одиночное T — Raw"
@@ -2675,7 +2710,7 @@ fn audit19_g55_g53_machine_frame_keeps_wcs_state() {
     assert!(!motions[1].2, "start известен: (0,0,0) − (1,2,3)");
     let _ = motions[1].3;
     // round-trip: эмиссия воспроизводит G55 + G53 G0.
-    let emitted = LinuxCncAdapter::new().emit(&p).expect("emits");
+    let emitted = LinuxCncAdapter::new().emit(&p).expect("emits").text;
     assert!(emitted.contains("G55"), "{emitted}");
     assert!(emitted.contains("G53 G0"), "{emitted}");
 }
@@ -2684,13 +2719,14 @@ fn audit19_g55_g53_machine_frame_keeps_wcs_state() {
 fn audit20_m3_without_s_is_warning_not_err() {
     // Аудит #20: M3/M4 без S — notice-warning (не Err): эмитится S0.0000.
     let a = LinuxCncAdapter::new();
-    let p = a
+    let out = a
         .parse(
             "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n",
             "a20.ngc",
         )
         .expect("M3 без S — Ok, не отказ");
-    let diags = a.take_diagnostics();
+    let p = out.program;
+    let diags = out.diagnostics;
     assert!(
         diags
             .iter()
@@ -2699,30 +2735,34 @@ fn audit20_m3_without_s_is_warning_not_err() {
         "ожидалась W_SPINDLE_S_MISSING: {diags:?}"
     );
     // AST: шпиндель Cw(0) — S0.0000 при эмиссии.
-    let emitted = a.emit(&p).expect("emits");
+    let emitted = a.emit(&p).expect("emits").text;
     assert!(emitted.contains("M3 S0.0000"), "{emitted}");
     // M4 — тот же класс.
     let a2 = LinuxCncAdapter::new();
-    a2.parse(
-        "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM4\nG1 X10.0000 F100.0\nM2\n",
-        "a20b.ngc",
-    )
-    .expect("M4 без S — Ok");
+    let out2 = a2
+        .parse(
+            "G21 G90 G94 G17\nG0 X0.0000 Y0.0000 Z0.0000\nM4\nG1 X10.0000 F100.0\nM2\n",
+            "a20b.ngc",
+        )
+        .expect("M4 без S — Ok");
     assert!(
-        a2.take_diagnostics()
+        out2.diagnostics
             .iter()
             .any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
-        "M4: {diags:?}"
+        "M4: {:?}",
+        out2.diagnostics
     );
     // Наследование предыдущего S-слова — БЕЗ warning (S модален).
     let a3 = LinuxCncAdapter::new();
-    a3.parse(
-        "G21 G90 G94 G17\nS5000\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n",
-        "a20c.ngc",
-    )
-    .expect("M3 с наследованным S — Ok");
+    let out3 = a3
+        .parse(
+            "G21 G90 G94 G17\nS5000\nG0 X0.0000 Y0.0000 Z0.0000\nM3\nG1 X10.0000 F100.0\nM2\n",
+            "a20c.ngc",
+        )
+        .expect("M3 с наследованным S — Ok");
     assert!(
-        !a3.take_diagnostics()
+        !out3
+            .diagnostics
             .iter()
             .any(|d| d.message.contains("W_SPINDLE_S_MISSING")),
         "наследованный S5000 — warning не нужен"
@@ -2744,7 +2784,7 @@ fn audit34_roundtrip_g18_arcs_negative_ik() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p1 = a.parse(src, "a34_g18.ngc").expect("parses");
+    let p1 = a.parse(src, "a34_g18.ngc").expect("parses").program;
     // Контроль: полный круг присутствует (sweep=360, F2-правило для явного end).
     let arcs: Vec<(f64, f64, eid_core::ast::Dir)> = p1
         .ops
@@ -2769,7 +2809,7 @@ fn audit34_roundtrip_g18_arcs_negative_ik() {
         ],
         "{arcs:?}"
     );
-    let emitted = a.emit(&p1).expect("emits");
+    let emitted = a.emit(&p1).expect("emits").text;
     // Эмиссия G18: in-plane пара I+K (не J), смена плоскости отдельной строкой.
     assert!(emitted.contains("G18"), "{emitted}");
     assert!(emitted.contains("I-5.0000 K-3.0000"), "{emitted}");
@@ -2777,7 +2817,10 @@ fn audit34_roundtrip_g18_arcs_negative_ik() {
     // Полный круг — без слов осей (CORPUS #08 форма; F модален — на 4-й дуге
     // feed уже 100, слово не воспроизводится).
     assert!(emitted.contains("\nG2 I-5.0000 K-3.0000\n"), "{emitted}");
-    let p2 = a.parse(&emitted, "a34_g18_rt.ngc").expect("re-parses");
+    let p2 = a
+        .parse(&emitted, "a34_g18_rt.ngc")
+        .expect("re-parses")
+        .program;
     let d = semantic_diff(&p1, &p2, &DiffConfig::default());
     assert!(d.is_empty(), "G18 round-trip divergences: {d:?}");
 }
@@ -2796,7 +2839,7 @@ fn audit34_roundtrip_g19_arcs_negative_jk() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p1 = a.parse(src, "a34_g19.ngc").expect("parses");
+    let p1 = a.parse(src, "a34_g19.ngc").expect("parses").program;
     let arcs: Vec<(f64, f64)> = p1
         .ops
         .iter()
@@ -2812,14 +2855,17 @@ fn audit34_roundtrip_g19_arcs_negative_jk() {
         vec![(180.0, 0.0), (180.0, 0.0), (180.0, 6.0), (360.0, 0.0)],
         "{arcs:?}"
     );
-    let emitted = a.emit(&p1).expect("emits");
+    let emitted = a.emit(&p1).expect("emits").text;
     assert!(emitted.contains("G19"), "{emitted}");
     assert!(emitted.contains("J-5.0000 K-3.0000"), "{emitted}");
     assert!(
         !emitted.contains(" I-"),
         "{emitted} — I не in-plane для G19"
     );
-    let p2 = a.parse(&emitted, "a34_g19_rt.ngc").expect("re-parses");
+    let p2 = a
+        .parse(&emitted, "a34_g19_rt.ngc")
+        .expect("re-parses")
+        .program;
     let d = semantic_diff(&p1, &p2, &DiffConfig::default());
     assert!(d.is_empty(), "G19 round-trip divergences: {d:?}");
 }
@@ -2866,7 +2912,8 @@ fn mround_preset_cross_wcs_with_origins() {
     assert!(
         matches!(&p.ops[2], Op::Linear { start: StartPoint::Known(s), .. }
         if to_f64(s) == [4.0, 4.0, 4.0]),
-        "start = preset + O54 − O55: {:?}", p.ops[2]
+        "start = preset + O54 − O55: {:?}",
+        p.ops[2]
     );
 }
 

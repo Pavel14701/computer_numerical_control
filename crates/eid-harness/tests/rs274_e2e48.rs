@@ -15,8 +15,8 @@ use eid_core::adapter::Adapter;
 use eid_grbl::GrblAdapter;
 use eid_harness::manifest;
 use eid_linuxcnc::LinuxCncAdapter;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::Mutex;
 
 const SKIP: [(&str, &str); 4] = [
     ("27", "r4-отказ: tool_change → E_UNSUPPORTED_SYNTAX в GRBL"),
@@ -116,8 +116,7 @@ fn e2e48_canonical_comparison_all_positives() {
     let work = root.join("target/simwork");
     std::fs::create_dir_all(&work).unwrap();
 
-    let mut reds: Vec<RedEntry> = Vec::new();
-    let reds = Mutex::new(reds);
+    let reds = Mutex::new(Vec::<RedEntry>::new());
     let mut pairs_ok = 0usize;
     let mut self_ok = 0usize;
     let mut skipped = 0usize;
@@ -137,11 +136,11 @@ fn e2e48_canonical_comparison_all_positives() {
         let lcnc_file = v.files.iter().find(|f| f.dialect == "linuxcnc");
 
         match (grbl_file, lcnc_file) {
-            (Some(g), Some(l)) => {
+            (Some(g), Some(_l)) => {
                 // ПАРА: translate(grbl→linuxcnc) → rs274 на обоих
                 let grbl_text = std::fs::read_to_string(&g.path).expect("grbl readable");
                 let ast = match grbl.parse(&grbl_text, &g.path.display().to_string()) {
-                    Ok(a) => a,
+                    Ok(a) => a.program,
                     Err(d) => {
                         reds.lock().unwrap().push(RedEntry {
                             id: v.id.clone(),
@@ -152,7 +151,7 @@ fn e2e48_canonical_comparison_all_positives() {
                     }
                 };
                 let translated = match lcnc.emit(&ast) {
-                    Ok(t) => t,
+                    Ok(t) => t.text,
                     Err(d) => {
                         reds.lock().unwrap().push(RedEntry {
                             id: v.id.clone(),
@@ -222,7 +221,7 @@ fn e2e48_canonical_comparison_all_positives() {
                 // ОДИН-диалектный (linuxcnc only): canonical self-round-trip
                 let text = std::fs::read_to_string(&l.path).expect("readable");
                 let ast = match lcnc.parse(&text, &l.path.display().to_string()) {
-                    Ok(a) => a,
+                    Ok(a) => a.program,
                     Err(d) => {
                         reds.lock().unwrap().push(RedEntry {
                             id: v.id.clone(),
@@ -233,7 +232,7 @@ fn e2e48_canonical_comparison_all_positives() {
                     }
                 };
                 let re_emitted = match lcnc.emit(&ast) {
-                    Ok(t) => t,
+                    Ok(t) => t.text,
                     Err(d) => {
                         reds.lock().unwrap().push(RedEntry {
                             id: v.id.clone(),

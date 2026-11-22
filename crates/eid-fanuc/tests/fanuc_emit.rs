@@ -38,6 +38,7 @@ use eid_core::ast::{
     Coolant, Frame, Num, Op, PathMode, Program, Spindle, SrcSpan, StartPoint, State, Units, Wcs,
 };
 use eid_core::diag::ErrorCode;
+use eid_fanuc::emit::FanucEmissionCondition as Cond;
 use eid_fanuc::emit::{emit_with_warnings, op_kind, FanucEmissionLegality};
 use eid_fanuc::FanucAdapter;
 use eid_harness::diff::{semantic_diff, DiffConfig, Divergence};
@@ -58,22 +59,23 @@ fn parse_fanuc(src: &str) -> Program {
     FanucAdapter::new()
         .parse(src, "t.ngc")
         .expect("fanuc parse ok")
+        .program
 }
 
 fn emit_fanuc(src: &str) -> String {
     let p = parse_fanuc(src);
-    FanucAdapter::new().emit(&p).expect("emit ok")
+    FanucAdapter::new().emit(&p).expect("emit ok").text
 }
 
 fn emit_w(src: &str) -> (String, Vec<String>) {
     let ad = FanucAdapter::new();
-    let p = ad.parse(src, "t.ngc").expect("fanuc parse ok");
-    let text = ad.emit(&p).expect("emit ok");
-    let warnings = ad.take_warnings();
-    (text, warnings)
+    let p = ad.parse(src, "t.ngc").expect("fanuc parse ok").program;
+    // v0.2 #22: warnings — в owning-результате emit (буфера адаптера нет).
+    let out = ad.emit(&p).expect("emit ok");
+    (out.text, out.warnings)
 }
 
-fn err_code_of(r: Result<String, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode {
+fn err_code_of<T>(r: Result<T, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode {
     let Err(d) = r else {
         panic!("ожидался Err")
     };
@@ -85,11 +87,11 @@ fn err_code_of(r: Result<String, Vec<eid_core::diag::Diagnostic>>) -> ErrorCode 
 /// shift path_mode ExactPath→ExactStop на Fanuc — COVERAGE §5.1/§2.2).
 fn roundtrip(src: &str, label: &str) {
     let ad = FanucAdapter::new();
-    let a = ad.parse(src, "t.ngc").expect("parse ok");
-    let t1 = ad.emit(&a).expect("emit ok");
-    let t2 = ad.emit(&a).expect("emit ok");
+    let a = ad.parse(src, "t.ngc").expect("parse ok").program;
+    let t1 = ad.emit(&a).expect("emit ok").text;
+    let t2 = ad.emit(&a).expect("emit ok").text;
     assert_eq!(t1, t2, "{label}: emit недетерминирован");
-    let b = ad.parse(&t1, "rt.ngc").expect("reparse ok");
+    let b = ad.parse(&t1, "rt.ngc").expect("reparse ok").program;
     let d = semantic_diff(&a, &b, &DiffConfig::default());
     let d: Vec<_> = d
         .into_iter()
@@ -538,7 +540,7 @@ fn golden_cycle_unroll_verbose() {
 // ===========================================================================
 
 fn legality_table() -> FanucEmissionLegality {
-    FanucAdapter::default().emission_legality()
+    FanucAdapter::new().emission_legality()
 }
 
 #[test]
@@ -570,24 +572,34 @@ fn legality_table_composition() {
         "frame_preset (G92) легален"
     );
     assert!(!t.is_legal_kind("wcs_set_here"), "wcs_set_here НЕ легален");
-    // illegal-условия с кодами (COVERAGE §5.1 + канон-форма).
+    // illegal-условия с кодами (COVERAGE §5.1 + канон-форма). v0.2 волна 4:
+    // коды — ТОТАЛЬНЫЕ match-функции enum'а; таблица — зеркало `cond.code()`.
     let expect = [
-        ("wcs_set_here", ErrorCode::UnsupportedSemantics),
-        ("wcs_outside_g54_g59", ErrorCode::UnsupportedSyntax),
-        ("wcs_define_p_outside_g54_g59", ErrorCode::UnsupportedSyntax),
-        ("machine_frame_arc", ErrorCode::UnsupportedSemantics),
-        ("motion_feed_none", ErrorCode::InvalidInput),
-        ("arc_unknown_start", ErrorCode::InvalidInput),
-        ("arc_normal_non_canonical", ErrorCode::InvalidInput),
-        ("raw_payload_not_hex", ErrorCode::InvalidInput),
-        ("program_end_missing", ErrorCode::InvalidInput),
-        ("program_end_duplicate", ErrorCode::InvalidInput),
-        ("program_end_not_last", ErrorCode::InvalidInput),
+        (Cond::WcsSetHere, ErrorCode::UnsupportedSemantics),
+        (Cond::WcsOutsideG54G59, ErrorCode::UnsupportedSyntax),
+        (Cond::WcsDefinePOutsideG54G59, ErrorCode::UnsupportedSyntax),
+        (Cond::MachineFrameArc, ErrorCode::UnsupportedSemantics),
+        (Cond::MotionFeedNone, ErrorCode::InvalidInput),
+        (Cond::ArcUnknownStart, ErrorCode::InvalidInput),
+        (Cond::ArcNormalNonCanonical, ErrorCode::InvalidInput),
+        (Cond::RawPayloadNotHex, ErrorCode::InvalidInput),
+        (Cond::ProgramEndMissing, ErrorCode::InvalidInput),
+        (Cond::ProgramEndDuplicate, ErrorCode::InvalidInput),
+        (Cond::ProgramEndNotLast, ErrorCode::InvalidInput),
     ];
     for (cond, code) in expect {
-        assert_eq!(t.code_of(cond), Some(code), "{cond}");
+        assert_eq!(cond.code(), code, "{}", cond.as_str());
+        // Таблица = данные: пара (условие, код) обязана совпадать с match.
+        let n = t.illegal.iter().filter(|(c, _)| *c == cond).count();
+        assert_eq!(n, 1, "условие {} в таблице ровно один раз", cond.as_str());
+        let (_, table_code) = t.illegal.iter().find(|(c, _)| *c == cond).unwrap();
+        assert_eq!(
+            *table_code,
+            code,
+            "{}: таблица = тотальный match",
+            cond.as_str()
+        );
     }
-    assert_eq!(t.code_of("несуществующее_условие"), None);
     // codes() — без дубликатов; все из {INVAL, SYN, USEM}.
     let mut codes = t.codes();
     let n = codes.len();
@@ -627,6 +639,7 @@ fn illegal_wcs_set_here() {
         tool: None,
         frame: Frame::Wcs,
         wcs: Wcs::G54,
+        feed_restated: false,
     };
     let p = Program {
         eid_version: "EID/L1 v0.3".into(),
@@ -653,7 +666,7 @@ fn illegal_wcs_set_here() {
     let Err(d) = FanucAdapter::new().emit(&p) else {
         panic!("ожидался Err")
     };
-    assert_eq!(d[0].code, legality_table().code_of("wcs_set_here").unwrap());
+    assert_eq!(d[0].code, Cond::WcsSetHere.code());
     assert!(d[0].message.contains("L20"), "{}", d[0].message);
     assert_eq!(d[0].stage, eid_core::diag::Stage::Emit);
 }
@@ -717,8 +730,8 @@ fn illegal_machine_frame_arc() {
         d[0].code.as_str()
     );
     assert_eq!(
-        legality_table().code_of("machine_frame_arc"),
-        Some(ErrorCode::UnsupportedSemantics)
+        Cond::MachineFrameArc.code(),
+        ErrorCode::UnsupportedSemantics
     );
 }
 
@@ -767,10 +780,7 @@ fn illegal_program_end_not_last() {
         panic!("ожидался Err")
     };
     assert_eq!(d[0].code, ErrorCode::InvalidInput);
-    assert_eq!(
-        legality_table().code_of("program_end_not_last"),
-        Some(ErrorCode::InvalidInput)
-    );
+    assert_eq!(Cond::ProgramEndNotLast.code(), ErrorCode::InvalidInput);
 }
 
 #[test]
@@ -788,15 +798,17 @@ fn illegal_magic_version() {
 #[test]
 fn legality_behavior_cross_check() {
     let t = legality_table();
-    // wcs_set_here — код из таблицы.
-    assert_eq!(
-        t.code_of("wcs_set_here"),
-        Some(ErrorCode::UnsupportedSemantics)
-    );
-    // Таблица declarations ↔ фактически возвращённые коды (см. illegal_*):
-    // достаточно исчерпывающей проверки соответствия классов.
-    for (cond, _) in &t.illegal {
-        assert!(t.code_of(cond).is_some(), "условие {cond} без кода");
+    // wcs_set_here — код из таблицы (тотальный match enum'а, волна 4).
+    assert_eq!(Cond::WcsSetHere.code(), ErrorCode::UnsupportedSemantics);
+    // Таблица declarations ↔ тотальные match-функции (волна 4): код пары
+    // обязан совпадать с `cond.code()` — расхождение невозможно молча.
+    for (cond, code) in &t.illegal {
+        assert_eq!(
+            *code,
+            cond.code(),
+            "код {} = тотальный match",
+            cond.as_str()
+        );
     }
 }
 
@@ -808,8 +820,8 @@ fn legality_behavior_cross_check() {
 fn emit_deterministic_double() {
     let p = parse_fanuc(FULL_PROGRAM);
     let ad = FanucAdapter::new();
-    let t1 = ad.emit(&p).expect("emit ok");
-    let t2 = ad.emit(&p).expect("emit ok");
+    let t1 = ad.emit(&p).expect("emit ok").text;
+    let t2 = ad.emit(&p).expect("emit ok").text;
     assert_eq!(t1, t2);
 }
 
@@ -880,21 +892,66 @@ fn roundtrip_full_circle_and_helix() {
 }
 
 // ===========================================================================
+// T8 (v0.2 волна 3, SPEC §7.4a + INTERFACE-V0.2-DESIGN §2.4): restated-F
+// провенанс в AST — эмиттер переизлучает F по флагу кадра.
+// ===========================================================================
+
+#[test]
+fn restated_f_reemitted_from_ast_flag() {
+    // Два кадра с F-словом ОДНОГО значения → F переизлучён на обоих
+    // (rs274 ассертит SET_FEED_RATE на каждом кадре с F-словом; прежде
+    // второй кадр терял маркер — дыра класса e2e48 #21, закрыта флагом
+    // feed_restated в AST).
+    let text =
+        emit_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z5.;\nG1 X20. F120.;\nG1 X30. F120.;\nM30;\n");
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(
+        f_count, 2,
+        "restated-F переизлучён на обоих F-кадрах:\n{text}"
+    );
+}
+
+#[test]
+fn inherited_f_not_reemitted() {
+    // Второй кадр БЕЗ F-слова (наследованный модальный feed) → F НЕ
+    // переизлучается (flag=false, changed=false, sub=None).
+    let text = emit_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z5.;\nG1 X20. F120.;\nG1 X30.;\nM30;\n");
+    let f_count = text.matches(" F120.0000").count();
+    assert_eq!(f_count, 1, "наследованный кадр не переизлучает F:\n{text}");
+}
+
+#[test]
+fn g93_resolved_feed_is_emitted() {
+    // (в) T8: G93-разрешённый feed (len·F) — F излучён (провенанс кадра
+    // важен независимо от преобразования значения).
+    let text = emit_fanuc("G21 G90 G93 G17;\nG0 X0. Y0. Z1.;\nG1 X10. F1000.;\nM30;\n");
+    // Z не меняется (G1 X10. из (0,0,1)) — len = 10; feed = len·F = 10000.
+    assert!(
+        text.contains("F10000.0000"),
+        "G93-resolved feed излучён:\n{text}"
+    );
+}
+
+// ===========================================================================
 // D. Warnings-буфер адаптера
 // ===========================================================================
 
 #[test]
 fn adapter_take_warnings() {
+    // v0.2 #22: owning-семантика — каждый emit возвращает СВОИ warnings
+    // ( прежний «буфер с затиранием» заменён результатом; повторный emit
+    // не опустошает предыдущий, а даёт тот же детерминированный набор).
     let ad = FanucAdapter::new();
     let p = ad
         .parse("G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nM30;\n", "t.ngc")
-        .expect("parse ok");
-    ad.emit(&p).expect("emit ok");
-    let w = ad.take_warnings();
+        .expect("parse ok")
+        .program;
+    let w = ad.emit(&p).expect("emit ok").warnings;
     assert_eq!(w.len(), 1, "{w:?}");
     assert!(w[0].contains("exact_path"), "{w:?}");
-    // Буфер опустошён.
-    assert!(ad.take_warnings().is_empty());
+    // Owning-повтор: тот же детерминированный набор, не пусто.
+    let w2 = ad.emit(&p).expect("emit ok 2").warnings;
+    assert_eq!(w, w2, "warnings детерминированы (owning)");
 }
 
 // ===========================================================================
@@ -921,6 +978,7 @@ fn state_of(op: &Op) -> State {
             tool: None,
             frame: Frame::Wcs,
             wcs: Wcs::G54,
+            feed_restated: false,
         },
     }
 }
@@ -944,11 +1002,7 @@ fn set_wcs_of(p: &mut Program, idx: usize, wcs: Wcs) {
 fn mround_wcs_word_g56_g57_g58() {
     // Полный словарь wcs_word G54–G59: G56/G57/G58 эмитятся дословно
     // (удаление match-армов mолча роняло код в catch-all).
-    for (wcs_word_src, expect) in [
-        ("G56;\n", "G56"),
-        ("G57;\n", "G57"),
-        ("G58;\n", "G58"),
-    ] {
+    for (wcs_word_src, expect) in [("G56;\n", "G56"), ("G57;\n", "G57"), ("G58;\n", "G58")] {
         let text = emit_fanuc(&format!(
             "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\n{wcs_word_src}G0 X1. Y1. Z1.;\nM30;\n"
         ));
@@ -985,13 +1039,14 @@ fn mround_free_fn_emit_wrapper() {
     assert!(text.contains("G0"));
 }
 
+// 0.7071 — намеренное 4dp-приближение нормали (не FRAC_1_SQRT_2).
+#[allow(clippy::approx_constant)]
 #[test]
 fn mround_emit_normal_non_axis_rejected() {
     // plane_of: не-осевая нормаль (0,1,0.5) — не канон → Err INVALID
     // (axial-проверка: best≈1 И остальные ≈0 И знак +).
-    let mut p = parse_fanuc(
-        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0. F100.;\nM30;\n",
-    );
+    let mut p =
+        parse_fanuc("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0. F100.;\nM30;\n");
     for op in &mut p.ops {
         if let Op::Arc { normal, .. } = op {
             // единичная, но не осевая — D7-длину проходит, axial-проверку нет
@@ -1001,14 +1056,10 @@ fn mround_emit_normal_non_axis_rejected() {
     let Err(d) = FanucAdapter::new().emit(&p) else {
         panic!("не-осевая нормаль обязана быть отклонена")
     };
-    assert!(
-        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
-        "{d:?}"
-    );
+    assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
     assert!(
         d.iter().any(|x| {
-            x.message.contains("единичная +ось")
-                || x.message.contains("+axis")
+            x.message.contains("единичная +ось") || x.message.contains("+axis")
         }),
         "{d:?}"
     );

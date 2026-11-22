@@ -198,10 +198,7 @@ pub fn lex_line(line: &str, line_no: u32) -> Result<Vec<BlockToks>, LexError> {
             // лексер не верифицирован. Letter-run Macro B (IF/GOTO/…) —
             // смежные буквы, от этого правила не страдает.
             if i + 1 < cs.len() && cs[i + 1].is_whitespace() {
-                return Err(err(
-                    word_col,
-                    LexErrorKind::SpaceInWord { letter },
-                ));
+                return Err(err(word_col, LexErrorKind::SpaceInWord { letter }));
             }
             if i + 1 < cs.len()
                 && (cs[i + 1].is_ascii_alphabetic() || matches!(cs[i + 1], '#' | '[' | ']'))

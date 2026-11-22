@@ -366,6 +366,8 @@ fn state(c: &mut Cur) -> Result<State, String> {
     };
     let wcs = wcs_name(c.take("wcs=")?)?;
     Ok(State {
+        // Провенанс не сериализуется в EID-текст (v0.2 волна 3) — всегда false.
+        feed_restated: false,
         feed,
         spindle,
         coolant,
@@ -405,7 +407,7 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
             ErrorCode::InvalidInput,
             msg,
             Some(SrcSpan {
-                file: file.to_string(),
+                file: file.into(),
                 line_start: line_no as u32,
                 col_start: 1,
                 line_end: line_no as u32,
@@ -662,7 +664,7 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
         i: 0,
     };
     let src_of = |s: (u32, u32, u32, u32)| SrcSpan {
-        file: file.to_string(),
+        file: file.into(),
         line_start: s.0,
         col_start: s.1,
         line_end: s.2,
@@ -776,7 +778,7 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
                        // src в тексте не представлен; плейсхолдер 0.1-0.0 (D10)
             Op::ProgramEnd {
                 src: SrcSpan {
-                    file: file.to_string(),
+                    file: file.into(),
                     line_start: 0,
                     col_start: 1,
                     line_end: 0,

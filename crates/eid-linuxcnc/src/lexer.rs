@@ -19,6 +19,7 @@
 
 use eid_core::ast::SrcSpan;
 use eid_core::diag::{Diagnostic, ErrorCode, LimitInfo, Stage};
+use std::sync::Arc;
 
 /// Пороги E_LIMIT_EXCEEDED (COVERAGE §1.2, v0.0 фиксированные).
 pub const MAX_WORD_CHARS: usize = 32;
@@ -89,7 +90,7 @@ pub fn limit_diag(
     threshold: &'static str,
     threshold_value: f64,
     actual: f64,
-    file: &str,
+    file: &Arc<str>,
     line_no: usize,
     col: usize,
 ) -> Diagnostic {
@@ -98,7 +99,7 @@ pub fn limit_diag(
         stage: Stage::Parse,
         message: format!("limit exceeded: {threshold} = {threshold_value}, actual = {actual}"),
         src: Some(SrcSpan {
-            file: file.to_string(),
+            file: file.clone(),
             line_start: line_no as u32,
             col_start: col as u32,
             line_end: line_no as u32,
@@ -117,6 +118,8 @@ pub fn limit_diag(
 /// Err (SPEC §8: E_INVALID_INPUT / E_RUNTIME_STATE / E_UNSUPPORTED_SYNTAX /
 /// E_LIMIT_EXCEEDED — вход сломан или вне грамматики L1).
 pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnostic>> {
+    // v0.2 (#21): один Arc<str> на прогон лексера; limit_diag/fail клонируют хэндл.
+    let file: Arc<str> = Arc::from(file);
     let chunks: Vec<&str> = src.split('\n').collect();
     let chunks_total = chunks.len();
     let mut out = Vec::new();
@@ -126,7 +129,7 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
                 "max_source_lines",
                 MAX_SOURCE_LINES as f64,
                 (i + 1) as f64,
-                file,
+                &file,
                 i + 1,
                 1,
             )]);
@@ -142,7 +145,7 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
             ("", *line_raw)
         };
         let raw = content.trim().to_string();
-        let tok = lex_line(&raw, file, line_no)?;
+        let tok = lex_line(&raw, &file, line_no)?;
         out.push(LineData {
             line_no,
             raw,
@@ -153,7 +156,7 @@ pub fn lex_program(src: &str, file: &str) -> Result<Vec<LineData>, Vec<Diagnosti
     Ok(out)
 }
 
-fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagnostic>> {
+fn lex_line(raw: &str, file: &Arc<str>, line_no: usize) -> Result<LineTok, Vec<Diagnostic>> {
     // #17: `(` внутри комментария (вложенные скобки) — комментарий закрыт
     // первой `)`, остаток строки — мусор; реальный rs274 отказывает с
     // «Nested comment found». Наша строгость честна (поведение не меняется,
@@ -172,7 +175,7 @@ fn lex_line(raw: &str, file: &str, line_no: usize) -> Result<LineTok, Vec<Diagno
             stage: Stage::Parse,
             message: msg,
             src: Some(SrcSpan {
-                file: file.to_string(),
+                file: file.clone(),
                 line_start: line_no as u32,
                 col_start: col as u32,
                 line_end: line_no as u32,

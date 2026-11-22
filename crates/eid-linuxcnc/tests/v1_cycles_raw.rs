@@ -25,10 +25,12 @@ fn v1_08_full_circle_diff_zero() {
             &std::fs::read_to_string(root().join("v0/08_arc_full_circle/golden.eid")).unwrap(),
             "g.eid",
         )
-        .unwrap();
+        .unwrap()
+        .program;
     let p = LinuxCncAdapter::new()
         .parse(&v1, "v1.ngc")
-        .expect("parse v1");
+        .expect("parse v1")
+        .program;
     let d = semantic_diff(&golden, &p, &DiffConfig::default());
     assert!(d.is_empty(), "#08 v1: divergences: {d:?}");
 }
@@ -56,7 +58,8 @@ fn v1_47_raw_r1_text_payload() {
         .to_string();
     let p = LinuxCncAdapter::new()
         .parse(&v1, "v1.ngc")
-        .expect("parse v1");
+        .expect("parse v1")
+        .program;
     let v1_payload = match &p.ops[0] {
         eid_core::ast::Op::Raw {
             payload_hex, code, ..
@@ -68,7 +71,10 @@ fn v1_47_raw_r1_text_payload() {
     };
     assert_eq!(v1_payload, golden_payload, "R1-text: payload байт-в-байт");
     // AST-level: дифф против golden тоже нулевой (raw-оп + ходы).
-    let golden = EidTextAdapter::new().parse(&golden_text, "g.eid").unwrap();
+    let golden = EidTextAdapter::new()
+        .parse(&golden_text, "g.eid")
+        .unwrap()
+        .program;
     let d = semantic_diff(&golden, &p, &DiffConfig::default());
     assert!(d.is_empty(), "#47 v1: divergences: {d:?}");
 }

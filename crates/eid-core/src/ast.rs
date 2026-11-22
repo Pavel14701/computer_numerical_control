@@ -1,5 +1,8 @@
-//! EID/L1 AST — замороженный интерфейс v0.1.
-//! Источники: SPEC-EID-L1 v0.10 (§3 модель, §5 опы, §10 числа), grammar.ebnf v0.2 (D1–D10).
+//! EID/L1 AST — интерфейс v0.2 (разморозка #21: SrcSpan.file → Arc<str>;
+//! INTERFACE-V0.2-DESIGN §2.1). Источники: SPEC-EID-L1 v0.10 (§3 модель,
+//! §5 опы, §10 числа), grammar.ebnf v0.2 (D1–D10).
+
+use std::sync::Arc;
 
 /// Число: verbatim-десятичная строка + f64-зеркало (SPEC §10.1).
 /// Сравнение — на f64 (EQUIVALENCE §4); текст — для детерминированной эмиссии (4 dp).
@@ -98,6 +101,15 @@ pub struct State {
     pub tool: Option<u32>, // физически установленный инструмент (SPEC §4 v0.3)
     pub frame: Frame,
     pub wcs: Wcs,
+    /// Провенанс «F-слово было в кадре-источнике этого опа» (v0.2 волна 3,
+    /// INTERFACE-V0.2-DESIGN §2.4: restated-F, хвост v0.18/SPEC §7.4a).
+    /// НЕ сериализуется в EID-текст (emit_state грамматику не меняет —
+    /// goldens байт-в-байт целы, eid_version без bump), semantic_diff
+    /// исключает (провенанс-класс src/sub, EQUIVALENCE §5). Эмиттеры
+    /// воспроизводят F-кадр по флагу: `changed ∨ first_derived ∨ restated`.
+    /// Развёртка циклов: флаг несёт ТОЛЬКО первый производный оп (sub=1,
+    /// = кадру-источнику); производные 2..n — false.
+    pub feed_restated: bool,
 }
 
 /// Start motion-опа: известная точка или unknown (Q11 — точки разрыва (a)–(d),
@@ -109,9 +121,16 @@ pub enum StartPoint {
 }
 
 /// Source span (SPEC §11): file, line.col–line.col. В golden AST — плейсхолдер 0.1-0.0 (D10).
+///
+/// v0.2 (#21, INTERFACE-V0.2-DESIGN §2.1): `file` — `Arc<str>` вместо `String`.
+/// Адаптер держит один `Arc<str>` на прогон parse (Ctx.file), `span()` клонирует
+/// хэндл (refcount) — 0 аллокаций на оп (−150k аллокаций на 150k-оповую
+/// программу: сборка 1.91M→1.76M, kept-pass-клон 1.41M→1.26M, замер §0
+/// дизайн-дока). Клон SrcSpan-поля (op_src в диагностике/verify kept-pass) —
+/// refcount, 0 аллокаций.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrcSpan {
-    pub file: String,
+    pub file: Arc<str>,
     pub line_start: u32,
     pub col_start: u32,
     pub line_end: u32,
@@ -127,6 +146,13 @@ pub struct SrcSpan {
 // в полёте) / eid-harness generator.rs (зона B). Кандидат на разморозку API —
 // оркестратор; до тех пор гейт держится на этом атрибуте, а не на
 // crate-wide allow (удалён, аудит #24).
+// Измерение (INTERFACE-V0.2-DESIGN §0/§2.3, prob-крейт с counting-аллокатором,
+// 150k опов 85/10/5): Box-PR (Box<State>+Box<SrcSpan> в 7 вариантах) —
+// +300k аллокаций на сборке (1.91M→2.21M) и на kept-pass-клоне
+// (1.41M→1.71M, +21% на самой горячей фазе), −19% только на размере Vec;
+// линт НЕ гаснет (ARC-вариант: 584−320 = 264 > 200 — доминируют 3 лишних
+// Point3). Решение §2.3: отклонить Box-PR, allow с этими цифрами остаётся
+// (post-v0.2: Op 584 B, Rapid/LINEAR 320, ARC 584 — зазор прежний 264).
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
