@@ -462,6 +462,10 @@ pub fn emit_with_profile(
                 && d.message.contains("program_end must be the last op"))
         });
     }
+    // v0.20: start-проверки для опов после mid-G92-ребейза подавляются
+    // (замороженная verify-модель разрыва mid-G92 не знает; зонды 1–3/8) —
+    // маркер-механизм, зеркало linuxcnc strip_mid_g92_start_diags.
+    ds = strip_mid_g92_start_diags(ds, &program.ops);
     if !ds.is_empty() {
         return Err(ds);
     }
@@ -490,6 +494,50 @@ pub fn emit_with_profile(
         text: w.text,
         warnings: warnings.clone(),
     })
+}
+
+/// v0.20: фильтрация start-диагностик core-verify для motion-опов, чей старт
+/// получен ребейзом mid-program G92 (носитель — Raw-оп с reason-маркером
+/// [`crate::canonicalize::MID_G92_REASON_PREFIX`]). Замороженная модель
+/// разрыва фрейма `eid_core::verify` mid-G92 не знает и требует
+/// `start = end предыдущего` (EQUIVALENCE §1.3) — после G92 это неверно
+/// (зонд 1: start следующего хода = новое чтение). Ребейз последующего
+/// движения мог быть zero-length-дропнут — «вооружение» снимается на первом
+/// ВЫЖИВШЕМ motion-опе AST (зеркало linuxcnc strip_mid_g92_start_diags).
+fn strip_mid_g92_start_diags(diags: Vec<Diagnostic>, ops: &[Op]) -> Vec<Diagnostic> {
+    let mut suppress: std::collections::BTreeSet<u32> = Default::default();
+    let mut armed = false;
+    for op in ops {
+        match op {
+            // contains (не starts_with): маркер может быть суффиксом при
+            // совмещении с другим raw-основанием строки (`G92 X0 G43 H1`).
+            Op::Raw { reason, .. }
+                if reason.contains(crate::canonicalize::MID_G92_REASON_PREFIX) =>
+            {
+                armed = true
+            }
+            Op::Rapid { src, .. } | Op::Linear { src, .. } | Op::Arc { src, .. } if armed => {
+                suppress.insert(src.line_start);
+                armed = false;
+            }
+            _ => {}
+        }
+    }
+    if suppress.is_empty() {
+        return diags;
+    }
+    diags
+        .into_iter()
+        .filter(|d| {
+            !(d.code == ErrorCode::InvalidInput
+                && d.message.starts_with("start")
+                // Program-level диагностики (src: None) не трогаем.
+                && d
+                    .src
+                    .as_ref()
+                    .is_some_and(|s| suppress.contains(&s.line_start)))
+        })
+        .collect()
 }
 
 /// Валидация легальности эмиссии против таблицы (fail-fast, COVERAGE §5.1).

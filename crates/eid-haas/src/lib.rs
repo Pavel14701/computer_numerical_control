@@ -18,7 +18,8 @@
 //! G154 P1–P3 → 7..9; G113–G129 → Raw SEM; **G52 → Err** — 2-й жёсткий
 //! отказ; G53 machine-frame §5.3; G10 L2 P1–P6 → wcs_define, **L2 P0 = слот
 //! G52 → Raw RT** (≠ Fanuc external offset), **L20 → Raw RT** (НЕ
-//! wcs_set_here), L1/L10–L13 → Raw RT; G92 пресетка, S-кламп → Raw SEM;
+//! wcs_set_here), L1/L10–L13 → Raw RT; G92 пресетка (v0.20: mid-program —
+//! chaining чтений + Raw-носитель, зонды 1–3/7/8), S-кламп → Raw SEM;
 //! absorb_frame_structs на raw-строках); циклы ×Haas-семантика (G81/G82/
 //! G83/G73/G85/G86/G89 разворачивание §7.7 + клиренс 0.01in unit-scaled
 //! v0.18; **L-повторы — НЕ K** (K = min-пек G83), G91-шаги, **G83: Q ИЛИ

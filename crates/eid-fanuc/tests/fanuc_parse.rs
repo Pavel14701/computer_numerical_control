@@ -35,12 +35,14 @@
 //!   g10_l2_partial_inherit; P0 → g10_l2_p0_raw_requires; L20 →
 //!   g10_l20_raw_not_set_here (ловушка №3); L1 → g10_l1_table_raw;
 //!   G11 → g11_cancel_ignored / g11_family_raw_inherit; G92 →
-//!   g92_frame_preset_anchor; mid-program → g92_mid_program_invalid;
+//!   g92_frame_preset_anchor; mid-program → v020_g92_mid_* (v0.20: chaining
+//!   + Raw-носитель; стартовый merge; G53-N16);
 //!   G92 S → g92_s_clamp_raw; G52 → g52_hard_err (единственный ERR);
 //!   G53 machine-frame → g53_machine_move / g53_first_move_unknown /
 //!   g53_partial_end_invalid / g53_after_preset_invalid /
 //!   g53_requires_explicit_motion / g53_arc_invalid; точка разрыва (d) →
-//!   (в g53_machine_move); G54.1 Pn → g54_1_pn_raw; G92.1 → g92_1_reset_raw.
+//!   (в g53_machine_move); G54.1 Pn → g54_1_pn_raw; G92.1/.2/.3 →
+//!   g92_1_reset_raw (v0.20: Raw{REQUIRES_MACHINE_TABLE}, зонд 4).
 //! CYCLES (2b): §7.7 шаблон ×7 → cycle_g81_unroll_template /
 //!   cycle_g82_dwell_p_ms / cycle_g83_peck_full_retract /
 //!   cycle_g73_chip_break / cycle_g85_bore_feed_out /
@@ -922,6 +924,35 @@ fn subs_tail_after_program_end_is_raw_not_err() {
 }
 
 #[test]
+fn v020_tail_notice_dialect_divergence_text() {
+    // SPEC §5.2 v0.20 (зонд 5): tail-reason согласован с notice-текстом
+    // диалект-расхождения — rs274-файловый интерпретатор молча игнорирует
+    // хвост, grbl-стрим исполняет; для fanuc-хвоста-subs семантика та же
+    // lossless (носитель Raw, motion-опы после PEND не строятся).
+    let p = parse("G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nM30;\nO0100;\nM99;\n").expect("Ok");
+    let raw = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Raw { .. }))
+        .expect("хвост — Raw");
+    match raw {
+        Op::Raw { reason, .. } => {
+            assert!(
+                reason.contains("ignored in rs274-file semantics"),
+                "{reason}"
+            );
+            assert!(
+                reason.contains("executed in grbl-stream semantics"),
+                "{reason}"
+            );
+            assert!(reason.contains("dialect-divergent"), "{reason}");
+            assert!(reason.contains("lossless"), "{reason}");
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn lowercase_and_whitespace_tolerance() {
     // Регистр и whitespace между словами — легальны (паттерн grbl gcode.c).
     let p =
@@ -1247,14 +1278,195 @@ fn g92_frame_preset_anchor() {
 }
 
 #[test]
-fn g92_mid_program_invalid() {
-    // Позиционное ограничение §3 SPEC: G92 после motion — отказ.
+fn v020_g92_mid_golden_chain_new_reading() {
+    // SPEC §3 v0.20 (коммит c76ed9a; зонды 1–3 target/probe/g92): mid-program
+    // G92 — валидный frame_preset; ограничение «только startup» снято
+    // (бывший Err SEMANTICS «G92 after motion»). Golden зонда 1:
+    // `G0 X10 Y10 / G92 X0 Y0 / G1 X5` → linear с НОВЫМ чтением
+    // (start = (0,0,0), end = (5,0,0)); AST-носитель блока — Raw
+    // (grammar v0.3 не имеет mid-program frame_preset-опa; chaining — в
+    // каноническом состоянии).
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17;\nG0 X10. Y10.;\nG92 X0. Y0.;\nG1 X5. F100.;\nM30;\n",
+        "t.ngc",
+    )
+    .expect("G92-mid → Ok (v0.20)");
+    let p = out.program;
+    assert!(
+        p.frame_preset.is_none(),
+        "header — только СТАРТОВАЯ пресетка"
+    );
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw { reason, code, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.starts_with("G92 mid-program"), "{reason}");
+            assert!(reason.contains("frame_preset"), "{reason}");
+        }
+        other => panic!("op1 не Raw-носитель G92: {other:?}"),
+    }
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 0.0, 0.0); // новое чтение после G92 X0 Y0
+            assert_pt(end, 5.0, 0.0, 0.0);
+        }
+        other => panic!("op2 не Linear: {other:?}"),
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn v020_g92_mid_twice_replace_by_recompute() {
+    // Зонд 2 (Q5 закрыт v0.20): повторная G92 ЗАМЕНЯЕТ регистр по пересчёту
+    // от текущего чтения (не аккумуляция). Без промежуточного хода: чтение
+    // (10,0,0); G92 X0 → 0; G92 X5 → 5 (replace, не 0−5); G1 X8 — start = 5.
+    let p = parse("G21 G90 G94 G17;\nG0 X10.;\nG92 X0.;\nG92 X5.;\nG1 X8. F100.;\nM30;\n")
+        .expect("два G92 подряд → Ok (Q5 закрыт)");
+    let raws = p.ops.iter().filter(|o| matches!(o, Op::Raw { .. })).count();
+    assert_eq!(raws, 2, "несколько G92 = несколько опов-носителей");
+    match &p.ops[3] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 5.0, 0.0, 0.0);
+            assert_pt(end, 8.0, 0.0, 0.0);
+        }
+        other => panic!("op3 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_per_axis_y_reading_unchanged() {
+    // Зонд 3: per-axis assignment — `G92 X0` меняет чтение ТОЛЬКО X;
+    // Y-чтение не меняется (старт хода Y = 10 — прежняя система).
+    let p = parse("G21 G90 G94 G17;\nG0 X10. Y10.;\nG92 X0.;\nG1 X5. Y5. F100.;\nM30;\n")
+        .expect("per-axis G92 → Ok");
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 10.0, 0.0);
+            assert_pt(end, 5.0, 5.0, 0.0);
+        }
+        other => panic!("op2 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_wcs_switch_unknown_start() {
+    // Зонд 8: регистр G92 глобален поверх WCS; после mid-G92 смена G54→G55
+    // без in-text origin'ов → честный unknown-start (rs274 пересчитал бы от
+    // машины, машины в AST нет). Полный end легален (точка разрыва).
+    let p =
+        parse("G21 G90 G94 G17;\nG54 G0 X10. Y0. Z0.;\nG92 X0.;\nG55;\nG0 X5. Y0. Z0.;\nM30;\n")
+            .expect("WCS-переключение после mid-G92 → Ok");
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end,
+            state,
+            ..
+        } => {
+            assert_pt(end, 5.0, 0.0, 0.0);
+            assert_eq!(state.wcs, eid_core::ast::Wcs::G55);
+        }
+        other => panic!("op2 не Rapid с unknown-start: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_wcs_switch_with_origins_formula_holds() {
+    // Зонд 8b: Δ (регистр G92) сокращается в разности чтений — формула (b)
+    // reading_new = prev + O_prev − O_new точна и после mid-G92: rebase X→0,
+    // O54=(1,1,1), O55=(2,2,2) → start (−1,−1,−1).
+    let p = parse(
+        "G21 G90 G94 G17;\nG54 G0 X10. Y0. Z0.;\nG92 X0.;\nG10 L2 P1 X1. Y1. Z1.;\nG10 L2 P2 X2. Y2. Z2.;\nG55;\nG0 X5. Y0. Z0.;\nM30;\n",
+    )
+    .expect("формула (b) с in-text origins после mid-G92 → Ok");
+    // ops: Rapid, Raw(G92), WcsDefine ×2, Rapid(G55), PEND.
+    match &p.ops[4] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, -1.0, -1.0, -1.0),
+        other => panic!("op4 не Rapid с Known start: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_second_startup_g92_merges_per_axis() {
+    // Q5 закрыт v0.20: вторая G92 В СТАРТОВОЙ ЗОНЕ — per-axis merge пресетки
+    // (зонд 3: неуказанные оси чтение не меняют; машина не двигалась).
+    let p = parse("G21 G90 G94 G17;\nG92 X5. Y5. Z5.;\nG92 X10.;\nG1 X15. F100.;\nM30;\n")
+        .expect("второй G92 в стартовой зоне → Ok (merge)");
+    let pr = p.frame_preset.as_ref().expect("стартовая пресетка");
+    assert_pt(&pr.values, 10.0, 5.0, 5.0);
+    match &p.ops[0] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, 10.0, 5.0, 5.0),
+        other => panic!("op0 не Linear: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_g53_after_mid_g92_runtime() {
+    // N16 (§5.3a): G53 machine-ход при активном регистре G92 — RUNTIME
+    // (чтение машинной позиции с активным Δ вне AST; зеркало grbl n16).
     assert_eq!(
         err_code(parse(
-            "G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nG92 X0. Y0. Z0.;\nM30;\n"
+            "G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nG92 X0. Y0. Z0.;\nG53 G0 X0. Y0. Z0.;\nM30;\n"
         )),
-        ErrorCode::UnsupportedSemantics
+        ErrorCode::RuntimeState
     );
+}
+
+#[test]
+fn v020_g92_mid_on_raw_block_carries_marker() {
+    // mid-G92 на raw-кадре (`G92 X2. G95` после motion): rebase применён
+    // (Fanuc исполняет G92 в блоке), маркер в reason Raw-носителя — по нему
+    // strip start-диагностик эмиссии вооружается.
+    let out = canonicalize_with_notices(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG92 X2. G95\nG0 X5. Y0. Z0.;\nM30;\n",
+        "t.ngc",
+    )
+    .expect("mid-G92 на raw-кадре → Ok");
+    let p = out.program;
+    let raw = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Raw { .. }))
+        .expect("G95-кадр — Raw-носитель");
+    match raw {
+        Op::Raw { reason, .. } => {
+            assert!(
+                reason.contains("G92 mid-program"),
+                "маркер rebase в reason носителя: {reason}"
+            );
+        }
+        _ => unreachable!(),
+    }
+    // chaining: чтение после G92 X2 от (10,0,0) = 2 → start следующего хода 2.
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 2.0, 0.0, 0.0);
+            assert_pt(end, 5.0, 0.0, 0.0);
+        }
+        other => panic!("op2 не Rapid: {other:?}"),
+    }
 }
 
 #[test]
@@ -1395,19 +1607,22 @@ fn g54_1_pn_raw() {
 
 #[test]
 fn g92_1_reset_raw() {
-    // G92.1/.2/.3 → Raw{SEMANTICS} (Q4; COVERAGE §2.3).
+    // G92.1/.2/.3 → Raw{E_REQUIRES_MACHINE_TABLE} (v0.20 SEMANTICS→TABLE,
+    // зонд 4: G92.1 обнуляет ВЕСЬ регистр; возврат прежних чтений требует
+    // абсолютной машинной позиции, которой в AST нет; COVERAGE §2.3).
     for code in ["G92.1", "G92.2", "G92.3"] {
         let out = canonicalize_with_notices(&format!("{code};\nM30;\n"), "t.ngc").expect("ok");
-        assert!(
-            matches!(
-                &out.program.ops[0],
-                Op::Raw {
-                    code: ErrorCode::UnsupportedSemantics,
-                    ..
+        match &out.program.ops[0] {
+            Op::Raw {
+                code: c, reason, ..
+            } => {
+                assert_eq!(*c, ErrorCode::RequiresMachineTable, "{code}: {reason}");
+                if code == "G92.1" {
+                    assert!(reason.contains("machine position"), "{code}: {reason}");
                 }
-            ),
-            "{code}"
-        );
+            }
+            other => panic!("{code}: не Raw: {other:?}"),
+        }
     }
 }
 
@@ -2954,7 +3169,15 @@ fn mround2_h00_cancel_with_g49_family_raw_reason() {
     let raw = p
         .ops
         .iter()
-        .filter(|o| matches!(o, Op::Raw { code: ErrorCode::RequiresMachineTable, .. }))
+        .filter(|o| {
+            matches!(
+                o,
+                Op::Raw {
+                    code: ErrorCode::RequiresMachineTable,
+                    ..
+                }
+            )
+        })
         .count();
     assert!(raw >= 2, "G43-строка и H00 обязаны быть Raw RT: {raw}");
     let h00 = p.ops.iter().find_map(|o| match o {
@@ -3016,7 +3239,10 @@ fn mround2_t_domain_boundaries() {
     assert_eq!(err_code(parse("T10000 M6\nM30\n")), ErrorCode::InvalidInput);
     // Границы домена легальны: T0 и T9999.
     let p = parse("T0 M6\nM30\n").expect("T0 ok");
-    assert!(p.ops.iter().any(|o| matches!(o, Op::ToolChange { tool: 0, .. })));
+    assert!(p
+        .ops
+        .iter()
+        .any(|o| matches!(o, Op::ToolChange { tool: 0, .. })));
     parse("T9999 M6\nM30\n").expect("T9999 ok");
     // M6 без T → Err.
     assert_eq!(err_code(parse("M6\nM30\n")), ErrorCode::InvalidInput);
@@ -3163,17 +3389,15 @@ fn mround2_g92_absorb_on_raw_block() {
 }
 
 #[test]
-fn mround2_g92_second_in_absorb_err() {
-    // Второй G92 (на raw-кадре) → Err как на легальном пути; G92 после
-    // motion на raw-кадре → Err.
-    assert_eq!(
-        err_code(parse("G92 X1. Y1. Z1.\nG92 X2. Y2. Z2. G95\nM30\n")),
-        ErrorCode::UnsupportedSemantics
-    );
-    assert_eq!(
-        err_code(parse("G0 X1. Y1. Z1.\nG92 X2. Y2. Z2. G95\nM30\n")),
-        ErrorCode::UnsupportedSemantics
-    );
+fn mround2_g92_second_in_absorb_ok_v020() {
+    // v0.20 (Q5 закрыт): второй G92 в стартовой зоне на raw-кадре — per-axis
+    // merge пресетки (как на легальном пути); G92 после motion на raw-кадре —
+    // mid-chaining + маркер в reason носителя (см. v020_g92_mid_on_raw_block).
+    let p = parse("G92 X1. Y1. Z1.\nG92 X2. Y2. Z2. G95\nM30\n").expect("Ok (merge, v0.20)");
+    let pr = p.frame_preset.as_ref().expect("стартовая пресетка (merge)");
+    assert_pt(&pr.values, 2.0, 2.0, 2.0);
+    // G92 после motion на raw-кадре → Ok (chaining, зонд 1; Err снят v0.20).
+    parse("G0 X1. Y1. Z1.\nG92 X2. Y2. Z2. G95\nM30\n").expect("Ok (mid-chaining, v0.20)");
 }
 
 // ---------------------------------------------------------------------------
@@ -3204,7 +3428,17 @@ fn mround2_feed_restated_cycle_first_derived_only() {
     // Развёртка: флаг кадра несёт ТОЛЬКО первый производный (sub == 1).
     let (p, _) = notices_of("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F50.\nM30\n");
     for o in &p.ops {
-        if let Op::Rapid { sub: Some(s), state, .. } | Op::Linear { sub: Some(s), state, .. } = o {
+        if let Op::Rapid {
+            sub: Some(s),
+            state,
+            ..
+        }
+        | Op::Linear {
+            sub: Some(s),
+            state,
+            ..
+        } = o
+        {
             if *s == 1 {
                 assert!(state.feed_restated, "sub=1 обязан нести restated");
             } else {
@@ -3311,9 +3545,17 @@ fn mround2_arc_r_sgn_cw_ccw_and_negative() {
     let p = parse("G0 X0. Y0. Z0.\nG3 X8. Y0. Z0. R5. F100.\nM30\n").expect("ok CCW R+");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
-        Op::Arc { center, sweep_deg, dir, .. } => {
+        Op::Arc {
+            center,
+            sweep_deg,
+            dir,
+            ..
+        } => {
             assert_pt(&center, 4.0, 3.0, 0.0);
-            assert!((sweep_deg.value() - 106.26).abs() <= 0.05, "sweep {sweep_deg:?}");
+            assert!(
+                (sweep_deg.value() - 106.26).abs() <= 0.05,
+                "sweep {sweep_deg:?}"
+            );
             assert!(*dir == Dir::Ccw);
         }
         _ => panic!("не Arc"),
@@ -3331,9 +3573,14 @@ fn mround2_arc_r_sgn_cw_ccw_and_negative() {
     let p = parse("G0 X0. Y0. Z0.\nG3 X8. Y0. Z0. R-5. F100.\nM30\n").expect("ok CCW R-");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
-        Op::Arc { center, sweep_deg, .. } => {
+        Op::Arc {
+            center, sweep_deg, ..
+        } => {
             assert_pt(&center, 4.0, -3.0, 0.0);
-            assert!((sweep_deg.value() - 253.74).abs() <= 0.05, "sweep {sweep_deg:?}");
+            assert!(
+                (sweep_deg.value() - 253.74).abs() <= 0.05,
+                "sweep {sweep_deg:?}"
+            );
         }
         _ => panic!("не Arc"),
     }
@@ -3347,8 +3594,14 @@ fn mround2_arc_r_near_degenerate_notice() {
     // R-дуга ровно 180° (chord == 2R): notice NearDegenerateRArc при живом
     // опе (амплитификация центра).
     let (p, ns) = notices_of("G0 X0. Y0. Z0.\nG3 X10. Y0. Z0. R5. F100.\nM30\n");
-    assert!(ns.iter().any(|n| n.kind == NoticeKind::NearDegenerateRArc), "{ns:?}");
-    assert!(p.ops.iter().any(|o| matches!(o, Op::Arc { .. })), "оп живой");
+    assert!(
+        ns.iter().any(|n| n.kind == NoticeKind::NearDegenerateRArc),
+        "{ns:?}"
+    );
+    assert!(
+        p.ops.iter().any(|o| matches!(o, Op::Arc { .. })),
+        "оп живой"
+    );
 }
 
 #[test]
@@ -3364,16 +3617,22 @@ fn mround2_arc_chord_barely_over_2r_tolerance() {
 fn mround2_arc_quarter_g18_rodrigues() {
     // G18 (ZX, a0=Z, a1=X, нормаль +Y): четверть CCW из (0,0,0), центр
     // (2,0,0) → конец (2,0,2). Все компоненты Rodrigues ненулевые.
-    let p = parse(
-        "G0 X0. Y0. Z0.\nG18\nG1 X0. Y0. Z0. F100.\nG3 X2. Y0. Z2. I2. K0.\nM30\n",
-    )
-    .expect("G18 четверть CCW ok");
+    let p = parse("G0 X0. Y0. Z0.\nG18\nG1 X0. Y0. Z0. F100.\nG3 X2. Y0. Z2. I2. K0.\nM30\n")
+        .expect("G18 четверть CCW ok");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
-        Op::Arc { end, center, sweep_deg, .. } => {
+        Op::Arc {
+            end,
+            center,
+            sweep_deg,
+            ..
+        } => {
             assert_pt(&center, 2.0, 0.0, 0.0);
             assert_pt(&end, 2.0, 0.0, 2.0);
-            assert!((sweep_deg.value() - 90.0).abs() <= 0.01, "sweep {sweep_deg:?}");
+            assert!(
+                (sweep_deg.value() - 90.0).abs() <= 0.01,
+                "sweep {sweep_deg:?}"
+            );
         }
         _ => panic!("не Arc"),
     }
@@ -3383,16 +3642,22 @@ fn mround2_arc_quarter_g18_rodrigues() {
 fn mround2_arc_quarter_g19_rodrigues_cw() {
     // G19 (YZ, a0=Y, a1=Z, нормаль +X): четверть CW из (0,0,0), центр
     // (0,2,0) → конец (0,2,2).
-    let p = parse(
-        "G0 X0. Y0. Z0.\nG19\nG1 X0. Y0. Z0. F100.\nG2 X0. Y2. Z2. J2. K0.\nM30\n",
-    )
-    .expect("G19 четверть CW ok");
+    let p = parse("G0 X0. Y0. Z0.\nG19\nG1 X0. Y0. Z0. F100.\nG2 X0. Y2. Z2. J2. K0.\nM30\n")
+        .expect("G19 четверть CW ok");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
-        Op::Arc { end, center, sweep_deg, .. } => {
+        Op::Arc {
+            end,
+            center,
+            sweep_deg,
+            ..
+        } => {
             assert_pt(&center, 0.0, 2.0, 0.0);
             assert_pt(&end, 0.0, 2.0, 2.0);
-            assert!((sweep_deg.value() - 90.0).abs() <= 0.01, "sweep {sweep_deg:?}");
+            assert!(
+                (sweep_deg.value() - 90.0).abs() <= 0.01,
+                "sweep {sweep_deg:?}"
+            );
         }
         _ => panic!("не Arc"),
     }
@@ -3406,7 +3671,11 @@ fn mround2_arc_quarter_g19_rodrigues_cw() {
 fn mround2_g93_linear_feed_len_3d_full() {
     // 3D-диагональ со ВСЕМИ ненулевыми дельтами: len = sqrt(9+16+16) = √41.
     let p = parse("G0 X1. Y2. Z3.\nG93\nG1 X4. Y6. Z7. F1.\nM30\n").expect("ok");
-    let lin = p.ops.iter().find(|o| matches!(o, Op::Linear { .. })).unwrap();
+    let lin = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Linear { .. }))
+        .unwrap();
     let expect = 41.0f64.sqrt();
     assert!(
         (feed_of(&lin).unwrap() - expect).abs() <= EPS,
@@ -3510,12 +3779,11 @@ fn mround2_g83_peck_depths_g98() {
         })
         .collect();
     let expect = [
-        5.0, 5.0, 2.0, // G0 (z=5), traverse (z=5), approach → R (2)
+        5.0, 5.0, 2.0,    // G0 (z=5), traverse (z=5), approach → R (2)
         -1.0,   // feed peck 1
         2.0,    // retract R
         -0.746, // approach d+clr
-        -4.0, 2.0, -3.746, -7.0, 2.0, -6.746, -9.0,
-        5.0, // G98 retract → initial Z
+        -4.0, 2.0, -3.746, -7.0, 2.0, -6.746, -9.0, 5.0, // G98 retract → initial Z
     ];
     assert_eq!(zs.len(), expect.len(), "ops: {zs:?}");
     for (a, b) in zs.iter().zip(expect.iter()) {
@@ -3541,8 +3809,8 @@ fn mround2_g73_chipbreak_single_rapid() {
         0.0, 0.254, // peck1 (2−2=0), approach
         -2.0, -1.746, // peck2, approach
         -4.0, -3.746, // peck3, approach
-        -6.0, // peck4 (final)
-        2.0,  // retract G99
+        -6.0,   // peck4 (final)
+        2.0,    // retract G99
     ];
     assert_eq!(zs.len(), expect.len(), "ops: {zs:?}");
     for (a, b) in zs.iter().zip(expect.iter()) {
@@ -3611,8 +3879,7 @@ fn mround2_peck_est_limit_exact_boundary_ok() {
 #[test]
 fn mround2_cycle_param_update_block_only() {
     // Параметр-кадр (без X/Y) не сверлит; обновлённый Z виден на повторе.
-    let p = parse("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100.\nG81 Z-3.\nX20.\nM30\n")
-        .expect("ok");
+    let p = parse("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100.\nG81 Z-3.\nX20.\nM30\n").expect("ok");
     let lins: Vec<f64> = p
         .ops
         .iter()
@@ -3621,7 +3888,11 @@ fn mround2_cycle_param_update_block_only() {
             _ => None,
         })
         .collect();
-    assert_eq!(lins.len(), 2, "параметр-кадр без X/Y не разворачивается: {lins:?}");
+    assert_eq!(
+        lins.len(),
+        2,
+        "параметр-кадр без X/Y не разворачивается: {lins:?}"
+    );
     assert!(lins.contains(&-2.0) && lins.contains(&-3.0), "{lins:?}");
 }
 
@@ -3648,11 +3919,15 @@ fn mround2_cycle_k_domain() {
     // развёртки; LimitExceeded достижим через est_total пеков — см.
     // mround2_peck_est_limit_exceeded).
     assert_eq!(
-        err_code(parse("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100. K10000\nM30\n")),
+        err_code(parse(
+            "G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100. K10000\nM30\n"
+        )),
         ErrorCode::InvalidInput
     );
     assert_eq!(
-        err_code(parse("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100. K10001\nM30\n")),
+        err_code(parse(
+            "G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100. K10001\nM30\n"
+        )),
         ErrorCode::InvalidInput
     );
     parse("G0 X0. Y0. Z5.\nG81 X10. Z-2. R1. F100. K9999\nM30\n").expect("K9999 ok");
@@ -3662,10 +3937,8 @@ fn mround2_cycle_k_domain() {
 fn mround2_cycle_g86_spindle_ccw_restart() {
     // G86 рестарт шпинделя в ИСХОДНОМ направлении (M4) — state последующих
     // опов несёт Ccw.
-    let p = parse(
-        "S500 M4\nG0 X0. Y0. Z5.\nG86 X10. Z-5. R1. P200 F60.\nG0 X20. Y0. Z5.\nM30\n",
-    )
-    .expect("ok");
+    let p = parse("S500 M4\nG0 X0. Y0. Z5.\nG86 X10. Z-5. R1. P200 F60.\nG0 X20. Y0. Z5.\nM30\n")
+        .expect("ok");
     let last = p
         .ops
         .iter()
@@ -3674,7 +3947,11 @@ fn mround2_cycle_g86_spindle_ccw_restart() {
         .unwrap();
     match last {
         Op::Rapid { state, .. } => {
-            assert!(matches!(state.spindle, Spindle::Ccw(_)), "{:?}", state.spindle);
+            assert!(
+                matches!(state.spindle, Spindle::Ccw(_)),
+                "{:?}",
+                state.spindle
+            );
         }
         _ => unreachable!(),
     }
@@ -3689,7 +3966,11 @@ fn mround2_cycle_g86_spindle_ccw_restart() {
 fn mround2_single_axis_explicit_move() {
     // Явный G1 с ОДНИМ осевым словом — ход, не no-op (has_axis X-плечо).
     let p = parse("G0 X5. Y0. Z0.\nG1 X10. F100.\nM30\n").expect("ok");
-    let lins = p.ops.iter().filter(|o| matches!(o, Op::Linear { .. })).count();
+    let lins = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Linear { .. }))
+        .count();
     assert_eq!(lins, 1, "X-only G1 обязан дать linear-оп");
 }
 
@@ -3711,7 +3992,11 @@ fn mround2_mirrored_move_not_dropped() {
     // Ход в зеркальную позицию (end == −start): НЕ zero-length
     // (start+end-инверсия len3 не должна дать 0).
     let p = parse("G0 X1. Y0. Z0.\nG0 X-1. Y0. Z0.\nM30\n").expect("ok");
-    let rapids = p.ops.iter().filter(|o| matches!(o, Op::Rapid { .. })).count();
+    let rapids = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Rapid { .. }))
+        .count();
     assert_eq!(rapids, 2, "оба rapid живые");
 }
 
@@ -3740,7 +4025,10 @@ fn mround2_g98_then_g99_retract_restored() {
         })
         .collect();
     let last = *rapids.last().expect("rapid отвода");
-    assert!((last - 2.0).abs() <= EPS, "отвод на R, не initial Z: {rapids:?}");
+    assert!(
+        (last - 2.0).abs() <= EPS,
+        "отвод на R, не initial Z: {rapids:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -3765,11 +4053,7 @@ fn mround2_ops_limit_exactly_200k_ok() {
     // 1 + 199980 + 18 + 1 = ровно 200000 опов.
     let mut s = String::from("G0 X0. Y0. Z5.\n");
     for i in 0..5 {
-        s.push_str(&format!(
-            "G81 X{}. Z-1. R{}. F100. K9999\n",
-            i + 1,
-            2 + i
-        ));
+        s.push_str(&format!("G81 X{}. Z-1. R{}. F100. K9999\n", i + 1, 2 + i));
     }
     for _ in 0..18 {
         s.push_str("G4 P1\n");
@@ -3786,11 +4070,7 @@ fn mround2_ops_limit_exactly_200k_ok() {
 fn mround2_ops_limit_over_200k_err() {
     let mut s = String::from("G0 X0. Y0. Z5.\n");
     for i in 0..6 {
-        s.push_str(&format!(
-            "G81 X{}. Z-1. R{}. F100. K9999\n",
-            i + 1,
-            2 + i
-        ));
+        s.push_str(&format!("G81 X{}. Z-1. R{}. F100. K9999\n", i + 1, 2 + i));
     }
     s.push_str("M30\n");
     let r = parse(&s);
@@ -3805,7 +4085,11 @@ fn mround2_ops_limit_over_200k_err() {
 fn mround2_span_col_end() {
     let src = "G0 X1. Y2. Z3.\nM30\n";
     let p = parse(src).expect("ok");
-    let rapid = p.ops.iter().find(|o| matches!(o, Op::Rapid { .. })).unwrap();
+    let rapid = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Rapid { .. }))
+        .unwrap();
     match rapid {
         Op::Rapid { src: sp, .. } => {
             assert_eq!(sp.line_start, 1);
@@ -3823,11 +4107,7 @@ fn mround2_g43_family_extra_decimals_not_family() {
     // G43.09: round(value*10) != value*10 — НЕ член семьи G49 (интегральный
     // критерий t); G49 после него — IGNORED_SAFE (без Raw).
     let p = parse("G43.09\nG49\nG0 X1. Y1. Z1.\nM30\n").expect("ok");
-    let raws = p
-        .ops
-        .iter()
-        .filter(|o| matches!(o, Op::Raw { .. }))
-        .count();
+    let raws = p.ops.iter().filter(|o| matches!(o, Op::Raw { .. })).count();
     assert_eq!(raws, 1, "только G43.09-строка raw; G49 после неё — no-op");
     match p.ops.first().unwrap() {
         Op::Raw { code, .. } => {
@@ -3854,15 +4134,51 @@ fn raw_of(src: &str) -> (ErrorCode, String) {
 #[test]
 fn mround2_raw_table_home_and_machine_table() {
     let cases: &[(f64, &str, ErrorCode)] = &[
-        (27.0, "G27 reference return check", ErrorCode::RequiresMachineTable),
-        (28.0, "G28 reference return via intermediate", ErrorCode::RequiresMachineTable),
-        (29.0, "G29 return from reference", ErrorCode::RequiresMachineTable),
-        (30.0, "G30 2nd/3rd/4th reference", ErrorCode::RequiresMachineTable),
-        (30.1, "G30.1 floating reference", ErrorCode::RequiresMachineTable),
-        (45.0, "±H-offset positioning", ErrorCode::RequiresMachineTable),
-        (46.0, "±H-offset positioning", ErrorCode::RequiresMachineTable),
-        (47.0, "±H-offset positioning", ErrorCode::RequiresMachineTable),
-        (48.0, "±H-offset positioning", ErrorCode::RequiresMachineTable),
+        (
+            27.0,
+            "G27 reference return check",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            28.0,
+            "G28 reference return via intermediate",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            29.0,
+            "G29 return from reference",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            30.0,
+            "G30 2nd/3rd/4th reference",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            30.1,
+            "G30.1 floating reference",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            45.0,
+            "±H-offset positioning",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            46.0,
+            "±H-offset positioning",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            47.0,
+            "±H-offset positioning",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            48.0,
+            "±H-offset positioning",
+            ErrorCode::RequiresMachineTable,
+        ),
     ];
     for (v, frag, code) in cases {
         let src = format!("G{v}\nM30\n");
@@ -3903,23 +4219,59 @@ fn mround2_raw_table_path_css_transforms() {
 #[test]
 fn mround2_raw_table_limits_sensors_threading() {
     let cases: &[(f64, &str, ErrorCode)] = &[
-        (22.0, "G22 stored stroke check", ErrorCode::UnsupportedSemantics),
-        (23.0, "G23 stroke check off", ErrorCode::UnsupportedSemantics),
-        (25.0, "G25 spindle fluctuation", ErrorCode::UnsupportedSemantics),
-        (26.0, "G26 spindle fluctuation", ErrorCode::UnsupportedSemantics),
+        (
+            22.0,
+            "G22 stored stroke check",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            23.0,
+            "G23 stroke check off",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            25.0,
+            "G25 spindle fluctuation",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            26.0,
+            "G26 spindle fluctuation",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (31.0, "G31 skip function", ErrorCode::UnsupportedSemantics),
         (31.8, "G31.8 EGB-skip", ErrorCode::UnsupportedSyntax),
-        (37.0, "G37 auto tool length measurement", ErrorCode::UnsupportedSemantics),
+        (
+            37.0,
+            "G37 auto tool length measurement",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (33.0, "G33 threading", ErrorCode::UnsupportedSemantics),
         (34.0, "G34 variable lead", ErrorCode::UnsupportedSemantics),
-        (35.0, "G35 circular threading", ErrorCode::UnsupportedSemantics),
-        (36.0, "G36 circular threading", ErrorCode::UnsupportedSemantics),
+        (
+            35.0,
+            "G35 circular threading",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            36.0,
+            "G36 circular threading",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (2.2, "G02.2 evolvent", ErrorCode::UnsupportedSemantics),
         (3.2, "G03.2 evolvent", ErrorCode::UnsupportedSemantics),
         (2.3, "G02.3 exponential", ErrorCode::UnsupportedSemantics),
         (3.3, "G03.3 exponential", ErrorCode::UnsupportedSemantics),
-        (2.4, "G02.4 3D coordinate conversion", ErrorCode::UnsupportedSemantics),
-        (3.4, "G03.4 3D coordinate conversion", ErrorCode::UnsupportedSemantics),
+        (
+            2.4,
+            "G02.4 3D coordinate conversion",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            3.4,
+            "G03.4 3D coordinate conversion",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (6.2, "G06.2 NURBS", ErrorCode::UnsupportedSemantics),
     ];
     for (v, frag, code) in cases {
@@ -3934,18 +4286,58 @@ fn mround2_raw_table_limits_sensors_threading() {
 fn mround2_raw_table_vendor_modes() {
     let cases: &[(f64, &str, ErrorCode)] = &[
         (5.0, "G05 AI contour", ErrorCode::UnsupportedSyntax),
-        (5.1, "G05.1 AI contour control", ErrorCode::UnsupportedSyntax),
+        (
+            5.1,
+            "G05.1 AI contour control",
+            ErrorCode::UnsupportedSyntax,
+        ),
         (8.0, "G08 Nano smoothing", ErrorCode::UnsupportedSyntax),
-        (7.0, "G07 hypothetical axis", ErrorCode::UnsupportedSemantics),
-        (7.1, "G07.1 cylindrical interpolation", ErrorCode::UnsupportedSemantics),
-        (12.1, "G12.1 polar interpolation", ErrorCode::UnsupportedSemantics),
-        (13.1, "G13.1 polar interpolation cancel", ErrorCode::UnsupportedSemantics),
-        (53.1, "G53.1 tool axis direction control", ErrorCode::UnsupportedSemantics),
+        (
+            7.0,
+            "G07 hypothetical axis",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            7.1,
+            "G07.1 cylindrical interpolation",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            12.1,
+            "G12.1 polar interpolation",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            13.1,
+            "G13.1 polar interpolation cancel",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            53.1,
+            "G53.1 tool axis direction control",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (68.2, "G68.2 feature CS", ErrorCode::UnsupportedSemantics),
-        (10.6, "G10.6 retract & recover", ErrorCode::UnsupportedSemantics),
-        (10.9, "G10.9 diameter/radius switch", ErrorCode::UnsupportedSemantics),
-        (72.1, "G72.1 figure rotation copy", ErrorCode::UnsupportedSemantics),
-        (72.2, "G72.2 figure translation copy", ErrorCode::UnsupportedSemantics),
+        (
+            10.6,
+            "G10.6 retract & recover",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            10.9,
+            "G10.9 diameter/radius switch",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            72.1,
+            "G72.1 figure rotation copy",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            72.2,
+            "G72.2 figure translation copy",
+            ErrorCode::UnsupportedSemantics,
+        ),
     ];
     for (v, frag, code) in cases {
         let src = format!("G{v}\nM30\n");
@@ -3958,15 +4350,35 @@ fn mround2_raw_table_vendor_modes() {
 #[test]
 fn mround2_raw_table_cycles_refused() {
     let cases: &[(f64, &str, ErrorCode)] = &[
-        (74.0, "G74 left-hand tapping", ErrorCode::UnsupportedSemantics),
+        (
+            74.0,
+            "G74 left-hand tapping",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (76.0, "G76 fine boring", ErrorCode::UnsupportedSemantics),
-        (84.0, "G84 right-hand tapping", ErrorCode::UnsupportedSemantics),
+        (
+            84.0,
+            "G84 right-hand tapping",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (84.2, "G84.2 rigid tapping", ErrorCode::UnsupportedSemantics),
         (84.3, "G84.3 rigid tapping", ErrorCode::UnsupportedSemantics),
         (87.0, "G87 back boring", ErrorCode::UnsupportedSemantics),
-        (88.0, "G88 bore manual stop", ErrorCode::UnsupportedSemantics),
-        (80.5, "G80.5 high-speed retract", ErrorCode::UnsupportedSyntax),
-        (80.8, "G80.8 high-speed retract", ErrorCode::UnsupportedSyntax),
+        (
+            88.0,
+            "G88 bore manual stop",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            80.5,
+            "G80.5 high-speed retract",
+            ErrorCode::UnsupportedSyntax,
+        ),
+        (
+            80.8,
+            "G80.8 high-speed retract",
+            ErrorCode::UnsupportedSyntax,
+        ),
         (81.1, "G81.1 chopping", ErrorCode::UnsupportedSyntax),
         (81.5, "G81.5 EGB", ErrorCode::UnsupportedSyntax),
         (81.8, "G81.8 EGB", ErrorCode::UnsupportedSyntax),
@@ -3981,11 +4393,28 @@ fn mround2_raw_table_cycles_refused() {
 
 #[test]
 fn mround2_raw_table_g92_g54_family() {
+    // v0.20: G92.1/.2/.3 — SEMANTICS→TABLE (зонд 4); G54.1 — SEMANTICS.
     let cases: &[(f64, &str, ErrorCode)] = &[
-        (92.1, "G92.1 WCS-shift reset", ErrorCode::UnsupportedSemantics),
-        (92.2, "G92.2 WCS-shift suspend", ErrorCode::UnsupportedSemantics),
-        (92.3, "G92.3 WCS-shift resume", ErrorCode::UnsupportedSemantics),
-        (54.1, "G54.1 Pn extended WCS", ErrorCode::UnsupportedSemantics),
+        (
+            92.1,
+            "G92.1 WCS-shift reset",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            92.2,
+            "G92.2 WCS-shift suspend",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            92.3,
+            "G92.3 WCS-shift resume",
+            ErrorCode::RequiresMachineTable,
+        ),
+        (
+            54.1,
+            "G54.1 Pn extended WCS",
+            ErrorCode::UnsupportedSemantics,
+        ),
     ];
     for (v, frag, code) in cases {
         let src = format!("G{v}\nM30\n");
@@ -4014,8 +4443,16 @@ fn mround2_raw_table_macro_b() {
 #[test]
 fn mround2_raw_table_compensation_tlo() {
     let cases: &[(f64, &str, ErrorCode)] = &[
-        (41.0, "G41 cutter comp left", ErrorCode::UnsupportedSemantics),
-        (42.0, "G42 cutter comp right", ErrorCode::UnsupportedSemantics),
+        (
+            41.0,
+            "G41 cutter comp left",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            42.0,
+            "G42 cutter comp right",
+            ErrorCode::UnsupportedSemantics,
+        ),
         (41.1, "G41.1 cutter comp", ErrorCode::UnsupportedSemantics),
         (42.1, "G42.1 cutter comp", ErrorCode::UnsupportedSemantics),
         (41.2, "high-precision comp", ErrorCode::UnsupportedSemantics),
@@ -4026,11 +4463,23 @@ fn mround2_raw_table_compensation_tlo() {
         (39.0, "G39 corner circular", ErrorCode::UnsupportedSemantics),
         (38.2, "probing", ErrorCode::UnsupportedSemantics),
         (38.5, "probing", ErrorCode::UnsupportedSemantics),
-        (43.0, "G43 tool length offset +H", ErrorCode::RequiresMachineTable),
+        (
+            43.0,
+            "G43 tool length offset +H",
+            ErrorCode::RequiresMachineTable,
+        ),
         (43.1, "G43.1 dynamic TLO", ErrorCode::RequiresMachineTable),
         (43.4, "G43.4 TCP", ErrorCode::UnsupportedSemantics),
-        (43.5, "G43.5 tool axis direction", ErrorCode::UnsupportedSemantics),
-        (44.0, "G44 tool length offset", ErrorCode::RequiresMachineTable),
+        (
+            43.5,
+            "G43.5 tool axis direction",
+            ErrorCode::UnsupportedSemantics,
+        ),
+        (
+            44.0,
+            "G44 tool length offset",
+            ErrorCode::RequiresMachineTable,
+        ),
     ];
     for (v, frag, code) in cases {
         let src = format!("G{v}\nM30\n");
@@ -4049,10 +4498,18 @@ fn mround2_modal_y_z_only_continuation() {
     // Модальное продолжение с ОДНОЙ осью: Y-only и Z-only кадры — ходы, не
     // naked-coords Err (плеча Y||Z в has_axis).
     let p = parse("G0 X5. Y2. Z1.\nG1 X4. Y2. Z1. F50.\nY10.\nM30\n").expect("Y-only ok");
-    let lins = p.ops.iter().filter(|o| matches!(o, Op::Linear { .. })).count();
+    let lins = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Linear { .. }))
+        .count();
     assert_eq!(lins, 2, "Y-only продолжение — ход (X-кадр + Y-кадр)");
     let p = parse("G0 X5. Y2. Z1.\nG1 X4. Y2. Z1. F50.\nZ-1.\nM30\n").expect("Z-only ok");
-    let lins = p.ops.iter().filter(|o| matches!(o, Op::Linear { .. })).count();
+    let lins = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Linear { .. }))
+        .count();
     assert_eq!(lins, 2, "Z-only продолжение — ход");
     // G91: Z-only — шаг между отверстиями (легален по §5.1).
     let p = parse("G0 X5. Y2. Z1.\nG91\nG0 Z-2.\nZ-3.\nM30\n").expect("G91 Z-only ok");
@@ -4063,15 +4520,18 @@ fn mround2_sub3_mirror_3d() {
     // 3D-зеркальный ход (end == −start по всем осям): НЕ zero-length ни по
     // одной компоненте (sub3-инверсия по Y/Z не должна дать 0).
     let p = parse("G0 X1. Y2. Z3.\nG0 X-1. Y-2. Z-3.\nM30\n").expect("ok");
-    let rapids = p.ops.iter().filter(|o| matches!(o, Op::Rapid { .. })).count();
+    let rapids = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Rapid { .. }))
+        .count();
     assert_eq!(rapids, 2, "оба rapid живые (3D-зеркало)");
 }
 
 #[test]
 fn mround2_g90_restores_absolute() {
     // G91 → G90: возврат в абсолют (плечо DistAbs в ModalState::apply).
-    let p = parse("G0 X5. Y0. Z0.\nG91\nG0 X2. Y0. Z0.\nG90\nG0 X10. Y0. Z0.\nM30\n")
-        .expect("ok");
+    let p = parse("G0 X5. Y0. Z0.\nG91\nG0 X2. Y0. Z0.\nG90\nG0 X10. Y0. Z0.\nM30\n").expect("ok");
     // end последнего хода = 10 (абсолют), не 7+2=9 (инкрементальное наследие):
     let ends: Vec<[f64; 3]> = p
         .ops
@@ -4156,9 +4616,13 @@ fn mround2_g10_p0_no_g11_family_trigger() {
     // последующий G11 обязан быть Raw (плечо P-домена в g10_form_is_raw).
     let p = parse("G10 L2 P0 X1. Y1. Z1.\nG11\nG0 X1. Y1. Z1.\nM30\n").expect("ok");
     assert!(
-        p.ops.iter().any(
-            |o| matches!(o, Op::Raw { code: ErrorCode::UnsupportedSyntax, .. })
-        ),
+        p.ops.iter().any(|o| matches!(
+            o,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSyntax,
+                ..
+            }
+        )),
         "G11 после RAW-формы G10 (P0) — Raw"
     );
     // Контраст: легальная L2 P2 семью НЕ триггерит (существующий
@@ -4171,11 +4635,13 @@ fn mround2_g10_p0_no_g11_family_trigger() {
 fn mround2_arc_sweep60_all_terms() {
     // G17 60°-дуга: cos ≠ 0 → все члены уравнения позиции (rv·cos, cr·sin)
     // ненулевые и конечные. end (5, 8.6603): sweep ≈ 60.0°.
-    let p = parse("G0 X10. Y0. Z0.\nG3 X5. Y8.6603 Z0. I-10. J0. F100.\nM30\n")
-        .expect("60° дуга ok");
+    let p =
+        parse("G0 X10. Y0. Z0.\nG3 X5. Y8.6603 Z0. I-10. J0. F100.\nM30\n").expect("60° дуга ok");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
-        Op::Arc { center, sweep_deg, .. } => {
+        Op::Arc {
+            center, sweep_deg, ..
+        } => {
             assert_pt(&center, 0.0, 0.0, 0.0);
             assert!(
                 (sweep_deg.value() - 60.0).abs() <= 0.05,
@@ -4185,8 +4651,8 @@ fn mround2_arc_sweep60_all_terms() {
         _ => panic!("не Arc"),
     }
     // CW-вариант из той же точки (зеркало по направлению).
-    let p = parse("G0 X10. Y0. Z0.\nG2 X5. Y-8.6603 Z0. I-10. J0. F100.\nM30\n")
-        .expect("CW 60° ok");
+    let p =
+        parse("G0 X10. Y0. Z0.\nG2 X5. Y-8.6603 Z0. I-10. J0. F100.\nM30\n").expect("CW 60° ok");
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
         Op::Arc { sweep_deg, dir, .. } => {

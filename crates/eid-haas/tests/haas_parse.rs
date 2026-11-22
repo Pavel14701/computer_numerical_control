@@ -911,6 +911,35 @@ fn subprogram_tail_raw() {
 }
 
 #[test]
+fn v020_tail_notice_dialect_divergence_text() {
+    // SPEC §5.2 v0.20 (зонд 5): tail-reason согласован с notice-текстом
+    // диалект-расхождения — rs274-файловый интерпретатор молча игнорирует
+    // хвост, grbl-стрим исполняет; для haas-хвоста-subs семантика та же
+    // lossless (носитель Raw, motion-опы после PEND не строятся).
+    let p = parse("G21 G90;\nM30;\nO0100;\nM99;\n").expect("ok");
+    let raw = p
+        .ops
+        .iter()
+        .find(|o| matches!(o, Op::Raw { .. }))
+        .expect("хвост — Raw");
+    match raw {
+        Op::Raw { reason, .. } => {
+            assert!(
+                reason.contains("ignored in rs274-file semantics"),
+                "{reason}"
+            );
+            assert!(
+                reason.contains("executed in grbl-stream semantics"),
+                "{reason}"
+            );
+            assert!(reason.contains("dialect-divergent"), "{reason}");
+            assert!(reason.contains("lossless"), "{reason}");
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn o_code_raw() {
     // O##### — номер программы (NGC 5 цифр `?` §10) → Raw{SYNTAX} (§1.3).
     let p = parse("G21 G90;\nO0030;\nG0 X5.;\nM30;\n").expect("ok");
@@ -1410,18 +1439,134 @@ fn g92_preset_and_first_motion_anchor() {
 }
 
 #[test]
-fn g92_position_restrictions() {
-    // После первого motion-опа — Err (только пресетка, §3); второй G92 — Err.
-    assert_eq!(
-        err_code(parse("G21 G90;\nG0 X1. Y1. Z1.;\nG92 X0. Y0. Z0.;\nM30;\n")),
-        ErrorCode::UnsupportedSemantics
+fn v020_g92_mid_golden_chain_new_reading() {
+    // SPEC §3 v0.20 (коммит c76ed9a; зонды 1–3 target/probe/g92): mid-program
+    // G92 — валидный frame_preset; ограничение «только startup» снято
+    // (бывший Err SEMANTICS «G92 after motion»). Golden зонда 1: linear с
+    // НОВЫМ чтением (start = (0,0,0), end = (5,0,0)); AST-носитель — Raw
+    // (grammar v0.3 не имеет mid-program frame_preset-опa; chaining — в
+    // каноническом состоянии).
+    let p = parse("G21 G90 G94;\nG0 X10. Y10.;\nG92 X0. Y0.;\nG1 X5. F100.;\nM30;\n")
+        .expect("G92-mid → Ok (v0.20)");
+    assert!(
+        p.frame_preset.is_none(),
+        "header — только СТАРТОВАЯ пресетка"
     );
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    match &p.ops[1] {
+        Op::Raw { reason, code, .. } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.starts_with("G92 mid-program"), "{reason}");
+            assert!(reason.contains("frame_preset"), "{reason}");
+        }
+        other => panic!("op1 не Raw-носитель G92: {other:?}"),
+    }
+    match &p.ops[2] {
+        Op::Linear {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 0.0, 0.0); // новое чтение после G92 X0 Y0
+            assert_pt(end, 5.0, 0.0, 0.0);
+        }
+        other => panic!("op2 не Linear: {other:?}"),
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn v020_g92_mid_per_axis_and_replace() {
+    // Зонд 3 (per-axis: неуказанные оси чтение не меняют) + зонд 2 (Q5
+    // закрыт: повторная G92 — replace по пересчёту от ТЕКУЩЕГО чтения,
+    // не аккумуляция).
+    let p = parse("G21 G90 G94;\nG0 X10. Y10.;\nG92 X0.;\nG0 X5.;\nG92 X0.;\nG0 X5.;\nM30;\n")
+        .expect("per-axis + повторная G92 → Ok");
+    // ops: Rapid, Raw, Rapid, Raw, Rapid, PEND.
+    assert_eq!(p.ops.len(), 6);
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            ..
+        } => {
+            assert_pt(s, 0.0, 10.0, 0.0);
+            assert_pt(end, 5.0, 10.0, 0.0); // Y неуказан — прежнее чтение 10
+        }
+        other => panic!("op2 не Rapid: {other:?}"),
+    }
+    // replace: чтение после первого хода (5,10,0); G92 X0 → 0 (не −5).
+    match &p.ops[4] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, 0.0, 10.0, 0.0),
+        other => panic!("op4 не Rapid: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_wcs_switch_unknown_start() {
+    // Зонд 8: регистр G92 глобален поверх WCS; после mid-G92 смена G54→G55
+    // без in-text origin'ов → честный unknown-start.
+    let p = parse("G21 G90 G94;\nG54 G0 X10. Y0. Z0.;\nG92 X0.;\nG55;\nG0 X5. Y0. Z0.;\nM30;\n")
+        .expect("WCS-переключение после mid-G92 → Ok");
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Unknown,
+            end,
+            state,
+            ..
+        } => {
+            assert_pt(end, 5.0, 0.0, 0.0);
+            assert_eq!(state.wcs, Wcs::G55);
+        }
+        other => panic!("op2 не Rapid с unknown-start: {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_second_startup_g92_merges_and_g53_n16() {
+    // Q5 закрыт v0.20: вторая G92 в стартовой зоне — per-axis merge пресетки;
+    // N16 (§5.3a): G53 при активном регистре G92 — RUNTIME.
+    let p = parse("G21 G90 G94;\nG92 X1. Y1. Z1.;\nG92 X2.;\nG0 X5. Y1. Z1.;\nM30;\n")
+        .expect("второй G92 в стартовой зоне → Ok (merge)");
+    let pr = p.frame_preset.as_ref().expect("стартовая пресетка (merge)");
+    assert_pt(&pr.values, 2.0, 1.0, 1.0);
+    match &p.ops[0] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            ..
+        } => assert_pt(s, 2.0, 1.0, 1.0),
+        other => panic!("op0 не Rapid: {other:?}"),
+    }
     assert_eq!(
         err_code(parse(
-            "G21 G90;\nG92 X1. Y1. Z1.;\nG92 X2. Y2. Z2.;\nM30;\n"
+            "G21 G90;\nG0 X1. Y1. Z1.;\nG92 X0. Y0. Z0.;\nG53 G0 X0 Y0 Z0;\nM30;\n"
         )),
-        ErrorCode::UnsupportedSemantics
+        ErrorCode::RuntimeState
     );
+}
+
+#[test]
+fn v020_g92_1_reset_raw_requires_table() {
+    // G92.1/.2/.3 → Raw{E_REQUIRES_MACHINE_TABLE} (v0.20 SEMANTICS→TABLE,
+    // зонд 4; в словаре Haas G92.1 вне g_raw-таблицы не был — прежде generic-
+    // ведро SYNTAX; теперь фикс-класс таблицы станка).
+    for code in ["G92.1", "G92.2", "G92.3"] {
+        let p = parse(&format!("G21 G90;\n{code};\nM30;\n")).expect("ok");
+        match &p.ops[0] {
+            Op::Raw {
+                code: c, reason, ..
+            } => {
+                assert_eq!(*c, ErrorCode::RequiresMachineTable, "{code}: {reason}");
+                if code == "G92.1" {
+                    assert!(reason.contains("machine position"), "{code}: {reason}");
+                }
+            }
+            other => panic!("{code}: не Raw: {other:?}"),
+        }
+    }
 }
 
 #[test]

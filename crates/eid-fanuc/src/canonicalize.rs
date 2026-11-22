@@ -9,13 +9,16 @@
 //! оркестратора 1–8):
 //! * фреймы: G54–G59 → state.wcs p=1..6; G10 L2 P1–P6 → wcs_define
 //!   (G90/G91 — абсолют/инкремент записи); G92 X/Y/Z → frame_preset
-//!   (только пресетка, §3 SPEC); G92 S → Raw{SEMANTICS} (кламп оборотов);
+//!   (v0.20: стартовая зона — header-поле, повторные per-axis merge;
+//!   mid-program — chaining чтений + Raw-носитель, зонды 1–3/7/8);
+//!   G92 S → Raw{SEMANTICS} (кламп оборотов);
 //!   G53 → machine-frame ходы (правило §5.3, точки разрыва (b)–(d));
 //!   G52 → **Err**(E_UNSUPPORTED_SEMANTICS) — единственный жёсткий отказ
 //!   Fanuc (смена фрейма mid-program, SPEC §8.5); G10 L2 P0 / G10 L20 /
 //!   G10 L1/L10/L11/L50+ → Raw{REQUIRES_MACHINE_TABLE} (L20 Fanuc = запись
-//!   G54.1 Pn, НЕ wcs_set_here — ловушка №3); G54.1 Pn / G92.1–.3 →
-//!   Raw{SEMANTICS}; G11 → семейство G11 (COVERAGE §1.3).
+//!   G54.1 Pn, НЕ wcs_set_here — ловушка №3); G54.1 Pn → Raw{SEMANTICS};
+//!   G92.1–.3 → Raw{REQUIRES_MACHINE_TABLE} (v0.20 SEMANTICS→TABLE, зонд 4);
+//!   G11 → семейство G11 (COVERAGE §1.3).
 //! * циклы (§5 отчёта — Fanuc-семантика, НЕ LinuxCNC-константы):
 //!   развёртка G81/G82/G83/G73/G85/G86/G89 по канон-шаблону §7.7 SPEC
 //!   (traverse+approach НЕ сливать; F кадра — на все производные опы);
@@ -80,6 +83,12 @@ use std::sync::Arc;
 // ---------------------------------------------------------------------------
 // Notices (реплика паттерна eid-grbl/eid-linuxcnc; SPEC §3/§5.2/§6/§7)
 // ---------------------------------------------------------------------------
+
+/// Маркер Raw-носителя mid-program G92 (SPEC §5.3 v0.20): подстрока reason,
+/// по которой strip start-диагностик (emit) и «вооружение» chaining
+/// распознают носитель. `eid_core::verify` mid-G92 не знает — chaining-ребейз
+/// легален (зеркало linuxcnc MID_G92_REASON_PREFIX / grbl process_g92).
+pub(crate) const MID_G92_REASON_PREFIX: &str = "G92 mid-program";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeKind {
@@ -319,8 +328,23 @@ struct Ctx {
     spindle: Spindle,
     coolant: Coolant,
     tool: Option<u32>,
-    last_s: Option<Num>,            // голое S — сохранение оборотов (§3 отчёта)
-    preset: Option<FramePreset>,    // G92 (только пресетка, §3 SPEC)
+    last_s: Option<Num>,         // голое S — сохранение оборотов (§3 отчёта)
+    preset: Option<FramePreset>, // G92 — СТАРТОВАЯ пресетка (header-поле)
+    /// G92-записей в файле (Q5 ЗАКРЫТ v0.20: несколько G92 легальны —
+    /// стартовые per-axis merge, mid — chaining). >0 → G53 machine-ход =
+    /// RUNTIME (§5.3a, N16 — чтение машинной позиции с активным регистром
+    /// G92 вне AST).
+    g92_def_count: usize,
+    /// Чтение-сдвиг mid-program G92 (SPEC §3 v0.20, зонды 1–3): накопленное
+    /// изменение чтения ОДНОЙ И ТОЙ ЖЕ машинной точки относительно reading-
+    /// фрейма prev; применяется в link_start/reading_now поверх базового
+    /// чтения, сбрасывается при записи prev (после хода prev уже в новом
+    /// фрейме — chaining SPEC §3 v0.20).
+    g92_shift: [f64; 3],
+    /// mid-G92 сработал на текущем raw-кадре (absorb_frame_structs) — маркер
+    /// обязан попасть в reason Raw-носителя этого кадра (Ctx::raw_op);
+    /// сбрасывается в начале кадра (absorb_frame_state) и при использовании.
+    mid_g92_marker: bool,
     origins: [Option<[f64; 3]>; 9], // wcs_define in-text (p 1..9 → idx 0..8)
     prev: Option<Reading>,          // end последнего motion-опа
     saw_motion: bool,               // G92-пресетка только до первого движения
@@ -457,10 +481,19 @@ impl Ctx {
         });
     }
 
-    fn raw_op(&self, b: &Block, code: ErrorCode, reason: &str) -> Op {
+    fn raw_op(&mut self, b: &Block, code: ErrorCode, reason: &str) -> Op {
+        // v0.20: mid-G92 на raw-кадре (форма `G92 X0 G43 H1` после motion) —
+        // rebase применён (Fanuc исполняет G92 в блоке), маркер обязан быть
+        // в reason НОСИТЕЛЯ: strip start-диагностик эмиссии вооружается по
+        // подстроке (зеркало linuxcnc strip_mid_g92_start_diags, зонд 1).
+        let reason = if std::mem::take(&mut self.mid_g92_marker) {
+            format!("{reason}; [{MID_G92_REASON_PREFIX} (v0.20): rebase чтений применён]")
+        } else {
+            reason.to_string()
+        };
         Op::Raw {
             payload_hex: payload_hex(&b.raw),
-            reason: reason.to_string(),
+            reason,
             code,
             src: span(&self.file, b.line_no, b.raw.len()),
         }
@@ -481,10 +514,12 @@ impl Ctx {
     fn link_start(&self, machine: bool, line: u32, blen: usize) -> Result<Linked, Vec<Diagnostic>> {
         let rt = |msg: String| vec![err(ErrorCode::RuntimeState, msg, &self.file, line, blen)];
         if machine {
-            // §5.3(a): machine-ход при активном frame_preset — невыразим.
-            if self.preset.is_some() {
+            // §5.3(a): machine-ход при активном frame_preset/регистре G92 —
+            // невыразим (N16: чтение машинной позиции с активным регистром
+            // G92 вне AST — v0.20 распространяет правило на mid-G92).
+            if self.preset.is_some() || self.g92_def_count > 0 {
                 return Err(rt(
-                    "machine-frame move with active frame_preset — M-coordinates unknown (SPEC §5.3a)".into(),
+                    "machine-frame move with active frame_preset/G92 register — M-coordinates unknown (SPEC §5.3a; N16)".into(),
                 ));
             }
             return Ok(match self.prev {
@@ -522,7 +557,7 @@ impl Ctx {
             });
         }
         // WCS-движение.
-        Ok(match self.prev {
+        let linked = match self.prev {
             None => {
                 // Точка разрыва (a): якорь — только frame_preset (Fanuc L20
                 // wcs_set_here не существует — Raw, ловушка №3).
@@ -580,10 +615,25 @@ impl Ctx {
                             pos[1] + op_[1] - on[1],
                             pos[2] + op_[2] - on[2],
                         ]),
+                        // Смена WCS при активном mid-G92 без in-text origin'ов
+                        // — честный unknown-start (зонд 8: rs274 пересчитал бы
+                        // от машины, машины в AST нет).
                         _ => Linked::UnknownRequired,
                     }
                 }
             }
+        };
+        // SPEC §3 v0.20 (зонды 1–3): mid-program G92 ребейзит чтение той же
+        // машинной точки; g92_shift — накопленное изменение с фрейма prev
+        // (сбрасывается при записи prev — после хода prev в новом фрейме;
+        // Δ-регистр сокращается в разности чтений точки разрыва (b) — зонд 8b).
+        Ok(match linked {
+            Linked::Known(v) => Linked::Known([
+                v[0] - self.g92_shift[0],
+                v[1] - self.g92_shift[1],
+                v[2] - self.g92_shift[2],
+            ]),
+            other => other,
         })
     }
 }
@@ -677,6 +727,9 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         tool: None,
         last_s: None,
         preset: None,
+        g92_def_count: 0,
+        g92_shift: [0.0; 3],
+        mid_g92_marker: false,
         origins: Default::default(),
         prev: None,
         saw_motion: false,
@@ -806,7 +859,7 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         let op = ctx.raw_op(
             b,
             ErrorCode::UnsupportedSyntax,
-            "block after program end: subprogram tail preserved raw (ruling 1; analysis §4.4/§7.3; COVERAGE §4 O-words)",
+            "block after program end: subprogram tail preserved raw (ruling 1; analysis §4.4/§7.3; COVERAGE §4 O-words); tail after PEND ignored in rs274-file semantics, executed in grbl-stream semantics — dialect-divergent, subs-tail semantics the same lossless carrier (SPEC §5.2 v0.20, probe 5)",
         );
         ctx.push(op);
         return Ok(());
@@ -1085,48 +1138,29 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         return Ok(());
     }
 
-    // (16) G92 → frame_preset: только пресетка до первого motion-опа
-    // (позиционное ограничение §3 SPEC); второй G92 — отказ (Q5).
+    // (16) G92 → frame_preset (SPEC §3 v0.20, Q4-частично/Q5-закрыт; зонды
+    // 1–3/7/8): стартовая зона — header-поле Program.frame_preset (первая
+    // G92; повторные — per-axis merge); mid-program — chaining чтения
+    // (apply_g92) + Raw-оп как lossless-носитель блока. Носитель Raw, а не
+    // узел frame_preset: grammar/AST v0.3 НЕ имеют mid-program
+    // frame_preset-опa (eid-core заморожен, Op 10 вариантов); семантика
+    // исполнена в каноническом состоянии полностью — при разморозке
+    // интерфейса узел заменяется 1:1, до тех пор кросс-диалект отказывает
+    // (R4-правило Raw, консервативно — зеркало grbl process_g92 a49981b).
     if b.g_codes.contains(&GCode::Preset) {
-        if ctx.saw_motion {
-            return Err(vec![err(
-                ErrorCode::UnsupportedSemantics,
-                "G92 after motion: frame_preset only as startup preset (SPEC §3; Q4/Q5)",
-                &ctx.file,
-                line,
-                blen,
-            )]);
+        let mid = apply_g92(ctx, b)?;
+        if mid == G92Where::Mid {
+            // Без XYZ-слов (`G92 E0` PrusaSlicer) регистр XYZ не тронут
+            // (зеркало grbl gcode.c:561 `if (!axis_words) FAIL`) — reason
+            // не называет это frame_preset-семантикой.
+            let reason = if has_axis {
+                format!("{MID_G92_REASON_PREFIX} (v0.20 оп frame_preset): per-axis rebase чтений применён (указанные оси = присвоенные значения, неуказанные = текущие чтения; replace-по-пересчёту, регистр глобален поверх WCS — зонды 1–3/7/8); узел frame_preset в интерфейсе v0.2.0 (grammar v0.4 D5) не представим опом — байты lossless same-dialect Raw, кросс-диалект — отказ (правило Raw)")
+            } else {
+                "G92 mid-program without XYZ axis words — XYZ offset register untouched (grbl gcode.c:561: `if (!axis_words) FAIL`); block carried Raw losslessly".to_string()
+            };
+            let op = ctx.raw_op(b, ErrorCode::UnsupportedSemantics, &reason);
+            ctx.push(op);
         }
-        if ctx.preset.is_some() {
-            return Err(vec![err(
-                ErrorCode::UnsupportedSemantics,
-                "second G92 — multiple presets in one program (Q5; SPEC §3)",
-                &ctx.file,
-                line,
-                blen,
-            )]);
-        }
-        if !has_axis {
-            return Err(vec![err(
-                ErrorCode::InvalidInput,
-                "G92 without axis words (SPEC §3)",
-                &ctx.file,
-                line,
-                blen,
-            )]);
-        }
-        // Значения = координаты, присваиваемые текущей позиции (§3); невыписанные
-        // оси = дефолт контроллера 0 (точка разрыва (a) — старт программы).
-        let mut vals = [0.0f64; 3];
-        for (i, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
-            if let Some(w) = b.word(letter) {
-                vals[i] = ctx.dpi_num(letter, w).value();
-            }
-        }
-        ctx.preset = Some(FramePreset {
-            values: p3(vals),
-            wcs: ctx.modal.wcs,
-        });
         return Ok(());
     }
 
@@ -1359,6 +1393,9 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 
     // Провенанс F-кадра — по кадру (v0.2 волна 3): сброс на начале блока.
     ctx.feed_restated = false;
+    // mid-G92-маркер — по кадру (v0.20): выставляется absorb_frame_structs,
+    // потребляется Ctx::raw_op этого же кадра.
+    ctx.mid_g92_marker = false;
 
     // (a) Единицы: ровно одна система на программу (SPEC §2.5) — и на
     // RAW-кадре (§8.5: смена units — структурный класс, жёсткий отказ).
@@ -1465,43 +1502,18 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
 /// (те же слова, та же модальность → то же значение), G92 — нет, поэтому
 /// его абсорбция отделена от общего пути.
 fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
-    let line = b.line_no;
-    let blen = b.raw.len();
-
-    // (f) G92 → пресетка (до первого motion-опа, одна пресетка — инварианты
-    // основного пути; на raw-кадре осевые слова абсорбируются в frame_preset,
-    // S-кламп отсечён условием «есть осевые»).
+    // (f) G92: общая семантика с legal-путём (SPEC §3 v0.20; зеркала
+    // apply_g92 — grbl a49981b); на raw-кадре пресетка/mid-chaining
+    // абсорбируются без построения опа (кадр несёт Raw; mid — маркер в
+    // reason носителя через Ctx::raw_op). S-кламп отсечён условием
+    // «есть осевые».
     if b.g_codes.contains(&GCode::Preset)
         && (b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some())
     {
-        if ctx.saw_motion {
-            return Err(vec![err(
-                ErrorCode::UnsupportedSemantics,
-                "G92 after motion: frame_preset only as startup preset (SPEC §3; Q4/Q5)",
-                &ctx.file,
-                line,
-                blen,
-            )]);
+        let mid = apply_g92(ctx, b)?;
+        if mid == G92Where::Mid {
+            ctx.mid_g92_marker = true;
         }
-        if ctx.preset.is_some() {
-            return Err(vec![err(
-                ErrorCode::UnsupportedSemantics,
-                "second G92 — multiple presets in one program (Q5; SPEC §3)",
-                &ctx.file,
-                line,
-                blen,
-            )]);
-        }
-        let mut vals = [0.0f64; 3];
-        for (i, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
-            if let Some(w) = b.word(letter) {
-                vals[i] = ctx.dpi_num(letter, w).value();
-            }
-        }
-        ctx.preset = Some(FramePreset {
-            values: p3(vals),
-            wcs: ctx.modal.wcs,
-        });
     }
 
     // (g) G10 L2 P1–6 ПОЛНАЯ форма → обновление таблицы origin (§8.6: G10 в
@@ -1534,6 +1546,135 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// G92 — общая семантика (SPEC §3 v0.20, зонды 1–3/7/8; зеркало eid-grbl
+// apply_g92 a49981b / eid-linuxcnc v0.20 9968150)
+// ---------------------------------------------------------------------------
+
+/// Где сработал G92 (SPEC §3 v0.20): стартовая зона (пресетка header-поля)
+/// или mid-program (chaining + Raw-носитель у legal-пути).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum G92Where {
+    Startup,
+    Mid,
+}
+
+/// Текущее чтение позиции в активной composed-системе (wcs ⊕ регистр G92) —
+/// база rebase mid-program G92 (SPEC §5.3 v0.20). `None` = чтение не вычислимо
+/// из текста (machine-история без in-text origin / точка разрыва (b) без
+/// origin'ов). Δ (регистр G92) сокращается в разностях чтений, поэтому mid-G92-
+/// ребейз формулы точек разрыва не ломает (зонд 8: регистр глобален поверх
+/// WCS; зонд 8b: формула (b) точна после rebase).
+fn reading_now(ctx: &Ctx) -> Option<[f64; 3]> {
+    let prev = ctx.prev.as_ref()?;
+    let mut v = match prev.frame {
+        Frame::Machine => {
+            let o = ctx.origins[wcs_idx(ctx.modal.wcs)]?;
+            [prev.pos[0] - o[0], prev.pos[1] - o[1], prev.pos[2] - o[2]]
+        }
+        Frame::Wcs if prev.wcs == ctx.modal.wcs => prev.pos,
+        Frame::Wcs => {
+            let o_prev = ctx.origins[wcs_idx(prev.wcs)]?;
+            let o_cur = ctx.origins[wcs_idx(ctx.modal.wcs)]?;
+            [
+                prev.pos[0] + o_prev[0] - o_cur[0],
+                prev.pos[1] + o_prev[1] - o_cur[1],
+                prev.pos[2] + o_prev[2] - o_cur[2],
+            ]
+        }
+    };
+    for (i, s) in v.iter_mut().enumerate() {
+        *s -= ctx.g92_shift[i];
+    }
+    Some(v)
+}
+
+/// Общая семантика G92 (SPEC §3 v0.20 — зонды 1–3: сдвиг последующих
+/// координат; per-axis: неуказанные оси чтение НЕ меняют; replace-по-
+/// пересчёту от текущего чтения; глобальный регистр поверх WCS — зонд 8).
+/// Вызывается из legal-пути (шаг (16)) и raw-пути (absorb_frame_structs);
+/// различие только в построении опа (legal строит Raw-носитель на Mid,
+/// raw — нет: кадр уже несёт Raw). Диспозиции:
+/// * стартовая зона (до первого motion-опа), ПЕРВАЯ G92 — СТАРТОВАЯ пресетка
+///   header-поля (невыписанные оси = дефолт контроллера 0, точка разрыва (a);
+///   полное отсутствие осевых слов — сломанный вход, back-compat);
+/// * стартовая зона, ПОВТОРНАЯ G92 — per-axis merge в ту же пресетку
+///   (машина ещё не двигалась → пересчёт вырождается в merge; зонд 3:
+///   неуказанные оси сохраняют прежнее чтение; Q5 закрыт v0.20);
+/// * MID-программа — chaining: чтение последующих ходов = новое по заданным
+///   осям (g92_shift, зонды 1–2). Блок без XYZ-слов (`G92 E0` PrusaSlicer)
+///   регистр XYZ не трогает (зеркало grbl gcode.c:561) — ни shift, ни счётчик.
+fn apply_g92(ctx: &mut Ctx, b: &Block) -> Result<G92Where, Vec<Diagnostic>> {
+    let line = b.line_no;
+    let blen = b.raw.len();
+    let words = [(0usize, 'X'), (1, 'Y'), (2, 'Z')];
+    if !ctx.saw_motion {
+        // СТАРТОВАЯ зона.
+        if ctx.g92_def_count == 0 {
+            let any_axis = b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some();
+            if !any_axis {
+                return Err(vec![err(
+                    ErrorCode::InvalidInput,
+                    "G92 without axis words (SPEC §3)",
+                    &ctx.file,
+                    line,
+                    blen,
+                )]);
+            }
+            // Значения = координаты, присваиваемые текущей позиции (§3);
+            // невыписанные оси = дефолт контроллера 0 (точка разрыва (a) —
+            // старт программы; back-compat goldens).
+            let mut vals = [0.0f64; 3];
+            for (i, letter) in ['X', 'Y', 'Z'].into_iter().enumerate() {
+                if let Some(w) = b.word(letter) {
+                    vals[i] = ctx.dpi_num(letter, w).value();
+                }
+            }
+            ctx.preset = Some(FramePreset {
+                values: p3(vals),
+                wcs: ctx.modal.wcs,
+            });
+        } else {
+            // Повторная G92 до ходов: per-axis merge пресетки (зонд 3:
+            // неуказанные оси чтение не меняют; машина не двигалась, поэтому
+            // replace-по-пересчёту (зонд 2) == merge заданных осей).
+            let mut merged = ctx.preset.clone().expect("g92_def_count > 0");
+            let mut vals = e3(&merged.values);
+            for (i, l) in words {
+                if let Some(w) = b.word(l) {
+                    vals[i] = ctx.dpi_num(l, w).value();
+                }
+            }
+            merged.values = p3(vals);
+            merged.wcs = ctx.modal.wcs;
+            ctx.preset = Some(merged);
+        }
+        ctx.g92_def_count += 1;
+        return Ok(G92Where::Startup);
+    }
+    // MID-программа (зонды 1–3): rebase чтения последующих ходов.
+    // shift[i] += R[i] − v[i] относительно reading-фрейма prev (сбрасывается
+    // при записи prev: после хода prev уже в новом фрейме). Чтение неизвестно
+    // → задать его из G92 нельзя — последующие ходы честный unknown-start
+    // (точка разрыва), блок несёт Raw.
+    if b.word('X').is_some() || b.word('Y').is_some() || b.word('Z').is_some() {
+        if let Some(r) = reading_now(ctx) {
+            let mut touched = false;
+            for (i, l) in words {
+                if let Some(w) = b.word(l) {
+                    let v = ctx.dpi_num(l, w).value();
+                    ctx.g92_shift[i] += r[i] - v;
+                    touched = true;
+                }
+            }
+            if touched {
+                ctx.g92_def_count += 1; // §5.3(a): G53 после G92 — RUNTIME (N16)
+            }
+        }
+    }
+    Ok(G92Where::Mid)
 }
 
 // ---------------------------------------------------------------------------
@@ -1851,6 +1992,9 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                 frame,
                 wcs: ctx.modal.wcs,
             });
+            // SPEC §3 v0.20 chaining: end записан УЖЕ в пост-G92 reading-
+            // фрейме — накопленный g92_shift сбрасывается (зеркало update_pos).
+            ctx.g92_shift = [0.0; 3];
             ctx.saw_motion = true;
             return Ok(());
         }
@@ -1915,6 +2059,9 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         frame,
         wcs: ctx.modal.wcs,
     });
+    // SPEC §3 v0.20 chaining: end записан УЖЕ в пост-G92 reading-фрейме —
+    // накопленный g92_shift сбрасывается (зеркало update_pos).
+    ctx.g92_shift = [0.0; 3];
     ctx.saw_motion = true;
     Ok(())
 }
@@ -2100,6 +2247,8 @@ fn arc_block(
             frame: Frame::Wcs,
             wcs: ctx.modal.wcs,
         });
+        // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
+        ctx.g92_shift = [0.0; 3];
         ctx.saw_motion = true;
         return Ok(());
     }
@@ -2193,6 +2342,8 @@ fn arc_block(
         frame: Frame::Wcs,
         wcs: ctx.modal.wcs,
     });
+    // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
+    ctx.g92_shift = [0.0; 3];
     ctx.saw_motion = true;
     Ok(())
 }
@@ -2628,6 +2779,8 @@ fn unroll_cycle(
         frame: Frame::Wcs,
         wcs: ctx.modal.wcs,
     });
+    // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
+    ctx.g92_shift = [0.0; 3];
     ctx.saw_motion = true;
     Ok(())
 }

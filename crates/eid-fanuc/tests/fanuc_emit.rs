@@ -1385,9 +1385,8 @@ fn mround2_writer_coolant_m9_m7_m8_order() {
     // СОЖ: flood-включение → M8; добавка mist поверх flood → M7 (+ре-эмиссия
     // M8 при компонентном diff); hand-built сброс flood при живом mist →
     // M9 ДО включений (off_needed-плечо), затем M7.
-    let text = emit_fanuc(
-        "M8;\nG0 X0. Y0. Z5.;\nM7;\nG0 X1. Y0. Z5.;\nM9;\nG0 X2. Y0. Z5.;\nM30;\n",
-    );
+    let text =
+        emit_fanuc("M8;\nG0 X0. Y0. Z5.;\nM7;\nG0 X1. Y0. Z5.;\nM9;\nG0 X2. Y0. Z5.;\nM30;\n");
     let lines: Vec<String> = text.lines().map(String::from).collect();
     let m8 = lines.iter().position(|l| l == "M8").expect("M8");
     let m7 = lines.iter().position(|l| l == "M7").expect("M7");
@@ -1398,13 +1397,19 @@ fn mround2_writer_coolant_m9_m7_m8_order() {
     let mut p = parse_fanuc("G0 X0. Y0. Z5.;\nG0 X1. Y0. Z5.;\nM30;\n");
     match &mut p.ops[0] {
         Op::Rapid { state, .. } => {
-            state.coolant = Coolant { mist: true, flood: true };
+            state.coolant = Coolant {
+                mist: true,
+                flood: true,
+            };
         }
         other => panic!("ops[0] не Rapid: {other:?}"),
     }
     match &mut p.ops[1] {
         Op::Rapid { state, .. } => {
-            state.coolant = Coolant { mist: true, flood: false };
+            state.coolant = Coolant {
+                mist: true,
+                flood: false,
+            };
         }
         other => panic!("ops[1] не Rapid: {other:?}"),
     }
@@ -1428,7 +1433,15 @@ fn mround2_codes_table_nonempty() {
     sorted.sort_by_key(|c| c.as_str());
     assert_eq!(codes, sorted, "codes() отсортирован");
     let n = codes.len();
-    assert_eq!(codes.len(), codes.iter().map(|c| c.as_str()).collect::<std::collections::BTreeSet<_>>().len(), "без дубликатов");
+    assert_eq!(
+        codes.len(),
+        codes
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        "без дубликатов"
+    );
     for want in [
         ErrorCode::InvalidInput,
         ErrorCode::UnsupportedSemantics,
@@ -1448,7 +1461,11 @@ fn mround2_wcs_set_here_validator_message() {
         0,
         Op::WcsSetHere {
             p: 1,
-            delta: eid_core::ast::Vec3 { x: num(0.0), y: num(0.0), z: num(0.0) },
+            delta: eid_core::ast::Vec3 {
+                x: num(0.0),
+                y: num(0.0),
+                z: num(0.0),
+            },
             state: State {
                 feed: None,
                 spindle: Spindle::Off,
@@ -1463,8 +1480,9 @@ fn mround2_wcs_set_here_validator_message() {
     );
     let d = emit_diags(&p);
     assert!(
-        d.iter()
-            .any(|x| x.message.contains("запрещена как G10 L20") && x.message.contains("ловушка №3")),
+        d.iter().any(
+            |x| x.message.contains("запрещена как G10 L20") && x.message.contains("ловушка №3")
+        ),
         "{d:?}"
     );
 }
@@ -1481,7 +1499,10 @@ fn mround2_arc_hand_built_diags() {
         }
     }
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("machine_frame_arc")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("machine_frame_arc")),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -1489,7 +1510,9 @@ fn mround2_plane_of_degenerate_normals_rejected() {
     // plane_of: смесь осей (1,0.5,0) и нулевая нормаль — отказ, не паника.
     for nn in [(1.0f64, 0.5f64, 0.0f64), (0.0, 0.0, 0.0), (0.6, 0.8, 0.0)] {
         let n = nn;
-        let mut p = parse_fanuc("G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n");
+        let mut p = parse_fanuc(
+            "G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n",
+        );
         for op in &mut p.ops {
             if let Op::Arc { normal, .. } = op {
                 *normal = pt(n.0, n.1, n.2);
@@ -1522,12 +1545,18 @@ fn mround2_motion_dwell_wcs_outside_message() {
     let mut p = parse_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nG1 X1. F100.;\nM30;\n");
     set_wcs_unknown(&mut p, 1, Wcs::G59_1);
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")),
+        "{d:?}"
+    );
     // (b) rapid:
     let mut p = parse_fanuc("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nM30;\n");
     set_wcs_unknown(&mut p, 0, Wcs::G59_1);
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")),
+        "{d:?}"
+    );
     // (c) dwell:
     let mut p = parse_fanuc("G21 G90 G94 G17;\nG4 P100;\nM30;\n");
     match &mut p.ops[0] {
@@ -1535,7 +1564,10 @@ fn mround2_motion_dwell_wcs_outside_message() {
         other => panic!("ops[0] не Dwell: {other:?}"),
     }
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("wcs_outside_g54_g59")),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -1549,7 +1581,10 @@ fn mround2_raw_bad_hex_message() {
         other => panic!("ops[0] не Raw: {other:?}"),
     }
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("raw_payload_not_hex")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("raw_payload_not_hex")),
+        "{d:?}"
+    );
     // (b) чётная длина, не-hex символы (плечо алфавита):
     let mut p = parse_fanuc("G65;\nM30;\n");
     match &mut p.ops[0] {
@@ -1557,7 +1592,10 @@ fn mround2_raw_bad_hex_message() {
         other => panic!("ops[0] не Raw: {other:?}"),
     }
     let d = emit_diags(&p);
-    assert!(d.iter().any(|x| x.message.contains("raw_payload_not_hex")), "{d:?}");
+    assert!(
+        d.iter().any(|x| x.message.contains("raw_payload_not_hex")),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -1566,7 +1604,10 @@ fn mround2_emit_tail_raw_after_pend_ok() {
     // (ruling 1) — retain-фильтр core-ошибки «program_end must be the last
     // op» обязан оставить программу эмитибельной.
     let p = parse_fanuc("G0 X1. Y1. Z1.;\nM30;\nO100;\nX5.;\n");
-    let text = FanucAdapter::new().emit(&p).expect("tail-subs emit ok").text;
+    let text = FanucAdapter::new()
+        .emit(&p)
+        .expect("tail-subs emit ok")
+        .text;
     assert!(text.contains("M30"), "{text}");
     assert!(text.contains("X5."), "raw-хвост дословно: {text}");
 }
@@ -1574,7 +1615,8 @@ fn mround2_emit_tail_raw_after_pend_ok() {
 #[test]
 fn mround2_writer_dn_normal_component_warning() {
     // normal-компонента центра: warning при |dn| > 0.001; при 0.0005 — нет.
-    let mut p = parse_fanuc("G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n");
+    let mut p =
+        parse_fanuc("G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n");
     for op in &mut p.ops {
         if let Op::Arc { center, .. } = op {
             center.z = num(0.5); // normal-компонента (плоскость XY)
@@ -1583,7 +1625,8 @@ fn mround2_writer_dn_normal_component_warning() {
     let (_, w) = emit_w_prog(&p);
     assert!(w.iter().any(|s| s.contains("не эмитится")), "{w:?}");
     // sub-порог:
-    let mut p = parse_fanuc("G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n");
+    let mut p =
+        parse_fanuc("G21 G90 G94 G17;\nF100.;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0.;\nM30;\n");
     for op in &mut p.ops {
         if let Op::Arc { center, .. } = op {
             center.z = num(0.0005);
@@ -1629,7 +1672,8 @@ fn mround2_writer_tool_jump_warning() {
     }
     let (_, w) = emit_w_prog(&p);
     assert!(
-        w.iter().any(|s| s.contains("state.tool = Some(7)") && s.contains("скачок")),
+        w.iter()
+            .any(|s| s.contains("state.tool = Some(7)") && s.contains("скачок")),
         "{w:?}"
     );
 }
@@ -1641,6 +1685,13 @@ fn mround2_writer_m30_and_stop_lines() {
     let lines: Vec<String> = text.lines().map(String::from).collect();
     assert!(lines.iter().any(|l| l == "M0"), "{text}");
     assert!(lines.iter().any(|l| l == "M1"), "{text}");
-    assert_eq!(lines.last().map(String::as_str), Some("M30"), "M30 последний: {text}");
-    assert!(lines.iter().all(|l| l.as_str() != "M5"), "хвост M5 не эмитится: {text}");
+    assert_eq!(
+        lines.last().map(String::as_str),
+        Some("M30"),
+        "M30 последний: {text}"
+    );
+    assert!(
+        lines.iter().all(|l| l.as_str() != "M5"),
+        "хвост M5 не эмитится: {text}"
+    );
 }

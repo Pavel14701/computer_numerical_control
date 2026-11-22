@@ -76,7 +76,7 @@ pub enum GCode {
     DataCancel, // G11 (IGNORED_SAFE / RAW по семейству G11)
     LocalCs,    // G52 → Err(E_UNSUPPORTED_SEMANTICS) — единственный жёсткий отказ
     MachineCs,  // G53 (разовый ход в machine CS, правило §5.3 SPEC)
-    Preset,     // G92 (пресетка до первого motion-опа; S-слово → RAW)
+    Preset,     // G92 (стартовая пресетка / v0.20 mid-chaining; S-слово → RAW)
 }
 
 /// M-код словаря Fanuc mill (этап 2, §3 отчёта / COVERAGE §3).
@@ -460,10 +460,12 @@ pub fn g_raw_disposition(value: f64) -> Option<(eid_core::diag::ErrorCode, &'sta
         811 => (UX, "G81.1 chopping — vendor option 30i (COVERAGE §2.5)"),
         815 => (UX, "G81.5 EGB — vendor option (COVERAGE §2.5)"),
         818 => (UX, "G81.8 EGB — vendor option (COVERAGE §2.5)"),
-        // G92.1/.2/.3 (Q4) — COVERAGE §2.3
-        921 => (US, "G92.1 WCS-shift reset — Q4 (COVERAGE §2.3)"),
-        922 => (US, "G92.2 WCS-shift suspend — Q4 `?` (COVERAGE §2.3)"),
-        923 => (US, "G92.3 WCS-shift resume — Q4 `?` (COVERAGE §2.3)"),
+        // G92.1/.2/.3 (Q4; v0.20 SEMANTICS→TABLE — зонд 4: G92.1 обнуляет
+        // ВЕСЬ регистр, возврат прежних чтений требует абсолютной машинной
+        // позиции, которой в AST нет) — COVERAGE §2.3
+        921 => (RT, "G92.1 WCS-shift reset — restoring prior readings requires the absolute machine position, absent from AST (probe 4: SET_G92_OFFSET(0..) + return to pre-G92 readings; COVERAGE §2.3)"),
+        922 => (RT, "G92.2 WCS-shift suspend — suspended-register state is machine-side, outside text (probe 4 class; COVERAGE §2.3)"),
+        923 => (RT, "G92.3 WCS-shift resume — resumed register value lives in the machine, outside text (probe 4 class; COVERAGE §2.3)"),
         // G54.1 Pn — вне wcs-enum L1 — COVERAGE §2.3
         541 => (US, "G54.1 Pn extended WCS — outside L1 wcs enum; stage-12 candidate (COVERAGE §2.3)"),
         // Macro B — COVERAGE §4

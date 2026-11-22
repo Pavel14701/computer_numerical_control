@@ -100,7 +100,7 @@ pub enum GCode {
     // L20 → Raw RT НЕ wcs_set_here; L1/L10–L13 → Raw RT)
     LocalCs,   // G52 → Err(E_UNSUPPORTED_SEMANTICS) — 2-й жёсткий отказ
     MachineCs, // G53 (разовый ход в machine CS, правило §5.3 SPEC)
-    Preset,    // G92 (только пресетка; S-слово → Raw SEM — кламп-формы нет)
+    Preset,    // G92 (стартовая пресетка / v0.20 mid-chaining; S-слово → Raw SEM)
     // Группа 15 — path (семейство exact-stop; СДВИГ значения vs LinuxCNC:
     // G61 = exact_stop, G64 = cancel G61 — bare, квантификатора t НЕТ)
     PathExactStop, // G61
@@ -491,6 +491,12 @@ pub fn g_raw_disposition(value: f64) -> Option<(eid_core::diag::ErrorCode, &'sta
         650 => (UX, "G65 macro call — Macro B parametric, line-level Raw (COVERAGE §4)"),
         660 => (UX, "G66 modal macro call — Macro B `?` NGC/CHC support (COVERAGE §4; реестр §10(11))"),
         670 => (UX, "G67 modal macro cancel — Macro B (COVERAGE §4)"),
+        // G92.1/.2/.3 (Q4; v0.20 SEMANTICS→TABLE — зонд 4: G92.1 обнуляет
+        // ВЕСЬ регистр, возврат прежних чтений требует абсолютной машинной
+        // позиции, которой в AST нет) — COVERAGE §2.3
+        921 => (RT, "G92.1 G92-register reset — restoring prior readings requires the absolute machine position, absent from AST (probe 4: SET_G92_OFFSET(0..) + return to pre-G92 readings; Haas clear-on-M30 Setting 129 `?`; COVERAGE §2.3)"),
+        922 => (RT, "G92.2 WCS-shift suspend — suspended-register state is machine-side, outside text (probe 4 class; COVERAGE §2.3)"),
+        923 => (RT, "G92.3 WCS-shift resume — resumed register value lives in the machine, outside text (probe 4 class; COVERAGE §2.3)"),
         _ => return None,
     })
 }
