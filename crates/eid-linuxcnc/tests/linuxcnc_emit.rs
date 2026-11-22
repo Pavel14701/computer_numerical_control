@@ -895,3 +895,137 @@ fn mutation_emit_num_minus_zero_canonicalized() {
     );
     assert!(!text.contains("-0.0000"));
 }
+
+// ===========================================================================
+// Мутационный раунд v0.18 (агент D): прямое покрытие validate_linuxcnc
+// (легальность эмиссии), конечность координат, hex-payload Raw.
+// Ранее отказы эмиссии покрывались только harness-R3 — FnValue-мутанты
+// validate_linuxcnc/code_of/codes/is_legal_kind выживали в крейтовых тестах.
+// ===========================================================================
+
+#[test]
+fn mround_emit_noncanonical_normal_rejected() {
+    // arc_normal_non_canonical: единичная не-осевая нормаль → Err INVALID
+    // (+plane_of axial-проверка в writer-пути).
+    let a = adapter();
+    let mut p = a
+        .parse(
+            &read("07_arc_90/arc_90.linuxcnc.ngc"),
+            "arc.ngc",
+        )
+        .expect("parse ok");
+    for op in &mut p.ops {
+        if let Op::Arc { normal, .. } = op {
+            normal.y = eid_core::ast::Num::new("0.7071".into(), 0.7071);
+            normal.z = eid_core::ast::Num::new("0.7071".into(), 0.7071);
+        }
+    }
+    let Err(d) = a.emit(&p) else {
+        panic!("не-осевая нормаль обязана быть отклонена на эмиссии")
+    };
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn mround_emit_legality_table_composition() {
+    // Таблица легальности LinuxCNC: все 10 видов опов легальны (COVERAGE §5),
+    // коды отказов объявлены и различимы (code_of/codes — единый путь отказа;
+    // FnValue-мутанты code_of→None / codes→vec![] выживали — крейтовых тестов
+    // таблицы не существовало).
+    let t = adapter().emission_legality();
+    for kind in [
+        "rapid",
+        "linear",
+        "arc",
+        "dwell",
+        "tool_change",
+        "program_stop",
+        "program_end",
+        "wcs_define",
+        "wcs_set_here",
+        "raw",
+    ] {
+        assert!(t.is_legal_kind(kind), "{kind} легален для LinuxCNC");
+    }
+    let codes = t.codes();
+    assert!(
+        codes.contains(&ErrorCode::InvalidInput) || !codes.is_empty(),
+        "таблица объявляет коды отказов: {codes:?}"
+    );
+    for cond in [
+        "arc_unknown_start",
+        "arc_normal_non_canonical",
+        "machine_frame_arc",
+        "motion_feed_none",
+        "raw_payload_not_hex",
+        "program_end_missing",
+        "program_end_duplicate",
+        "program_end_not_last",
+    ] {
+        assert!(
+            t.code_of(cond).is_some(),
+            "условие {cond} объявлено в таблице"
+        );
+    }
+    let mut dedup = t.codes();
+    let n = dedup.len();
+    dedup.sort_by_key(|c| c.as_str());
+    dedup.dedup();
+    assert_eq!(dedup.len(), n, "codes() без дубликатов");
+}
+
+#[test]
+fn mround_emit_raw_payload_not_hex_rejected() {
+    // raw_payload_not_hex: нечётный/не-hex payload → Err (grammar D9).
+    let a = adapter();
+    let mut p = a
+        .parse(&read("01_linear_box/linear_box.linuxcnc.ngc"), "t.ngc")
+        .expect("parse ok");
+    p.ops.insert(
+        0,
+        Op::Raw {
+            payload_hex: "XYZ".into(),
+            reason: "test raw".into(),
+            code: ErrorCode::UnsupportedSyntax,
+            src: eid_core::ast::SrcSpan {
+                file: "t.ngc".into(),
+                line_start: 1,
+                col_start: 1,
+                line_end: 1,
+                col_end: 1,
+            },
+        },
+    );
+    let Err(d) = a.emit(&p) else {
+        panic!("не-hex payload обязан быть отклонён")
+    };
+    assert!(
+        d.iter()
+            .any(|x| x.message.contains("raw_payload_not_hex")),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn mround_emit_nonfinite_coord_rejected() {
+    // finite3: NaN/inf координаты — отказ эмиссии (sanity geometry).
+    let a = adapter();
+    let mut p = a
+        .parse(&read("01_linear_box/linear_box.linuxcnc.ngc"), "t.ngc")
+        .expect("parse ok");
+    for op in &mut p.ops {
+        if let Op::Rapid { end, .. } = op {
+            end.x = eid_core::ast::Num::new("NaN".into(), f64::NAN);
+        }
+    }
+    let Err(d) = a.emit(&p) else {
+        panic!("NaN-координата обязана быть отклонена")
+    };
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d:?}"
+    );
+}

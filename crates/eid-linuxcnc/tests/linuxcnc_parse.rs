@@ -2842,3 +2842,104 @@ fn audit19_g53_partial_end_is_runtime_state() {
         "{err:?}"
     );
 }
+
+// ===========================================================================
+// Мутационный раунд v0.17/v0.18 (агент D): preset-cross-WCS связывание,
+// G93 3D-длина, sub-нумерация G83-развёртки (v0.18 пеки).
+// ===========================================================================
+
+#[test]
+fn mround_preset_cross_wcs_with_origins() {
+    // Точка разрыва (b) для пресетки: first move в ЧУЖОЙ WCS с обеими
+    // origin in-text: start = preset + O_preset − O_current
+    // = (5,5,5) + (1,1,1) − (2,2,2) = (4,4,4).
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G92 X5.0000 Y5.0000 Z5.0000\n",
+        "G10 L2 P1 X1.0000 Y1.0000 Z1.0000\n",
+        "G10 L2 P2 X2.0000 Y2.0000 Z2.0000\n",
+        "G55\n",
+        "G1 X10.0000 F100.0\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    assert!(
+        matches!(&p.ops[2], Op::Linear { start: StartPoint::Known(s), .. }
+        if to_f64(s) == [4.0, 4.0, 4.0]),
+        "start = preset + O54 − O55: {:?}", p.ops[2]
+    );
+}
+
+#[test]
+fn mround_g93_linear_feed_len_3d() {
+    // G93: 3D-диагональ от ненулевого старта — len = |(3,4,0)| = 5, F=1 → 5
+    // (прежние G93-тесты были осе-выровнены: мутанты len-формулы выживали).
+    let src = "G21 G90 G93 G17\nG0 X1.0000 Y2.0000 Z3.0000\nG1 X4.0000 Y6.0000 Z3.0000 F1.0\nM2\n";
+    let p = parse_str(src).expect("parses");
+    match &p.ops[1] {
+        Op::Linear { state, .. } => {
+            let f = state.feed.as_ref().unwrap().value;
+            assert!((f - 5.0).abs() < 1e-6, "G93 feed = len·F = 5, got {f}");
+        }
+        other => panic!("op 1 must be Linear, got {other:?}"),
+    }
+}
+
+#[test]
+fn mround_g83_unroll_subs_and_depths() {
+    // G83-развёртка v0.18: sub производных опов — ПЛОТНАЯ последовательность
+    // 1..13; депеки 0/−2/−4/−6, промежуточные подходы d+0.254 (клиренс),
+    // полные отводы на R=2 (+=-мутанты счётчиков и клиренс-арифметика).
+    let src = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../corpus/tier_a/v0/19_peck_G83_retract/peck_G83_retract.linuxcnc.ngc"
+    ));
+    let p = parse_str(src).expect("parses");
+    let mut subs = Vec::new();
+    for op in &p.ops {
+        if let Op::Rapid { sub, .. } | Op::Linear { sub, .. } = op {
+            if let Some(s) = sub {
+                subs.push(*s);
+            }
+        }
+    }
+    assert_eq!(
+        subs,
+        Vec::<u32>::from_iter(1..=13),
+        "sub-нумерация G83: 1 traverse, 2 подход, (3 feed, 4 отвод, 5 подход)×3, 12 feed, 13 финальный отвод: {subs:?}"
+    );
+    // Депеки: концы feed-ходов 0, −2, −4, −6.
+    let feed_ends: Vec<f64> = p
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Linear { end, .. } => Some(to_f64(end)[2]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        feed_ends,
+        [0.0, -2.0, -4.0, -6.0],
+        "глубины депеков по Q=2 от R=2: {feed_ends:?}"
+    );
+}
+
+#[test]
+fn mround_g10_l20_set_here_anchor_links() {
+    // G10 L20 P1 (wcs_set_here) — ПОЗИТИВНОЕ связывание: первый ход получает
+    // start = delta (якорь (a)); l20_of → None-мутант ронял Known-старт.
+    let src = concat!(
+        "G21 G90 G94 G17\n",
+        "G10 L20 P1 X3.0000 Y4.0000 Z0.0000\n",
+        "G0 X5.0000 Y4.0000 Z0.0000\n",
+        "M2\n",
+    );
+    let p = parse_str(src).expect("parses");
+    assert!(matches!(&p.ops[0], Op::WcsSetHere { p: 1, .. }));
+    assert!(
+        matches!(&p.ops[1], Op::Rapid { start: StartPoint::Known(s), .. }
+        if to_f64(s) == [3.0, 4.0, 0.0]),
+        "первый ход после L20: start = delta: {:?}",
+        p.ops[1]
+    );
+}

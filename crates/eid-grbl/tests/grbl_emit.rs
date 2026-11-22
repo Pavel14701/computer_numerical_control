@@ -1091,3 +1091,81 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
     let d = semantic_diff(&prog, &reparsed, &DiffConfig::default());
     assert!(d.is_empty(), "round-trip divergences: {d:?}");
 }
+
+// ===========================================================================
+// Мутационный раунд v0.18 (агент D): free-fn-обёртка emit, отклонение
+// перевёрнутой нормали, F-слово не повторяется при том же feed, дубликат PEND.
+// ===========================================================================
+
+#[test]
+fn mround_grbl_free_fn_emit_wrapper() {
+    // Свободная функция eid_grbl::emit::emit = обёртка emit_with_warnings
+    // (ни один тест её не вызывал — FnValue-мутанты выживали).
+    let a = parse_grbl(&corpus("03_feed_survives_rapid/feed_survives_rapid.grbl.ngc"));
+    let text = eid_grbl::emit::emit(&a).expect("free emit ok");
+    assert!(text.contains("G21"), "{text}");
+    assert!(text.contains("G0") || text.contains("G1"), "{text}");
+}
+
+#[test]
+fn mround_grbl_flipped_normal_rejected() {
+    // plane_of: отрицательная ось (−1,0,0) — не канон (+X/+Y/+Z) → Err
+    // (guard-мутанты `(v−1).abs() < 1e-9 → true` принимали любую (v,0,0)).
+    let mut p = parse_grbl(&corpus("11_arc_R_semicircle/arc_R_semicircle.grbl.ngc"));
+    for op in &mut p.ops {
+        if let Op::Arc { normal, .. } = op {
+            normal.x = eid_core::ast::Num::new("-1".into(), -1.0);
+        }
+    }
+    let Err(d) = GrblAdapter::new().emit(&p) else {
+        panic!("перевёрнутая нормаль обязана быть отклонена")
+    };
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d:?}"
+    );
+    assert!(
+        d.iter().any(|x| x.message.contains("+axis")),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn mround_grbl_feed_word_not_repeated() {
+    // F-правило v0.18: F эмиссится при СМЕНЕ значения или на sub=1; два хода
+    // с тем же feed → F-слово РОВНО одно (`==`-мутант инвертировал условие).
+    let ad = GrblAdapter::new();
+    let p = ad
+        .parse("G21\nG90\nG1 X10. F100.\nG1 X20.\nG1 X30.\nM2\n", "t.ngc")
+        .expect("parse ok");
+    let text = ad.emit(&p).expect("emit ok");
+    let f_count = text.matches("F100").count();
+    assert_eq!(f_count, 1, "F при том же feed не повторяется:\n{text}");
+}
+
+#[test]
+fn mround_grbl_duplicate_program_end_rejected() {
+    // Два PEND → program_end_duplicate на эмиссии (parse свой guard уже
+    // отработал — здесь hand-built AST, defense-in-depth валидатора;
+    // `> with <`-мутант менял условие).
+    let ad = GrblAdapter::new();
+    let mut p = ad
+        .parse("G21\nG1 X10. F100.\nM2\n", "t.ngc")
+        .expect("parse ok");
+    p.ops.push(Op::ProgramEnd {
+        src: eid_core::ast::SrcSpan {
+            file: "t.ngc".into(),
+            line_start: 99,
+            col_start: 1,
+            line_end: 99,
+            col_end: 1,
+        },
+    });
+    let Err(d) = ad.emit(&p) else {
+        panic!("дубликат program_end обязан быть отклонён")
+    };
+    assert!(
+        d.iter().any(|x| x.message.contains("duplicate")),
+        "{d:?}"
+    );
+}

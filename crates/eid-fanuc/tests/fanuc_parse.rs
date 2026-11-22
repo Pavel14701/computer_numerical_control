@@ -1089,7 +1089,7 @@ fn g10_l2_partial_raw_requires() {
     // оси Fanuc сохраняет неизменными — значение из таблицы станка, вне текста
     // (ruling брифа этапа 2a; расхождение с «1:1 LinuxCNC» COVERAGE §2.3 —
     // в отчёт этапа 2).
-    for cmd in ["G10 L2 P2 X9.;", "G10 L2 P2;"] {
+    for cmd in ["G10 L2 P2 X9.;", "G10 L2 P2 X9. Y9.;", "G10 L2 P2;"] {
         let out = canonicalize_with_notices(&format!("{cmd}\nM30;\n"), "t.ngc").expect("ok");
         assert!(
             matches!(
@@ -2726,4 +2726,115 @@ fn mirror_v018_golden_cross_check_19_20_21() {
         let d = semantic_diff(&a, &b, &DiffConfig::default());
         assert!(d.is_empty(), "{dir}: divergences: {d:?}");
     }
+}
+
+// ===========================================================================
+// Мутационный раунд v0.17/v0.18 (агент D): связывание старта с ненулевыми
+// origin (точки разрыва (b)/(d)), частичный G10 L2, G93 3D-длина, zero-arc
+// с end-словами, четверть-дуга (§6-уравнение позиции), sub-нумерация развёртки.
+// ===========================================================================
+
+#[test]
+fn mround_wcs_switch_with_origins_nonzero() {
+    // Точка разрыва (b) с НЕНУЛЕВЫМИ origin: reading = prev + O_prev − O_new
+    // = (10,10,5) + (10,20,30) − (1,2,3) = (19,28,32).
+    let p = parse(
+        "G21 G90 G94 G17;\nG10 L2 P1 X10. Y20. Z30.;\nG10 L2 P2 X1. Y2. Z3.;\nG0 X10. Y10. Z5.;\nG55;\nG0 X1. Y2. Z3.;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(
+        known(&p.ops[3]),
+        [19.0, 28.0, 32.0],
+        "start = prev_end + O54 − O55"
+    );
+}
+
+#[test]
+fn mround_g53_machine_nonzero_origin() {
+    // §5.3 с ненулевым O_wcs: machine-ход из WCS — start = W + O = (20,30,35);
+    // обратный WCS-ход (точка разрыва (d)) — reading = M − O = (−5,−15,−130).
+    let p = parse(
+        "G21 G90 G94 G17;\nG10 L2 P1 X10. Y20. Z30.;\nG0 X10. Y10. Z5.;\nG53 G0 X5. Y5. Z-100.;\nG0 X7. Y7. Z7.;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(known(&p.ops[2]), [20.0, 30.0, 35.0], "M = W + O_wcs");
+    assert_eq!(known(&p.ops[3]), [-5.0, -15.0, -130.0], "reading = M − O_wcs");
+}
+
+#[test]
+fn mround_g92_preset_cross_wcs_with_origins() {
+    // Точка разрыва (b) для пресетки: reading = preset + O_preset − O_current
+    // = (5,5,5) + (1,1,1) − (2,2,2) = (4,4,4).
+    let p = parse(
+        "G21 G90 G94 G17;\nG92 X5. Y5. Z5.;\nG10 L2 P1 X1. Y1. Z1.;\nG10 L2 P2 X2. Y2. Z2.;\nG55;\nG1 X10. F100.;\nM30;\n",
+    )
+    .expect("ok");
+    assert_eq!(
+        known(&p.ops[2]),
+        [4.0, 4.0, 4.0],
+        "start = preset + O54 − O55"
+    );
+}
+
+#[test]
+fn mround_g93_linear_feed_len_3d() {
+    // G93 inverse-time: 3D-диагональ от ненулевого старта — len = |Δ| = 5,
+    // F = 1 → feed = 5 (ранее тесты были осе-выровнены — мутанты len-формулы
+    // выживали).
+    let p = parse("G21 G90 G94 G17;\nG0 X1. Y2. Z3.;\nG93;\nG1 X4. Y6. Z3. F1.;\nM30;\n").expect("ok");
+    assert_eq!(feed_of(&p.ops[1]), Some(5.0));
+}
+
+#[test]
+fn mround_zero_arc_end_words_degenerate_center_dropped() {
+    // SPEC §3 v0.17: явные end-слова + center == start (rho = 0) →
+    // zero-length drop, а НЕ полный круг (различитель от full-circle).
+    let (_p, notices) = notices_of(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG1 X10. Y0. F100.;\nG2 X10. Y0. I0. J0.;\nM30;\n",
+    );
+    assert!(
+        notices.iter().any(|n| n.kind == NoticeKind::ZeroLengthArc),
+        "zero-arc с end-словами обязан быть dropped: {notices:?}"
+    );
+}
+
+#[test]
+fn mround_arc_quarter_ccw_ok() {
+    // Четверть CCW R=10 из (10,0) в (0,10), центр (0,0) — валидная дуга:
+    // §6-уравнение позиции сходится, sweep 90° (ранее тесты дуг были
+    // полуокружностями — sin=0 маскировал мутантов Rodrigues).
+    let p = parse("G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0. F100.;\nM30;\n")
+        .expect("ok");
+    match &p.ops[1] {
+        Op::Arc { center, sweep_deg, .. } => {
+            assert_pt(center, 0.0, 0.0, 0.0);
+            assert!(
+                (sweep_deg.value() - 90.0).abs() <= 1e-6,
+                "sweep {}",
+                sweep_deg.value()
+            );
+        }
+        other => panic!("ops[1] не Arc: {other:?}"),
+    }
+}
+
+#[test]
+fn mround_g83_unroll_subs_sequence() {
+    // Развёртка G83: sub производных опов — последовательность 1,2,3,… без
+    // повторов (F-правило sub=1 в эмиссии опирается на нумерацию).
+    // Начальный Z ВЫШЕ R-плоскости — иначе подход к R zero-length и sub
+    // потребляется на dropped-опе (дыра в нумерации — отдельное наблюдение).
+    let p = parse("G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\nF100.;\nG83 X5. Z-10. Q3. R2.;\nM30;\n")
+        .expect("ok");
+    let mut subs = Vec::new();
+    for op in &p.ops {
+        if let Op::Rapid { sub, .. } | Op::Linear { sub, .. } | Op::Dwell { sub, .. } = op {
+            if let Some(s) = sub {
+                subs.push(*s);
+            }
+        }
+    }
+    assert_eq!(subs, Vec::<u32>::from_iter(1..=subs.len() as u32),
+        "sub-нумерация развёртки — плотная последовательность с 1: {subs:?}");
+    assert!(subs.len() >= 8, "ожидалась многопековая развёртка: {subs:?}");
 }

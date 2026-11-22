@@ -934,3 +934,82 @@ fn set_wcs_of(p: &mut Program, idx: usize, wcs: Wcs) {
         _ => unreachable!(),
     }
 }
+
+// ===========================================================================
+// Мутационный раунд v0.18 (агент D): wcs-словарь G56–G58, plane-строка G18,
+// free-fn-обёртка emit, отклонение не-осевой нормали plane_of.
+// ===========================================================================
+
+#[test]
+fn mround_wcs_word_g56_g57_g58() {
+    // Полный словарь wcs_word G54–G59: G56/G57/G58 эмитятся дословно
+    // (удаление match-армов mолча роняло код в catch-all).
+    for (wcs_word_src, expect) in [
+        ("G56;\n", "G56"),
+        ("G57;\n", "G57"),
+        ("G58;\n", "G58"),
+    ] {
+        let text = emit_fanuc(&format!(
+            "G21 G90 G94 G17;\nG0 X0. Y0. Z5.;\n{wcs_word_src}G0 X1. Y1. Z1.;\nM30;\n"
+        ));
+        assert!(
+            text.lines().any(|l| l == expect),
+            "wcs-строка {expect} потеряна:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn mround_plane_change_line_g18() {
+    // Смена плоскости на G18 — отдельной строкой дословно (golden_plane_change_line
+    // покрывал только G19; arm PlaneZX в plane_word молча падал в catch-all "G17").
+    let text = emit_fanuc(
+        "G21 G90 G94 G17;\nG0 X0. Y0. Z0.;\nG18;\nG0 X0. Y0. Z0.;\nG2 X5. Y2. Z-5. I5. K0. F100.;\nM30;\n",
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    let gi = lines.iter().position(|l| *l == "G18").expect("G18 line");
+    let ai = lines
+        .iter()
+        .position(|l| l.starts_with("G2 "))
+        .expect("arc");
+    assert!(gi < ai, "G18 до дуги: {lines:?}");
+}
+
+#[test]
+fn mround_free_fn_emit_wrapper() {
+    // Свободная функция eid_fanuc::emit::emit = обёртка emit_with_warnings
+    // (текст с заголовком; обёртка не покрывалась ни одним тестом).
+    let p = parse_fanuc("G21 G90 G94 G17;\nG0 X1. Y1. Z1.;\nM30;\n");
+    let text = eid_fanuc::emit::emit(&p).expect("free emit ok");
+    assert!(text.contains("G21 G90 G94"), "{text}");
+    assert!(text.contains("G0"));
+}
+
+#[test]
+fn mround_emit_normal_non_axis_rejected() {
+    // plane_of: не-осевая нормаль (0,1,0.5) — не канон → Err INVALID
+    // (axial-проверка: best≈1 И остальные ≈0 И знак +).
+    let mut p = parse_fanuc(
+        "G21 G90 G94 G17;\nG0 X10. Y0. Z0.;\nG3 X0. Y10. I-10. J0. F100.;\nM30;\n",
+    );
+    for op in &mut p.ops {
+        if let Op::Arc { normal, .. } = op {
+            // единичная, но не осевая — D7-длину проходит, axial-проверку нет
+            *normal = pt(0.0, 0.7071, 0.7071);
+        }
+    }
+    let Err(d) = FanucAdapter::new().emit(&p) else {
+        panic!("не-осевая нормаль обязана быть отклонена")
+    };
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d:?}"
+    );
+    assert!(
+        d.iter().any(|x| {
+            x.message.contains("единичная +ось")
+                || x.message.contains("+axis")
+        }),
+        "{d:?}"
+    );
+}

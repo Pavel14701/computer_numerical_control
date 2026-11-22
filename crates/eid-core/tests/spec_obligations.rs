@@ -1263,4 +1263,221 @@ fn spec_2_linking_tol_uses_eps_pos() {
                 && d.code == ErrorCode::InvalidInput),
         "{ds:?}"
     );
+    // fmt_point в сообщении несёт координаты (FnValue-мутант → "xyzzy"/пусто).
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("start (200000.0000 0.0200 0.0000)")),
+        "{ds:?}"
+    );
+}
+
+// ===========================================================================
+// Мутационный раунд v0.18 (агент D): p-домен на связывании (no-panic),
+// src-атрибуция диагностик, четверть-дуги обоих направлений (§6-уравнение),
+// pitch≠chord·n, пресетка в чужой WCS без origin (expect_start (b)).
+// ===========================================================================
+
+#[test]
+fn mround_p_out_of_domain_linking_no_panic() {
+    // D7: p вне 1..9 → InvalidInput; check_linking обязан НЕ паниковать на
+    // p=10 (guard-мутанты `<` → `<=` выходили за границы массива).
+    let ops = vec![
+        Op::WcsDefine {
+            p: 10,
+            origin: p3(1.0, 2.0, 3.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 1.0, 1.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops));
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d:?}"
+    );
+
+    // WcsSetHere с p=10 — тот же guard в связывании set_here.
+    let ops2 = vec![
+        Op::WcsSetHere {
+            p: 10,
+            delta: p3(1.0, 2.0, 3.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        rapid(
+            StartPoint::Unknown,
+            p3(1.0, 1.0, 1.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d2 = verify::validate(&program(ops2));
+    assert!(
+        d2.iter().any(|x| x.code == ErrorCode::InvalidInput),
+        "{d2:?}"
+    );
+}
+
+#[test]
+fn mround_verify_diag_carries_src() {
+    // Диагностика verify несёт SrcSpan опа (op_src — матч по всем вариантам
+    // Op; FnValue-мутант `→ None` терял привязку к строке).
+    let ops = vec![
+        linear(
+            StartPoint::Unknown,
+            p3(1.0, 1.0, 1.0),
+            st(None, Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops));
+    assert!(!d.is_empty(), "linear без feed — диагностика");
+    assert!(
+        d.iter().all(|x| x.src.is_some()),
+        "все verify-диагностики несут src: {d:?}"
+    );
+    assert!(d.iter().all(|x| x.src.as_ref().unwrap().file == "t"));
+}
+
+#[test]
+fn mround_arc_quarter_clean_both_dirs() {
+    // Валидные четверть-дуги CCW и CW: §6-уравнение позиции сходится
+    // (Rodrigues-мутанты и знак CW давали ошибку на валидном входе;
+    // прежние тесты использовали полуокружности — sin=0 маскировал).
+    let ccw = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(10.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(10.0, 0.0, 0.0)),
+            p3(0.0, 10.0, 0.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ccw));
+    assert!(d.is_empty(), "CCW-четверть валидна: {d:?}");
+
+    let cw = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(10.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(10.0, 0.0, 0.0)),
+            p3(0.0, -10.0, 0.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Cw,
+            90.0,
+            0.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d2 = verify::validate(&program(cw));
+    assert!(d2.is_empty(), "CW-четверть валидна: {d2:?}");
+}
+
+#[test]
+fn mround_arc_pitch_chord_mismatch_rejected() {
+    // §6.2: chord·normal ≠ pitch → InvalidInput (pitch=5 при плоском ходе).
+    let ops = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(10.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(10.0, 0.0, 0.0)),
+            p3(0.0, 10.0, 0.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            5.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops));
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput
+            && x.message.contains("chord·normal")
+            && x.message.contains("SPEC §6.2")),
+        "{d:?}"
+    );
+}
+
+#[test]
+fn mround_preset_cross_wcs_unknown_origin_no_panic() {
+    // expect_start (b) с пресетой в чужой WCS и НЕопределённым origin
+    // пресетки → UnknownRequired (первый ход — Unknown легален);
+    // `&&`→`||`-мутант разворачивал None → паника.
+    let prg = Program {
+        eid_version: "EID/L1 v0.3".into(),
+        units: Units::Mm,
+        path_mode: PathMode::ExactPath,
+        frame_preset: Some(FramePreset {
+            values: p3(5.0, 5.0, 5.0),
+            wcs: Wcs::G54,
+        }),
+        ops: vec![
+            Op::WcsDefine {
+                p: 2,
+                origin: p3(1.0, 1.0, 1.0),
+                state: st(None, Wcs::G55, Frame::Wcs),
+                src: src(),
+            },
+            rapid(
+                StartPoint::Unknown,
+                p3(1.0, 2.0, 3.0),
+                st(Some(100.0), Wcs::G55, Frame::Wcs),
+            ),
+            pend(),
+        ],
+    };
+    let d = verify::validate(&prg);
+    assert!(d.is_empty(), "разрыв (b) без origin — Unknown легален: {d:?}");
+}
+
+#[test]
+fn mround_linking_eps_pos_axis_crosses_zero() {
+    // ε_pos = max(0.001, 1e-7·L), L = диагональ bbox КОНЦОВ хода (EQUIVALENCE
+    // §4). Ось, пересекающая ноль (min<0<max), различает max−min от
+    // max+min: |Δ|=0.011 links при ε≈0.0144, но отвергается мутантом
+    // (ε≈0.002); |Δ|=0.03 отвергается оригиналом.
+    let defined = "OP 001 WCS_DEFINE p=1 origin=0.0000,60000.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 002 WCS_DEFINE p=2 origin=0.0000,-60000.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\n";
+    let ok_text = format!(
+        "{HDR}{defined}OP 003 RAPID start=unknown end=0.0000,60000.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 004 RAPID start=0.0000,60000.0000,0.0000 end=0.0000,-60000.0000,-30000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 005 RAPID start=0.0000,-60000.0000,-30000.0000 end=0.0000,-60000.0000,50000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 006 RAPID start=0.0000,60000.0110,50000.0000 end=0.0000,60001.0000,50000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G55\nOP 007 PEND\nEND\n"
+    );
+    let p = parser::parse(&ok_text, "t")
+        .unwrap_or_else(|ds| panic!("|Δ|=0.011 < eps_pos≈0.0144 must link: {ds:#?}"));
+    assert_eq!(p.ops.len(), 7);
+    let bad_text = format!(
+        "{HDR}{defined}OP 003 RAPID start=unknown end=0.0000,60000.0000,0.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 004 RAPID start=0.0000,60000.0000,0.0000 end=0.0000,-60000.0000,-30000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 005 RAPID start=0.0000,-60000.0000,-30000.0000 end=0.0000,-60000.0000,50000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nOP 006 RAPID start=0.0000,60000.0300,50000.0000 end=0.0000,60001.0000,50000.0000 src=0.1-0.0 feed=none spindle=off coolant=none tool=none frame=wcs wcs=G55\nOP 007 PEND\nEND\n"
+    );
+    let ds = parser::parse(&bad_text, "t").unwrap_err();
+    assert!(
+        ds.iter()
+            .any(|d| d.message.contains("frame-adjusted previous end")
+                && d.code == ErrorCode::InvalidInput),
+        "{ds:?}"
+    );
 }
