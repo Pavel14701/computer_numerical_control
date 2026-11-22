@@ -127,6 +127,25 @@ Counting-аллокатор на 150k-оповой программе опров
 
 Kill-rate изменённых поверхностей **75.8% → 80.5%** (1766 мутантов; core verify.rs 92.8%, grbl emit 92.3%, linuxcnc 75.8%, fanuc 78.4% — приоритет следующего раунда). 29 новых + 3 tightened теста убили 80 мутантов. **Real-gap = 0** — новых багов против SPEC не найдено (v0.18-код чист). ~70 equivalent классифицировано; ~207 missing-test каталогизировано. Наблюдение: fanuc sub-нумерация с дырами после zero-length-drop — кандидат SPEC §11-рулинга. Рекомендация: _tierb_full за cargo-фичу (docker 551с/запуск несовместим с mutation runs).
 
-## 8. Дальше (итерация 8)
+## 8. Итерация 8 — INTERFACE v0.2.0 + референс-верификация реестров — ЗАВЕРШЕНА
 
-Реализация INTERFACE v0.2 по дизайн-доку (5 волн: docs → Arc → AdapterOutput → F-флаг → legality-enum; fanuc/linuxcnc/grbl-эмиттеры мигрируют на typed-enum) · `?`-реестры: 15 Fanuc + 34 Haas + 72 COVERAGE (сверка по конкретным сериям/мануалам; §6.68 grbl-space, §6.70 Haas-L0) · fanuc/haas-эмиссионные профили (M02-vs-M30, G59.x→G54.1/G154-map, R-arc-флаг) · NURBS/Q10 — ревью-очередь пользователя.
+### 8.1 INTERFACE v0.1.2 → v0.2.0 (agent A, волны 1–4, 53a4b79)
+
+Все 4 волны дизайн-дока реализованы, **992/0**, все оракулы зелёные (R1 48/0 · R2 48/0 · R3 83/0+35/0 · R1-text 8/0 · R4 8/0 · **rs274_e2e48 0 red** · goldens байт-целы · eid_version v0.3 не менялся · clippy -D зелёный):
+- **W1 SrcSpan→Arc<str>**: сборка 150k опов −7.9% аллокаций (1.91M→1.76M), kept-pass −10.6% (числа дизайн-дока подтверждены до байта; shared-handle паттерн; anti-паттерн unique-name = 2.06M зафиксирован)
+- **W2 AdapterOutput**: ParseOutput/EmitOutput, `trait Adapter: Send + Sync` (static-canary ×4, Arc<dyn Adapter> в core), RefCell удалён из 5 адаптеров, NoticeKind-супермножество 9 вариантов — «затёртые notices» класс закрыт; **параллельный прогон корпуса/веб-сервис открыты**
+- **W3 State.feed_restated: bool** (88B/0-alloc): F-правило changed∨first_derived∨restated во всех 4 эмиттерах; **дыра e2e48#21 закрыта типом** (restated-F переизлучается; haas-тест обновлён — прежний ассертил lossy)
+- **W4 LegalityCondition typed-enum во всех 4 эмиттерах** (тотальный code(), 0 panic на emit-пути; legality_table_complete)
+- Отклонения от дока — 7 задокументированных решений по реальности (NoticeKind 9 ≠ 7, sub=1-эвристика оставлена fallback по §2.4, волна 4 накрыла fanuc)
+
+### 8.2 Референс-верификация `?`-реестров (agent D, 809ff9c + 535b50b)
+
+**20 `?` снято** с верифицируемыми источниками (полный NGC Mill Manual 2023 ch.4–19 через web-reader, haas.co.uk, gnea/grbl source-check, Zappettini/Smid), **3 атрибуции опровергнуты** (Setting 129 НЕ существует — gap 121–129; G61.1 нет в 30i-словаре; Setting 118 = «M99 Bumps M30 Cntrs»), ~28 сужены. **§6.68 GRBL-space = КОНВЕРГЕНЦИЯ, не баг** (real grbl отбрасывает whitespace на protocol.c-уровне — наш лексер конвергентен). 6 находок против доков применены (M6-Haas применяет offsets автоматически NGC-default; G76-Haas Setting 27 официально). Цитаты/URL/даты — registry_verification_notes.md.
+
+### 8.3 Прочее
+
+README v0.2 (ffa1a11): 5-диалектная статус-таблица, trust-claim верифицирован по всем 8 Cargo.toml. rs274-sim cargo-фича (58b9d7a): docker-тесты вне дефолт-прогона — mutation runs совместимы (551с-зависания устранены).
+
+## 9. Дальше (итерация 9)
+
+fanuc-мутраунд раунд 2 (~207 missing-test каталогизировано; приоритет — самая слабая зона 78.4%) · emission-профили (M02-vs-M30, G59.x→G54.1/G154-map + таблица, R-arc-флаг) · G76-Haas Setting 27 vs I/J — этап-12-кандидат под вопросом · fanuc R-слово в Frame-плане (§6.71) · NURBS/Q10 — ревью-очередь пользователя · параллельный прогон корпуса (демо Send+Sync, R10 дизайн-дока).
