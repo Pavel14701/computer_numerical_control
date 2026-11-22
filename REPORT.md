@@ -9,7 +9,7 @@
 
 Полный транслятор GRBL ↔ EID ↔ LinuxCNC: парсеры обоих диалектов с канонизацией (modal state → resolved-state AST), детерминированные эмиттеры, **развёртывание canned cycles** (G81/G82/G83/G73/G85/G86/G89 по §7.7-шаблону), RAW-механизм двух классов (same-dialect verbatim / кросс-диалект отказ), legality-таблицы (ConversionTarget-паттерн), verify-проход с stage-атрибуцией диагностик, semantic_diff по допускам EQUIVALENCE §4, runner R1–R4, Tier B (121 файл: 61 published MIT / 60 local-dev GPL), CLI (translate/verify, живой режим), профили с axis_limits, **sim real (LinuxCNC 2.9 rs274 в Docker, headless) + sim mock**.
 
-**Числа:** **982 теста passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203t) + Haas-адаптер ПОЛНЫЙ (176t, registered live) + fanuc-live в реестре (17 файлов) + INTERFACE-V0.2-DESIGN · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
+**Числа:** **1110 тестов passed / 0 failed** · 100+ коммитов · SPEC v0.17 (полные круги 360° по зонду, модальная абсорбция §8.6) · аудит 36 пунктов: все обработаны (2 критических бага, 1 опровергнут зондом, 1 ложная тревога) · Fanuc-адаптер ПОЛНЫЙ (203t) + Haas-адаптер ПОЛНЫЙ (176t, registered live) + fanuc-live в реестре (17 файлов) + INTERFACE-V0.2-DESIGN · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **144 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** (#13 live после regen) · CI fmt+clippy gates зелёные.
 
 ## Итерация 5 — слои качества (MLIR/LLVM-триаж, PLAN §5а/§5б)
 
@@ -146,6 +146,24 @@ Kill-rate изменённых поверхностей **75.8% → 80.5%** (176
 
 README v0.2 (ffa1a11): 5-диалектная статус-таблица, trust-claim верифицирован по всем 8 Cargo.toml. rs274-sim cargo-фича (58b9d7a): docker-тесты вне дефолт-прогона — mutation runs совместимы (551с-зависания устранены).
 
-## 9. Дальше (итерация 9)
+## 9. Итерация 9 — мутраунд-2 + emission-профили + parallel corpus + haas-корпус — ЗАВЕРШЕНА
 
-fanuc-мутраунд раунд 2 (~207 missing-test каталогизировано; приоритет — самая слабая зона 78.4%) · emission-профили (M02-vs-M30, G59.x→G54.1/G154-map + таблица, R-arc-флаг) · G76-Haas Setting 27 vs I/J — этап-12-кандидат под вопросом · fanuc R-слово в Frame-плане (§6.71) · NURBS/Q10 — ревью-очередь пользователя · параллельный прогон корпуса (демо Send+Sync, R10 дизайн-дока).
+### 9.1 fanuc-мутраунд раунд 2 (agent D, цель ≥85% превысена)
+
+Kill-rate fanuc **76.4% → 90.3%** (1150 мутантов на v0.2.0-коде), **81 тест mround2_*** (raw-таблица g_raw_disposition целиком, absorb §8.6, пек-последовательности точные Z, sub-нумерация, R-формы, Родригес G18/G19, лимиты «ровно на границе» — 200000 опов конструктивно, validate-arms по текстам сообщений). **Real-gap = 0**. Наблюдения: NaN-swallow resid-проверок дуг системен для всех адаптеров (не баг — невалид отсекается раньше; кандидат EQUIVALENCE-заметка); dead-code takes_p/takes_q — кандидат очистки.
+
+### 9.2 Emission-профили этапа 8 (agent C, 2a365cc)
+
+ M30|M02 (validate отвергает M02 на grbl/linuxcnc — тихое игнорирование запрещено) ·  (таблица соответствия G59.x→G54.1/G154 с валидацией доменов P48/P99, notice-once «таблица подменена», неполная мапа → агрегированный отказ; fanuc map-on reparse=Raw BY DESIGN) ·  (через существующее emit_r_arcs v0.1; full-circle всегда IJK; R-roundtrip ≡ IJK semantic_diff=0). Механика: ProfileEmissionOpts в NamedAdapter-обёртках — **trait v0.2 не тронут**. 32 теста.
+
+### 9.3 R10 — параллельный корпус (agent E, 2f7f778)
+
+Send+Sync применён:  (std::thread::scope + AtomicUsize-очередь, **0 новых deps**). **Parity бит-в-байт** seq↔par(16) на полном Tier B; скорость честно: мелкие ×4.06, большие ×2.10 (Амдал: SmilinJack 3.5MB — критический путь). Arc-SHARED паттерн (Arc::as_ptr identity в 8 потоках).
+
+### 9.4 Документы и корпус
+
+**SPEC v0.18.1** (9db50fa): §11 sub_index-нумерация после drop — дыры = documented semantics (мутраунд-1 наблюдение доведено до рулинга). **COVERAGE v0.9.5** (9b714f2): G76-Haas официальная XOR-механика (codes-G76 detail впервые через Cloudflare; Q→Setting 27 = Fanuc-5101-класс; без Q → I/J в тексте; этап-12-кандидат «всё в тексте» снят), §6.71: R = geometry-ЗНАЧЕНИЕ в G10 L10, код-гэп eid-fanuc локализован (кандидат consumed.extend — этап 12/бриф). **Haas-корпус** (c702501): 13 файлов (1 MIT + 12 NOASSERTION→local; пермиссивного живого Haas-NGC на GitHub нет), **dialect=haas** — 5-й ключ манифеста, живые через HaasAdapter; G31-сирота и H-до-Z закрыты дикими файлами. Корпус: **157 файлов**.
+
+## 10. Дальше (итерация 10)
+
+Dead-code очистка (takes_p/takes_q fanuc) + §6.71 consumed.extend P/L/R (behavior-change Err→Raw — бриф-решение) · NaN-swallow — EQUIVALENCE-заметка · emission-профили для grbl/linuxcnc (если применимо) · NURBS/Q10 — ревью-очередь пользователя · parallel rs274_e2e48? — нет (docker за фичей); intra-file парсинг — за горизонтом.
