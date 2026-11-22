@@ -554,7 +554,7 @@ WCS давали бы неразличимые EID с разной геомет�
 ### v0.9.6 — 2026-11-22 (§6.71 ЗАКРЫТ + emission-гейт)
 
 1. **§6.71 ЗАКРЫТ**: consumed.extend P/L/R применён итерацией 10 (agent C,
-   зеркало eid-haas) — официальный  → Raw{TABLE}
+   зеркало eid-haas) — официальный `G10 L10 G90 P5 R250.` → Raw{TABLE}
    вместо Err «R without consumer»; регресс L2 P1.9 пиннит реальное
    Ok(Raw{SYNTAX}) (брифовское ожидание Err исправлено эмпирикой).
 2. **emission-гейт emit_r_arcs** (agent E, находка D §7): true вне
