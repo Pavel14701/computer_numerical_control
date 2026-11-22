@@ -6,7 +6,7 @@ ERR | published | linuxcnc | gcb_ContourRect_G40.ngc | E_INVALID_INPUT | lexical
 ERR | published | linuxcnc | gcb_ContourRect_G41.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 0ms
-OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 29ms
+OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 27ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 1ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 1ms
 ERR | published | linuxcnc | gcb_contourMillHolesGrid_001.gcode.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
@@ -16,7 +16,7 @@ OK | published | linuxcnc | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | 101 ops 
 OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 6ms
 OK | published | linuxcnc | gcb_pocketRRect_001a.gcode | 13 ops | 0ms
 ERR | published | linuxcnc | gcb_spiral.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-ERR | published | fanuc-подобный | gce_full_industrial_lathe.g | E_INVALID_INPUT | lexical garbage `GOTO` (слово = одна буква + число)
+ERR | published | fanuc-подобный | gce_full_industrial_lathe.g | E_INVALID_INPUT | G53 требует явного G0/G1 в кадре (machine-frame ходы — прямые)
 ERR | published | fanuc-подобный | gce_g71_bareint_testg71.g | E_INVALID_INPUT | lexical garbage `mm` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 OK | published | fanuc-подобный | gce_g74_peck_bareint.g | 7 ops | 0ms
 OK | published | fanuc-подобный | gce_g76_thread_fanuc.g | 10 ops | 0ms
@@ -26,96 +26,96 @@ OK | published | grbl | grbljs_arc-xz-plane.gcode | 3 ops | 0ms
 OK | published | grbl | grbljs_arc-yz-plane.gcode | 3 ops | 0ms
 OK | published | grbl | grbljs_circle-inch.gcode | 11 ops | 0ms
 OK | published | grbl | grbljs_circle.gcode | 8 ops | 0ms
-ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.0000 vs ρ_end 0.2500 (SPEC §6; CORPUS n5a)
+ERR | published | grbl | grbljs_full-circle-without-xyz.gcode | E_INVALID_INPUT | дуга без offset-слов: в дуговом блоке нет ни I/J/K, ни R — GRBL error 2 (ARC_OFFSETS_MISSING: offsets обязательны в каждом дуговом блоке), LinuxCNC: „I/J/K word missing with G2/G3“
 OK | published | grbl | grbljs_g2-arc.gcode | 10 ops | 0ms
 OK | published | grbl | grbljs_helical-thread-milling.gcode | 14 ops | 0ms
-OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 26ms
-OK | published | grbl | grbljs_jsdc.gcode | 2378 ops | 25ms
-ERR | published | grbl | grbljs_sample.gcode | E_UNSUPPORTED_SEMANTICS | G92 after motion: frame_preset only as startup preset (SPEC §5.3; CORPUS n2)
-ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_INVALID_INPUT | lexical error: UnexpectedChar('\u{1}') at col 17
+OK | published | grbl | grbljs_jsdc-laser.gcode | 2367 ops | 28ms
+OK | published | grbl | grbljs_jsdc.gcode | 2378 ops | 28ms
+ERR | published | grbl | grbljs_sample.gcode | E_RUNTIME_STATE | partial end with unknown reading inherits unknown (SPEC §2)
+ERR | published | grbl-подобный | mit_cws_fresa.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
 ERR | published | grbl-подобный | mit_cws_torno.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
 OK | published | grbl-подобный | mit_ddp_buchse.gcode | 43 ops | 0ms
 OK | published | grbl-подобный | mit_ddp_dwell.gcode | 8 ops | 0ms
 ERR | published | grbl-подобный | mit_ddp_eck3.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
-OK | published | grbl-подобный | mit_ddp_ltr.gcode | 15 ops | 0ms
+ERR | published | grbl-подобный | mit_ddp_ltr.gcode | E_RUNTIME_STATE | partial end with unknown reading inherits unknown (SPEC §2)
 ERR | published | grbl-подобный | mit_ddp_m_retract.gcode | E_RUNTIME_STATE | partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)
 OK | published | grbl-подобный | mit_ddp_simple_square.gcode | 12 ops | 0ms
-ERR | published | linuxcnc-универсальный | mit_hilbert_test.ngc | E_INVALID_INPUT | program_end must be the last op (SPEC §3)
+OK | published | linuxcnc-универсальный | mit_hilbert_test.ngc | 4098 ops | 72ms
 ERR | published | grbl-подобный | mit_pycnc_circles.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
 OK | published | grbl-подобный | mit_pycnc_rects.gcode | 29 ops | 0ms
 ERR | published | grbl-подобный | mit_pycnc_test_parser.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
-OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 23ms
+OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 24ms
 ERR | published | grbl-подобный | mit_shpk_ncdrill1.tap | E_INVALID_INPUT | naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)
 OK | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | 80 ops | 1ms
-OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 12ms
+OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 13ms
 OK | published | grbl-подобный | mit_svg2g_square.gcode | 51 ops | 0ms
-ERR | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | E_INVALID_INPUT | duplicate program end: more than one M2/M30 (CORPUS n13)
-OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 46ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 31ms
-ERR | published | haas-подобный | mpe_g65_macro_centerline_probe.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | published | haas-подобный | mpe_g65_macro_deep_drill.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | published | haas-подобный | mpe_g65_macro_material_verify.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | published | haas-подобный | mpe_toolpath_profiling_m1.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | published | haas-подобный | mpe_while_clear_variables.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-OK | published | linuxcnc | olle_bricka_short_wall.tap | 436 ops | 7ms
+OK | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | 3425 ops | 41ms
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 40ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 33ms
+OK | published | haas-подобный | mpe_g65_macro_centerline_probe.nc | 43 ops | 0ms
+OK | published | haas-подобный | mpe_g65_macro_deep_drill.nc | 26 ops | 0ms
+OK | published | haas-подобный | mpe_g65_macro_material_verify.nc | 71 ops | 1ms
+OK | published | haas-подобный | mpe_toolpath_profiling_m1.nc | 20 ops | 0ms
+OK | published | haas-подобный | mpe_while_clear_variables.nc | 6 ops | 0ms
+OK | published | linuxcnc | olle_bricka_short_wall.tap | 436 ops | 6ms
 OK | published | linuxcnc | olle_bricka_slots.tap | 12 ops | 0ms
-OK | published | linuxcnc | olle_ivar_engraving_test.tap | 1847 ops | 23ms
+OK | published | linuxcnc | olle_ivar_engraving_test.tap | 1847 ops | 21ms
 OK | published | linuxcnc | olle_top_cont.tap | 419 ops | 5ms
 OK | published | linuxcnc | olle_top_trace_finish.tap | 188 ops | 2ms
 OK | published | grbl-подобный | vince_BewareOfDog_v10.nc | 1 ops | 0ms
-ERR | published | grbl-подобный | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
-ERR | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | E_INVALID_INPUT | bare T word: no tool change semantics in GRBL (COVERAGE §3)
+ERR | published | grbl-подобный | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | arc radius mismatch: ρ_start 1.4616 vs ρ_end 1.4628 (SPEC §6; CORPUS n5a)
+OK | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | 10842 ops | 113ms
 OK | published | grbl-подобный | vince_BrushRabbitv4.nc | 1 ops | 0ms
-OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 13ms
-OK | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | 118562 ops | 1483ms
+OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 14ms
+ERR | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | E_RUNTIME_STATE | partial end with unknown reading inherits unknown (SPEC §2)
 ERR | published | grbl-подобный | vis_hse1p.tap | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.1291 vs ρ_end 0.1302 (SPEC §6; CORPUS n5a)
-ERR | published | grbl-подобный | vis_knight.tap | E_INVALID_INPUT | program end is not the last block (CORPUS n12)
+OK | published | grbl-подобный | vis_knight.tap | 10652 ops | 99ms
 OK | local-dev | linuxcnc | cncsim_g154_g43_haas_vf2.nc | 47 ops | 0ms
 OK | local-dev | linuxcnc | cncsim_g76_eob_ciclos.nc | 41 ops | 0ms
 ERR | local-dev | linuxcnc | cncsim_g84_g43_placa.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
 ERR | local-dev | linuxcnc | cncsim_m98_m99_duas_morsas.nc | E_RUNTIME_STATE | частичный end наследует неизвестное (точка разрыва фрейма) — E_RUNTIME_STATE (SPEC §2)
-ERR | local-dev | linuxcnc | coyo_tram_b_probe_o09817.nc | E_INVALID_INPUT | word `B` без числа
-ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | coyo_tram_b_probe_o09817.nc | 13 ops | 0ms
+ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change.ngc | E_INVALID_INPUT | M6 без T-слова (ни в кадре, ни предвыбором)
 ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_change_g43.ngc | E_INVALID_INPUT | M6 без T-слова (ни в кадре, ни предвыбором)
-ERR | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc | E_INVALID_INPUT | word `X` без числа
+OK | local-dev | linuxcnc | lcnc_configs_sim_gmoccapy_macros_go_to_position.ngc | 4 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_g331_rigid_tap_docs.ngc | 3 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_g33_threading.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_g33_threading.ngc | 51 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_m61_output_demo.ngc | 7 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_m70_m72_demo.ngc | E_UNSUPPORTED_SEMANTICS | переключение единиц в середине программы — одна система единиц (SPEC §2.5/§3, N7)
-ERR | local-dev | linuxcnc | lcnc_m73_demo.ngc | E_UNSUPPORTED_SEMANTICS | переключение единиц в середине программы — одна система единиц (SPEC §2.5/§3, N7)
-ERR | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_m70_m72_demo.ngc | 12 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_m73_demo.ngc | 16 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | 4693 ops | 89ms
 OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 20ms
+OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 19ms
 OK | local-dev | linuxcnc | lcnc_nc_files_b-index.ngc | 11 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 4ms
 OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_comp.ngc | 54 ops | 0ms
 ERR | local-dev | linuxcnc | lcnc_nc_files_comp311.ngc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
 OK | local-dev | linuxcnc | lcnc_nc_files_comp311_2.ngc | 26 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_cone.ngc | E_INVALID_INPUT | word `Z` без числа
-ERR | local-dev | linuxcnc | lcnc_nc_files_daisy.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_cone.ngc | 28 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_daisy.ngc | 115 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_factorial.ngc | 9 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_flowsnake.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_flowsnake.ngc | 31 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g20sub.ngc | 6 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_g76.ngc | E_UNSUPPORTED_SEMANTICS | переключение единиц в середине программы — одна система единиц (SPEC §2.5/§3, N7)
+OK | local-dev | linuxcnc | lcnc_nc_files_g76.ngc | 62 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g881.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g881min.ngc | 3 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g882.ngc | 4 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_gmoccapy_2_tools_with_cutter_radius_compensation.ngc | 25 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_gridprobe.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_gridprobe.ngc | 28 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_hole-circle.ngc | 3 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_increment.ngc | E_INVALID_INPUT | word `X` без числа
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc1.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc2.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_backlash.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_db25.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_gosper.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_increment.ngc | 4 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc1.ngc | 201 ops | 2ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_arc2.ngc | 31 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_backlash.ngc | 68 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_db25.ngc | 35 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_gosper.ngc | 52 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76base.ngc | 61 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_ngcgui_lib_lathe_g76diam.ngc | 42 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Chitarra__1_3_G5.ngc | 38 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Delfino__1_1_G5.ngc | 76 ops | 1ms
+OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc | 30 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc | 42 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-xy.ngc | 81 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-yz.ngc | 81 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-zx.ngc | 81 ops | 1ms
@@ -127,14 +127,14 @@ OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-xy-yz-zx.ngc | 44 ops
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-xy.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-yz.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-zx.ngc | 15 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc | 56 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc | 50 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc | 50 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_change.ngc | 6 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_on_abort.ngc | 9 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_polar_at_angle.ngc | 12 ops | 0ms
-ERR | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.imperial.center-format.ngc | E_INVALID_INPUT | word `I` без числа
-ERR | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.metric.center-format.ngc | E_INVALID_INPUT | word `I` без числа
+OK | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.imperial.center-format.ngc | 3 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_tests_interp_good_good-arc.big.metric.center-format.ngc | 3 ops | 0ms
 ERR | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_maxvel_xy.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
 ERR | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_arc-feed_arc_time.ngc | E_INVALID_INPUT | P-слово без потребителя в кадре (G4/G10/G64/цикл с dwell)
 OK | local-dev | linuxcnc | lcnc_tests_trajectory-planner_circular-arcs_nc_files_quick-tests_arc-arc-concave-convex.ngc | 9 ops | 0ms
@@ -146,19 +146,17 @@ ERR | local-dev | linuxcnc | ncm_g434_rtcp_5x_milling.nc | E_INVALID_INPUT | г�
 ERR | local-dev | linuxcnc | ncm_g43_g69_3d5x_milling.nc | E_INVALID_INPUT | несоответствие радиусов дуги: |start−center| ≠ |end−center| (SPEC §6.1; N5a)
 ERR | local-dev | linuxcnc | ncm_g87_g88_g121_turn1.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
 ERR | local-dev | linuxcnc | ncm_haas_g76_g15_eob_turn.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
-ERR | local-dev | linuxcnc | rensh_g04p_bare_xyz_o09811.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | rensh_g04p_bare_xyz_o09811.nc | 131 ops | 1ms
 OK | local-dev | linuxcnc | rensh_g04p_dot_warmup_o09220.nc | 9 ops | 0ms
-ERR | local-dev | linuxcnc | rensh_g154p98_tbd_o09006.nc | E_INVALID_INPUT | word `T` без числа
-ERR | local-dev | linuxcnc | rensh_g65_probe_bore_o09351.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | rensh_settings_check_g103p1_o09725.nc | E_UNSUPPORTED_SYNTAX | control flow keyword `IF` — вне грамматики L1 (SPEC §1.1)
+ERR | local-dev | linuxcnc | rensh_g154p98_tbd_o09006.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
+OK | local-dev | linuxcnc | rensh_g65_probe_bore_o09351.nc | 43 ops | 0ms
+OK | local-dev | linuxcnc | rensh_settings_check_g103p1_o09725.nc | 54 ops | 0ms
 ERR | local-dev | linuxcnc | vultr_g152_npt_pipe_example.nc | E_INVALID_INPUT | G53 требует явного G0/G1 в кадре (machine-frame ходы — прямые)
-ERR | local-dev | linuxcnc | vultr_m97_l_macro_o9016.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-ERR | local-dev | linuxcnc | zapcon_g31_tsc_o9613.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
+OK | local-dev | linuxcnc | vultr_m97_l_macro_o9016.nc | 33 ops | 0ms
+OK | local-dev | linuxcnc | zapcon_g31_tsc_o9613.nc | 52 ops | 0ms
 ERR | local-dev | linuxcnc | zapcon_g65_ij_g154p11_endmill_ex.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
 ERR | local-dev | linuxcnc | zapcon_g81_p0_g154p10_drill_ex.nc | E_RUNTIME_STATE | цикл как первый motion-оп — позиция не определена предшествующими ходами (SPEC §7.6)
-ERR | local-dev | linuxcnc | zodiac_toolbreak_m59_g154pvar.nc | E_RUNTIME_STATE | `#`-параметр/переменная — значение зависит от состояния исполнения (SPEC §1.1)
-# SUM: ok=76 err=81
-# ERR-CLASS E_INVALID_INPUT: 40
-# ERR-CLASS E_UNSUPPORTED_SEMANTICS: 4
-# ERR-CLASS E_RUNTIME_STATE: 36
-# ERR-CLASS E_UNSUPPORTED_SYNTAX: 1
+ERR | local-dev | linuxcnc | zodiac_toolbreak_m59_g154pvar.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
+# SUM: ok=116 err=41
+# ERR-CLASS E_INVALID_INPUT: 29
+# ERR-CLASS E_RUNTIME_STATE: 12
