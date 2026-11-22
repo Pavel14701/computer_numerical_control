@@ -551,6 +551,49 @@ WCS давали бы неразличимые EID с разной геомет�
 
 ## COVERAGE
 
+### v0.9.4 — 2026-11-22 (сверка `?`-реестров §6 этапа 3 + 6 находок против доков применены)
+
+Web/source-сверка реестров (Agent D; код не затронут; цитаты/URL/даты —
+`registry_verification_notes.md`). Источники: официальный NGC Mill
+Operator's Manual 2023 (ch.12/13/16/17/18/19 — print-PDF и онлайн-главы),
+haas.co.uk (DPI/offsets), source-check gnea/grbl (protocol.c/gcode.c/
+nuts_bolts.c), Helman/GCodeTutor/Zappettini (medium), PM/CNCZone (weak).
+
+1. **Реестр §6: снято 20 `?`** (поз. 16 K-vs-L, 20 G86-P [ruling v0.18],
+   22 M98-слип, 25 G92.2/.3 [documented absence 30i], 33 G04-dot-rule
+   [dotted=сек официально], 34 dwell-P-циклы, 35 G83-IJK-mill, 36 G73-IJK,
+   37 Setting-22-дефолт, 42 G154↔G110-слоты [«G110 #7 … G129 #26»
+   дословно], 43 G66/G67 [NGC alias-резерв], 44 M46 «Qn Pmm Jump to Line»,
+   45 M199 «…or Program End», 53 Setting-162 [machinists notation при
+   OFF — официальная формулировка], 54 U/W в 162-домене, 55 162-исключения
+   [все lathe], 58 M26 [отсутствует в NGC M-списке], 65 G52 «00 or 12»
+   [дословно], 66 Setting 118 = «M99 Bumps M30 Cntrs» [наша «число
+   циклов» — неверна], 68-GRBL SpaceInWord [source-check]). Опровергнуто
+   3 атрибуции (23: G61.1 нет в 30i; 39/72: Setting 129 нет в NGC
+   settings, gap 121–129); остальные `?` сужены/unresolvable-remote.
+2. **6 находок против реализации/доков применены в ячейках §2–§5**
+   (диспозиции не менялись — только формулировки/источники):
+   - **§3 M6-Haas:** «M6 не применяет TLO» снята для NGC — официально
+     offsets применяются автоматически и обновляются при смене
+     инструмента (ch.8.3; Setting 15 H&T, Alarm 332); TLO-значение —
+     Raw(TABLE) без изменений; restart при T=M-номеру — unresolvable.
+   - **§2.5/§7.16 G76-Haas:** направление сдвига — I/J (forum-weak) ИЛИ
+     официальный Setting 27 «G76 / G77 Shift Dir.» (ch.19) → кандидат
+     этапа 12 «все параметры в тексте» под вопросом; RAW(SEM) не меняется.
+   - **Setting 129 ×5** (§2.3 G92/G92.1/G52, §5.2 program_end/
+     frame_preset): «Setting 129 не существует в NGC mill settings (gap
+     121–129, ch.19); персистентность/очистка после PEND — несверено `?`
+     без номера».
+   - **§2.2 G61.1 Fanuc:** кандидат N/A (documented absence, Helman 30i) —
+     диспозиция до ревью не менялась.
+   - **Синхрон:** §4 SpaceInWord GRBL → «принимается end-to-end»
+     (protocol.c; eid-grbl конвергентен — НЕ баг); §4 Macro-B аргументы
+     A–Z→#1–#33 — 1:1 с Fanuc подтверждено (ch.13.3), `?` снят; §2.5
+     G73-IJK `?` снят (ch.17.4); §2.3 G110/G154 усилены прямыми
+     официальными цитатами (ch.17.1/ch.12.3/ch.13.5).
+3. Шапка: v0.9.4; привязки без изменений (SPEC v0.18, EQUIVALENCE v0.3.1,
+   CORPUS-CONTRACT v0.7.1, grammar v0.4).
+
 ### v0.9.3 — 2026-11-22 (приёмочная партия eid-haas: этапы 1–3 — 176 тестов, registered live)
 
 Документ-ревизия вслед за кодом (477bc9e/73ab099/93b3bda — реализация уже
