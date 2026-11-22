@@ -795,7 +795,7 @@ fn run_r1_text(program: &eid_core::ast::Program, adapter: &dyn Adapter, target: 
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TierBOutcome {
     pub path: String,
     pub dialect: String,
@@ -807,7 +807,10 @@ pub struct TierBOutcome {
 /// ловится catch_unwind и фиксируется как находка, не падение), отказы
 /// по классам кодов, Ok-счётчик. Диалекты без адаптера — no-adapter
 /// (CORPUS: сторонние диалекты вне MVP — marlin-3dp и т.п.).
-#[derive(Debug, Clone, Default)]
+///
+/// PartialEq — паритет-тест параллельного прогона (R10,
+/// [`crate::parallel::run_tier_b_parallel`]) сверяет отчёт бит-в-бит.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TierBReport {
     pub total: usize,
     pub parse_ok: usize,
@@ -823,84 +826,148 @@ impl TierBReport {
     }
 }
 
-/// Прогон Tier B: parse-or-diagnose через адаптер диалекта записи.
+/// Вклад одного Tier B-файла в [`TierBReport`]: строка исхода + счётчики.
+/// Код-путь ОБЩИЙ для последовательного ([`run_tier_b`]) и параллельного
+/// ([`crate::parallel::run_tier_b_parallel`]) прогонов — бит-в-бит паритет
+/// отчётов по построению, не по совпадению.
+#[derive(Debug, Clone)]
+pub(crate) struct TierBFileDelta {
+    entry: TierBOutcome,
+    parse_ok: bool,
+    no_adapter: bool,
+    panic: bool,
+    /// Коды отказов файла (порядок диагностики сохранён).
+    refused_codes: Vec<&'static str>,
+}
+
+/// Разбор одного Tier B-файла (CORPUS §3 parse-or-diagnose): паника ловится
+/// catch_unwind, отказ — по кодам, Ok — счётчиком.
+///
+/// Адаптер берётся из реестра по `&Arc<dyn Adapter>` (без `Arc::clone`,
+/// без конструирования адаптера на вызов) — в параллельном прогоне все
+/// потока зовут `parse(&self)` ОДНОГО объекта (демо `Adapter: Send + Sync`,
+/// interface v0.2 / W2 53a4b79).
+pub(crate) fn run_tier_b_file(
+    file: &crate::manifest::TierBFile,
+    adapters: &Registry,
+    extra: &BTreeMap<String, Arc<dyn Adapter>>,
+) -> TierBFileDelta {
+    let path_str = file.path.display().to_string();
+    let Some(adapter) = adapters
+        .get(&file.dialect)
+        .or_else(|| extra.get(&file.dialect))
+    else {
+        return TierBFileDelta {
+            entry: TierBOutcome {
+                path: path_str,
+                dialect: file.dialect.clone(),
+                outcome: "no-adapter".into(),
+            },
+            parse_ok: false,
+            no_adapter: true,
+            panic: false,
+            refused_codes: Vec::new(),
+        };
+    };
+    let text = match std::fs::read_to_string(&file.path) {
+        Ok(t) => t,
+        Err(e) => {
+            return TierBFileDelta {
+                entry: TierBOutcome {
+                    path: path_str,
+                    dialect: file.dialect.clone(),
+                    outcome: format!("read-error: {e}"),
+                },
+                parse_ok: false,
+                no_adapter: false,
+                panic: false,
+                refused_codes: Vec::new(),
+            };
+        }
+    };
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        adapter.parse(&text, &path_str).map(|out| out.program)
+    }));
+    match run {
+        Err(_) => TierBFileDelta {
+            entry: TierBOutcome {
+                path: path_str,
+                dialect: file.dialect.clone(),
+                outcome: "panic".into(),
+            },
+            parse_ok: false,
+            no_adapter: false,
+            panic: true,
+            refused_codes: Vec::new(),
+        },
+        Ok(Ok(_)) => TierBFileDelta {
+            entry: TierBOutcome {
+                path: path_str,
+                dialect: file.dialect.clone(),
+                outcome: "Ok".into(),
+            },
+            parse_ok: true,
+            no_adapter: false,
+            panic: false,
+            refused_codes: Vec::new(),
+        },
+        Ok(Err(diags)) => TierBFileDelta {
+            entry: TierBOutcome {
+                path: path_str,
+                dialect: file.dialect.clone(),
+                outcome: format!(
+                    "Err({})",
+                    diags
+                        .iter()
+                        .map(|d| d.code.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            },
+            parse_ok: false,
+            no_adapter: false,
+            panic: false,
+            refused_codes: diags.iter().map(|d| d.code.as_str()).collect(),
+        },
+    }
+}
+
+/// Свёртка per-file дельт в [`TierBReport`] (порядок дельт = порядок entries;
+/// оба прогона передают дельты в manifest-порядке — отчёты бит-в-бит равны).
+pub(crate) fn fold_tier_b(deltas: Vec<TierBFileDelta>) -> TierBReport {
+    let mut rep = TierBReport::default();
+    for d in deltas {
+        rep.total += 1;
+        if d.parse_ok {
+            rep.parse_ok += 1;
+        }
+        if d.no_adapter {
+            rep.no_adapter += 1;
+        }
+        if d.panic {
+            rep.panics += 1;
+        }
+        for c in &d.refused_codes {
+            *rep.refused_by_code.entry((*c).to_string()).or_insert(0) += 1;
+        }
+        rep.entries.push(d.entry);
+    }
+    rep
+}
+
+/// Прогон Tier B: parse-or-diagnose через адаптер диалекта записи
+/// (последовательный — gold standard для паритет-теста R10).
 pub fn run_tier_b(
     manifest: &Manifest,
     adapters: &Registry,
     extra: &BTreeMap<String, Arc<dyn Adapter>>,
 ) -> TierBReport {
-    let pick = |dialect: &str| -> Option<Arc<dyn Adapter>> {
-        adapters
-            .get(dialect)
-            .cloned()
-            .or_else(|| extra.get(dialect).cloned())
-    };
-    let mut rep = TierBReport::default();
-    for f in &manifest.tier_b_files {
-        rep.total += 1;
-        let path_str = f.path.display().to_string();
-        let Some(adapter) = pick(&f.dialect) else {
-            rep.no_adapter += 1;
-            rep.entries.push(TierBOutcome {
-                path: path_str,
-                dialect: f.dialect.clone(),
-                outcome: "no-adapter".into(),
-            });
-            continue;
-        };
-        let text = match std::fs::read_to_string(&f.path) {
-            Ok(t) => t,
-            Err(e) => {
-                rep.entries.push(TierBOutcome {
-                    path: path_str.clone(),
-                    dialect: f.dialect.clone(),
-                    outcome: format!("read-error: {e}"),
-                });
-                continue;
-            }
-        };
-        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            adapter.parse(&text, &path_str).map(|out| out.program)
-        }));
-        match run {
-            Err(_) => {
-                rep.panics += 1;
-                rep.entries.push(TierBOutcome {
-                    path: path_str.clone(),
-                    dialect: f.dialect.clone(),
-                    outcome: "panic".into(),
-                });
-            }
-            Ok(Ok(_)) => {
-                rep.parse_ok += 1;
-                rep.entries.push(TierBOutcome {
-                    path: path_str,
-                    dialect: f.dialect.clone(),
-                    outcome: "Ok".into(),
-                });
-            }
-            Ok(Err(diags)) => {
-                for d in &diags {
-                    *rep.refused_by_code
-                        .entry(d.code.as_str().to_string())
-                        .or_insert(0) += 1;
-                }
-                rep.entries.push(TierBOutcome {
-                    path: path_str,
-                    dialect: f.dialect.clone(),
-                    outcome: format!(
-                        "Err({})",
-                        diags
-                            .iter()
-                            .map(|d| d.code.as_str())
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    ),
-                });
-            }
-        }
-    }
-    rep
+    let deltas: Vec<TierBFileDelta> = manifest
+        .tier_b_files
+        .iter()
+        .map(|f| run_tier_b_file(f, adapters, extra))
+        .collect();
+    fold_tier_b(deltas)
 }
 
 impl Vector {
