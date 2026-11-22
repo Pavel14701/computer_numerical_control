@@ -667,15 +667,25 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
             .unwrap_or_else(|| panic!("no {id}"))
     };
     // notice: true — #43 (zero-length drop), N11 (M98 → line-level Raw,
-    // ревизия v0.16), N14 (auto-PEND, ревизия v0.16; #13 снят: диспозиция
-    // drop → 360°-дуга, SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
+    // ревизия v0.16), N14 (auto-PEND, ревизия v0.16), N2/N12/N13/N17
+    // (ревизия v0.20: G92-mid/PEND-хвост/дубль-M2/множественные G92 —
+    // зонд-сверка rs274+grbl-source; #13 снят: диспозиция drop → 360°-дуга,
+    // SPEC §6 v0.17 / аудит #15, CORPUS v0.6.7)
     assert_eq!(
         m.vectors
             .iter()
             .filter(|v| v.notice)
             .map(|v| v.id.clone())
             .collect::<Vec<_>>(),
-        vec!["43".to_string(), "N11".to_string(), "N14".to_string()]
+        vec![
+            "43".to_string(),
+            "N2".to_string(),
+            "N11".to_string(),
+            "N12".to_string(),
+            "N13".to_string(),
+            "N14".to_string(),
+            "N17".to_string()
+        ]
     );
     // r4_expect непустой: #27 (grbl E_UNSUPPORTED_SYNTAX) и #47 (обе цели E_RAW_UNTRANSLATABLE)
     let v27 = v("27");
@@ -714,13 +724,12 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
         assert!(matches!(f.expect, Outcome::Ok), "N14 auto-PEND Ok");
         assert!(f.expected_diags.is_empty(), "N14: notice — не E-код");
     }
-    // Класс-списки CORPUS §1.2 (ревизия v0.6.7): Err = {N1,N2,N4,N5a,N5b,N6,
-    // N7,N12,N13,N15,N16,N17,N19}; line-level = {N3,N8,N9,N10,N11,N14,N18}
-    // (N11/N14 переехали по SPEC v0.16).
-    let err_class = [
-        "N1", "N2", "N4", "N5a", "N5b", "N6", "N7", "N12", "N13", "N15", "N16", "N17", "N19",
-    ];
-    let line_class = ["N3", "N8", "N9", "N10", "N11", "N18"];
+    // Класс-списки CORPUS §1.2 (ревизия v0.7.2): Err = {N1,N4,N5a,N5b,N6,
+    // N7,N15,N16,N19}; line-level = {N3,N8,N9,N10,N11,N12,N13,N17,N18}
+    // (N11/N14 по SPEC v0.16; N2/N12/N13/N17 по SPEC v0.20 — зонд-сверка
+    // rs274+grbl-source; N14 — отдельный Ok+notice-класс без E-диаг).
+    let err_class = ["N1", "N4", "N5a", "N5b", "N6", "N7", "N15", "N16", "N19"];
+    let line_class = ["N3", "N8", "N9", "N10", "N11", "N12", "N13", "N17", "N18"];
     for id in err_class {
         let vv = v(id);
         for f in &vv.files {

@@ -852,16 +852,18 @@ id = "N2"
 name = "mid_G92"
 tier = "A"
 kind = "negative"
-note = "G92 в середине после ходов — пресетка только до первого motion-опа (SPEC §3, Q4/Q5)"
-notice = false
+note = "G92 в середине после ходов — РЕВИЗИЯ v0.20 (зонд-сверка rs274+grbl-source, решение ревью «исправь недоразумение»): G92-mid = line-level Raw{SEM}-носитель + chaining (зонд 1: shift применяется к последующим координатам); пресетка-заголовок осталась только для стартовой позиции"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n2_mid_G92/mid_G92.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 [[vectors.files]]
 path = "tier_a/v0/n2_mid_G92/mid_G92.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 
 [[vectors]]
 id = "N3"
@@ -972,13 +974,13 @@ id = "N9"
 name = "bare_T_linuxcnc"
 tier = "A"
 kind = "negative"
-note = "T5 без M6 — предвыбор инструмента вне L1 (COVERAGE §3, SPEC §4); GRBL-вариант — другой класс (E_INVALID_INPUT), не в этом векторе"
+note = "T5 без M6 — РЕВИЗИЯ v0.20 (зонд 6: rs274 делает lookup в момент T, отсутствующий номер = жёсткая ошибка с обрывом потока): Raw{E_REQUIRES_MACHINE_TABLE} — машинная зависимость; GRBL-вариант = другой класс (ABSORB selected_tool по gcode.c:936 «only tracks»)"
 notice = false
 [[vectors.files]]
 path = "tier_a/v0/n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc"
 dialect = "linuxcnc"
 expect = "ok"
-expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
+expected_diags = ["E_REQUIRES_MACHINE_TABLE"]
 
 [[vectors]]
 id = "N10"
@@ -1011,32 +1013,36 @@ id = "N12"
 name = "program_end_not_last"
 tier = "A"
 kind = "negative"
-note = "M2 в середине, после него ходы — инвариант «ровно один раз и последний» (SPEC §3)"
-notice = false
+note = "M2 в середине — РЕВИЗИЯ v0.20 (зонд 5: rs274 молча игнорирует хвост, exit 0; grbl-стрим ИСПОЛНЯЕТ — protocol.c:74-105; конструкция диалект-расходится): хвост после PEND → line-level Raw{SEM} + notice диалект-расхождения; инвариант «ровно один PEND-оп» остался в core-валидаторе (после PEND только Raw)"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n12_program_end_not_last/program_end_not_last.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_INVALID_INPUT"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 [[vectors.files]]
 path = "tier_a/v0/n12_program_end_not_last/program_end_not_last.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_INVALID_INPUT"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 
 [[vectors]]
 id = "N13"
 name = "program_end_duplicate"
 tier = "A"
 kind = "negative"
-note = "два M2 — program_end ровно один раз (SPEC §3)"
-notice = false
+note = "два M2 — РЕВИЗИЯ v0.20 (механическое следствие N12): второй M2 = блок после PEND → Raw-хвост (grbl-стрим исполняет); в core-валидаторе hand-built AST с двумя PEND-опами по-прежнему отказывает (после PEND только Raw)"
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n13_program_end_duplicate/program_end_duplicate.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_INVALID_INPUT"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 [[vectors.files]]
 path = "tier_a/v0/n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_INVALID_INPUT"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 
 [[vectors]]
 id = "N14"
@@ -1091,16 +1097,18 @@ id = "N17"
 name = "multiple_preset_at_start"
 tier = "A"
 kind = "negative"
-note = "два G92 подряд до ходов — множественные пресетки (Q5, класс зафиксирован SPEC v0.7)"
-notice = false
+note = "два G92 подряд до ходов — РЕВИЗИЯ v0.20 (Q5 ЗАКРЫТ: зонд 2 — replace-по-пересчёту от текущей машины, НЕ аккумуляция; первая G92 в стартовой зоне = заголовок, вторая = оп-носитель Raw{SEM}) "
+notice = true
 [[vectors.files]]
 path = "tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.grbl.ngc"
 dialect = "grbl-1.1"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 [[vectors.files]]
 path = "tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc"
 dialect = "linuxcnc"
-expect = "E_UNSUPPORTED_SEMANTICS"
+expect = "ok"
+expected_diags = ["E_UNSUPPORTED_SEMANTICS"]
 
 [[vectors]]
 id = "N18"
