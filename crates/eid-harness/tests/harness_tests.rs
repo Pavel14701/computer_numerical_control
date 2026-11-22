@@ -1523,7 +1523,7 @@ fn tier_b_loader_parses_real_corpus() {
     // а каждый ключ — из известного набора (канонические grbl-1.1/linuxcnc;
     // сторонние no-adapter: marlin-3dp, fanuc до регистрации eid-fanuc).
     // Ловит опечатки и незарегистрированные диалекты без захардкоженных количеств.
-    const KNOWN_DIALECTS: [&str; 4] = ["grbl-1.1", "linuxcnc", "marlin-3dp", "fanuc"];
+    const KNOWN_DIALECTS: [&str; 5] = ["grbl-1.1", "linuxcnc", "marlin-3dp", "fanuc", "haas"];
     let canonical = m
         .tier_b_files
         .iter()

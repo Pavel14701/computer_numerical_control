@@ -31,6 +31,12 @@ fn dialect_of(fname: &str) -> (&'static str, bool) {
     } else if fname.starts_with("gcb_") || fname.starts_with("olle_") {
         // gcb: CAM-пост с G64+M6; olle: G91.1 + `;`-комментарии
         ("linuxcnc", false)
+    } else if fname.starts_with("rensh_") || fname.starts_with("zapcon_") || fname.starts_with("vultr_")
+        || fname.starts_with("coyo_") || fname.starts_with("zodiac_") || fname.starts_with("mpe_")
+    {
+        // haas-цель (haas-добор, PROVENANCE б.6): парсим linuxcnc-адаптером;
+        // live haas-адаптер — в full_registry (E-регистрация)
+        ("haas-подобный", false)
     } else if fname.starts_with("gce_")
         || fname.starts_with("mpe_")
         || fname.starts_with("cncsim_")

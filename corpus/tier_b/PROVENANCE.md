@@ -385,6 +385,38 @@ G43.4-RTCP, G12.1/G13.1, G15-lathe, M70/M72/M73/M61, Fanuc-ловушки
 
 ---
 
+## Источник 6 (итерация 9, haas-добор): 13 файлов, 6 под-источников (1 MIT + 12 NOASSERTION)
+
+Дата: 2026-11-22. Сборщик: агент сбора; license-ревью и приёмка — оркестратор
+(GitHub API независимо: cnc4me 200/MIT; zodiaceng/olafgromotka 404 — NOASSERTION
+подтверждён). **Пермиссивного живого Haas-NGC на GitHub нет** (~15 repo-поисков:
+авторские бэкапы без лицензии; CC0-репо отбракован как LLM-псевдо-G-code).
+Полный отчёт: `_haas_collection.md`.
+
+Цель — конструкции eid-haas: P-dot-rule (dot ×6 / bare ×18), Macro B #500–#699
+(#598 ×66 хитов, THEN, bit-addressing), **G31-сирота итерации 8 закрыта**
+(7 вызовов), **H-до-Z порядок найден** (`G43 H33 Z2.`, ранее «не найден»),
+G154-негативные границы (P10/P11/P98 → Raw вне p-домена), M59/M96-семейство,
+ловушки (`G103P1` без пробела, unclosed-paren, Q-шум в G81).
+
+Приёмка: **1 MIT → inbox** (mpe_); **12 NOASSERTION → local** (gitignored,
+CORPUS §7). manifest: **dialect = "haas"** — KNOWN_DIALECTS harness-теста
+расширен (4→5); live через HaasAdapter в full_registry. Сироты: G83-I/J/K и
+G73-mill в диком виде не найдены (только tutorials ©/Cloudflare).
+
+### cnc4me/macro-programming-examples — MIT (1 файл) → inbox
+
+- URL: https://github.com/cnc4me/macro-programming-examples
+- Диалект: haas (Macro B #540/#598, toolpath profiling).
+
+### NOASSERTION (12 файлов) → local (license unclear — local only)
+
+zodiaceng/haas-mill-programs (1), ZapCon1/HaasMacros (3), vulture2600/NPT-Macro (2),
+coyoinu/HaasBAxisTram (1), olafgromotka/HAAS-NGC-Renishaw-9000-programs (5,
+вендорский Renishaw-контент — минимальный достаток).
+
+---
+
 ## Сводка
 
 - **Контуры (ruling CORPUS v0.6.4):** published (inbox) = **69 файлов**
