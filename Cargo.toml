@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/eid-core",
+    "crates/eid-l2",
     "crates/eid-grbl",
     "crates/eid-linuxcnc",
     "crates/eid-fanuc",

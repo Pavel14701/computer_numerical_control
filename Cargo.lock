@@ -69,6 +69,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "eid-l2"
+version = "0.1.0"
+dependencies = [
+ "eid-core",
+]
+
+[[package]]
 name = "eid-linuxcnc"
 version = "0.1.0"
 dependencies = [

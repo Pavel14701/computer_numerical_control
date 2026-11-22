@@ -1,0 +1,12 @@
+[package]
+name = "eid-l2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eid-core = { path = "../eid-core" }
+
+[features]
+# Фаза 12.3: SMT-кодирование семантики #0 (Val → (is_null: Bool, num: Real)).
+# Заготовка — кода за фичей пока НЕТ (этап 12.1, агент A).
+smt = []
