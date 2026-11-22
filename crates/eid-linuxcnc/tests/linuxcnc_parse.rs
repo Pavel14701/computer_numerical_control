@@ -294,12 +294,51 @@ fn n1_g53_no_origins_err_runtime_state() {
 }
 
 #[test]
-fn n2_mid_g92_err_semantics() {
-    assert_err_code(
+fn n2_mid_g92_ok_frame_preset_op() {
+    // SPEC §5.3 v0.20 (зонды 1–3): mid-program G92 = оп frame_preset — Err N2
+    // снят. Носитель узла в замороженном интерфейсе v0.2.0 — line-level Raw
+    // (байты lossless same-dialect); чейнинг: rebase чтений от текущей
+    // позиции. Вектор: G0 (0,0,5) → G1 X10 → G92 X0 Y0 Z0 → M2.
+    let p = assert_ok_diag(
         "n2_mid_G92/mid_G92.linuxcnc.ngc",
         ErrorCode::UnsupportedSemantics,
         "N2",
     );
+    assert!(p.frame_preset.is_none(), "стартовой пресетки нет — G92 mid");
+    assert_eq!(p.ops.len(), 4); // Rapid + Linear + Raw(G92) + PEND
+    assert!(
+        matches!(&p.ops[0], Op::Rapid { start: StartPoint::Unknown, end, .. }
+            if to_f64(end) == [0.0, 0.0, 5.0]),
+        "op 0 = Rapid unknown→(0,0,5): {:?}",
+        p.ops[0]
+    );
+    assert!(
+        matches!(&p.ops[1], Op::Linear { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 0.0, 5.0] && to_f64(end) == [10.0, 0.0, 5.0]),
+        "op 1 = Linear (0,0,5)→(10,0,5) — до G92 чейнинг обычный: {:?}",
+        p.ops[1]
+    );
+    match &p.ops[2] {
+        Op::Raw {
+            payload_hex,
+            code,
+            reason,
+            ..
+        } => {
+            // "G92 X0.0000 Y0.0000 Z0.0000" + LF — D9
+            assert_eq!(
+                payload_hex,
+                "4739322058302E303030302059302E30303030205A302E303030300A"
+            );
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(
+                reason.starts_with("G92 mid-program"),
+                "маркер Raw-носителя frame_preset: {reason}"
+            );
+        }
+        other => panic!("op 2 must be Raw (носитель frame_preset), got {other:?}"),
+    }
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
 }
 
 #[test]
@@ -330,20 +369,71 @@ fn n7_unit_switch_mid_err_semantics() {
 }
 
 #[test]
-fn n12_program_end_not_last_err_invalid_input() {
-    assert_err_code(
+fn n12_program_end_not_last_raw_tail_ok() {
+    // SPEC §5.2 v0.20 (зонд 5): блоки после M2/M30 — Raw-хвост + диагностика
+    // диалект-расхождения; Err «program end is not the last block» (N12)
+    // снят: rs274 молча игнорирует хвост (exit 0), grbl-стрим исполняет.
+    // Вектор: G0 (0,0,5) / M2 / G0 X10 Y10 Z5 / M2 → [Rapid, PEND, Raw, Raw].
+    let p = assert_ok_diag(
         "n12_program_end_not_last/program_end_not_last.linuxcnc.ngc",
-        ErrorCode::InvalidInput,
+        ErrorCode::UnsupportedSemantics,
         "N12",
+    );
+    assert_eq!(
+        p.ops.len(),
+        4,
+        "[Rapid, PEND, Raw(G0-хвост), Raw(M2-хвост)]"
+    );
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
+    match &p.ops[2] {
+        Op::Raw {
+            payload_hex,
+            code,
+            reason,
+            ..
+        } => {
+            // "G0 X10.0000 Y10.0000 Z5.0000" + LF — D9
+            assert_eq!(
+                payload_hex,
+                "4730205831302E30303030205931302E30303030205A352E303030300A"
+            );
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(
+                reason.contains("dialect-divergent"),
+                "диалект-расхождение в reason: {reason}"
+            );
+        }
+        other => panic!("op 2 must be Raw-хвост, got {other:?}"),
+    }
+    assert!(
+        matches!(&p.ops[3], Op::Raw { .. }),
+        "второй M2 после PEND — тоже хвост (не второй PEND): {:?}",
+        p.ops[3]
     );
 }
 
 #[test]
-fn n13_program_end_duplicate_err_invalid_input() {
-    assert_err_code(
+fn n13_program_end_duplicate_tail_ok() {
+    // SPEC §5.2 v0.20 (зонд 5): второй M2 — БЛОК ПОСЛЕ program_end →
+    // Raw-хвост (rs274 его никогда не парсит), duplicate-PEND Err (N13)
+    // недостижим из канонизатора. Дубликат PEND в AST (EID-text путь,
+    // не из этого парсера) по-прежнему Err (emit-таблица program_end_duplicate).
+    let p = assert_ok_diag(
         "n13_program_end_duplicate/program_end_duplicate.linuxcnc.ngc",
-        ErrorCode::InvalidInput,
+        ErrorCode::UnsupportedSemantics,
         "N13",
+    );
+    let pend_count = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::ProgramEnd { .. }))
+        .count();
+    assert_eq!(pend_count, 1, "ровно один PEND-оп; второй M2 — Raw-хвост");
+    assert!(
+        matches!(p.ops.last(), Some(Op::Raw { .. })),
+        "хвост последним: {:?}",
+        p.ops.last()
     );
 }
 
@@ -391,12 +481,41 @@ fn n16_g53_after_preset_err_runtime_state() {
 }
 
 #[test]
-fn n17_multiple_preset_err_semantics() {
-    assert_err_code(
+fn n17_multiple_preset_ok_q5_closed() {
+    // SPEC §5.3 v0.20 / Q5 ЗАКРЫТ: несколько G92 легальны — стартовая =
+    // заголовок Program.frame_preset (back-compat goldens), последующие =
+    // опы (Raw-носитель в интерфейсе v0.2.0). Вектор: G92 (0,0,5) — заголовок;
+    // G92 (10,0,5) — оп; M2. Motion-опов нет → чейнинг не задействован.
+    let p = assert_ok_diag(
         "n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc",
         ErrorCode::UnsupportedSemantics,
         "N17",
     );
+    let fp = p
+        .frame_preset
+        .as_ref()
+        .expect("стартовая пресетка в заголовке");
+    assert_eq!(to_f64(&fp.values), [0.0, 0.0, 5.0]);
+    assert_eq!(fp.wcs, eid_core::ast::Wcs::G54);
+    assert_eq!(p.ops.len(), 2); // Raw(G92 #2) + PEND
+    match &p.ops[0] {
+        Op::Raw {
+            payload_hex,
+            code,
+            reason,
+            ..
+        } => {
+            // "G92 X10.0000 Y0.0000 Z5.0000" + LF — D9
+            assert_eq!(
+                payload_hex,
+                "473932205831302E303030302059302E30303030205A352E303030300A"
+            );
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.starts_with("G92 mid-program"), "{reason}");
+        }
+        other => panic!("op 0 must be Raw (носитель frame_preset), got {other:?}"),
+    }
+    assert!(matches!(&p.ops[1], Op::ProgramEnd { .. }));
 }
 
 #[test]
@@ -458,11 +577,13 @@ fn n8_tapping_g84_ok_with_semantics() {
 }
 
 #[test]
-fn n9_bare_t_ok_with_semantics() {
-    // Одиночное T — предвыбор, line-level RAW (COVERAGE §3; N9, Ok-класс).
+fn n9_bare_t_ok_with_requires_machine_table() {
+    // SPEC §5.2 v0.20 (зонд 6): rs274 выполняет tool-table lookup в момент T —
+    // отсутствующий номер = жёсткая ошибка с обрывом; машинная зависимость →
+    // Raw{E_REQUIRES_MACHINE_TABLE} (бывший SEMANTICS сменён, N9, Ok-класс).
     let p = assert_ok_diag(
         "n9_bare_T_linuxcnc/bare_T_linuxcnc.linuxcnc.ngc",
-        ErrorCode::UnsupportedSemantics,
+        ErrorCode::RequiresMachineTable,
         "N9",
     );
     match &p.ops[0] {
@@ -470,7 +591,7 @@ fn n9_bare_t_ok_with_semantics() {
             payload_hex, code, ..
         } => {
             assert_eq!(payload_hex, "54350A"); // "T5" + LF — D9 v0.15
-            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
         }
         other => panic!("op 0 must be Raw, got {other:?}"),
     }
@@ -745,12 +866,18 @@ fn q10_o_subprogram_no_inlining_pin() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let out = a.parse(src, "osub.ngc").expect("O-файл: Ok (line-level Raw)");
+    let out = a
+        .parse(src, "osub.ngc")
+        .expect("O-файл: Ok (line-level Raw)");
     let p = out.program;
     // 5 строк O/M98 (4 O + 1 M98) → 5 Raw; тело — 2 Linear РОВНО ОДИН РАЗ;
     // + PEND = 8. (Инлайнинг дал бы 2 Linear × 2 call = +4 хода.)
     assert_eq!(p.ops.len(), 8, "нет декомпозиции: {:?}", p.ops);
-    let raws: Vec<&Op> = p.ops.iter().filter(|o| matches!(o, Op::Raw { .. })).collect();
+    let raws: Vec<&Op> = p
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Raw { .. }))
+        .collect();
     let linears = p
         .ops
         .iter()
@@ -760,7 +887,9 @@ fn q10_o_subprogram_no_inlining_pin() {
     assert_eq!(linears, 2, "тело sub НЕ инлайнится (2 × call → +0 ходов)");
     for o in &raws {
         match o {
-            Op::Raw { code, payload_hex, .. } => {
+            Op::Raw {
+                code, payload_hex, ..
+            } => {
                 assert_eq!(code, &ErrorCode::UnsupportedSyntax);
                 assert!(
                     payload_hex.starts_with("6F313030") || payload_hex.starts_with("4D3938"),
@@ -781,7 +910,11 @@ fn q10_o_subprogram_no_inlining_pin() {
         .parse(&text, "osub2.ngc")
         .expect("reparse")
         .program;
-    assert_eq!(p2.ops.len(), p.ops.len(), "emit→reparse: число опов стабильно");
+    assert_eq!(
+        p2.ops.len(),
+        p.ops.len(),
+        "emit→reparse: число опов стабильно"
+    );
 }
 
 #[test]
@@ -796,7 +929,9 @@ fn unit_while_err_syntax() {
 
 #[test]
 fn unit_bare_t_then_m6_uses_selection() {
-    // T5 без M6 → Raw (diag) + предвыбор сохраняется; M6 без T → ToolChange 5.
+    // SPEC §5.2 v0.20 (зонд 6b): T с существующим номером → SELECT_TOOL-absorb;
+    // AST-уровень наличия в tool.tbl не знает → Raw{TABLE} для обоих случаев,
+    // предвыбор сохраняется; M6 без T → ToolChange 5.
     let src = "G21 G90 G94\nT5\nM6\nG0 X1.0000 Y1.0000 Z1.0000\nM2\n";
     let adapter = LinuxCncAdapter::new();
     let out = adapter.parse(src, "unit.ngc").expect("Ok");
@@ -804,7 +939,7 @@ fn unit_bare_t_then_m6_uses_selection() {
     assert!(matches!(&p.ops[0], Op::Raw { .. }));
     assert!(matches!(&p.ops[1], Op::ToolChange { tool: 5, .. }));
     let codes: Vec<_> = out.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&ErrorCode::UnsupportedSemantics));
+    assert!(codes.contains(&ErrorCode::RequiresMachineTable));
 }
 
 #[test]
@@ -1836,7 +1971,9 @@ fn spec_cov_lcnc_nurbs_continuation_points_raw_semantics() {
     {
         let op = k + 1; // ops[0] — якорный Rapid
         match &p.ops[op] {
-            Op::Raw { code, payload_hex, .. } => {
+            Op::Raw {
+                code, payload_hex, ..
+            } => {
                 assert_eq!(*code, ErrorCode::UnsupportedSemantics, "строка `{label}`");
                 assert!(
                     payload_hex.starts_with(expect_prefix),
@@ -1889,26 +2026,44 @@ fn spec_cov_lcnc_nurbs_g5_g51_open_lines_raw_and_mode_clear() {
     // Rapid(якорь) + Raw(G5) + Raw(X2 Y2) + Linear + Linear + PEND.
     assert_eq!(p.ops.len(), 6, "{:?}", p.ops);
     let g5_hex = match &p.ops[1] {
-        Op::Raw { code, payload_hex, .. } => {
-            assert_eq!(code, &ErrorCode::UnsupportedSemantics, "G5-строка → Raw SEM");
+        Op::Raw {
+            code, payload_hex, ..
+        } => {
+            assert_eq!(
+                code,
+                &ErrorCode::UnsupportedSemantics,
+                "G5-строка → Raw SEM"
+            );
             payload_hex.as_str()
         }
         other => panic!("op 1 должен быть Raw (G5): {other:?}"),
     };
     assert!(g5_hex.starts_with("473520"), "payload `G5 …`: {g5_hex}");
     let cont_hex = match &p.ops[2] {
-        Op::Raw { code, payload_hex, .. } => {
+        Op::Raw {
+            code, payload_hex, ..
+        } => {
             assert_eq!(
-                code, &ErrorCode::UnsupportedSemantics,
+                code,
+                &ErrorCode::UnsupportedSemantics,
                 "продолжение X2 Y2 → Raw SEM"
             );
             payload_hex.as_str()
         }
         other => panic!("op 2 должен быть Raw (продолжение): {other:?}"),
     };
-    assert!(cont_hex.starts_with("58322059"), "payload `X2 Y2`: {cont_hex}");
-    assert!(matches!(&p.ops[3], Op::Linear { .. }), "G1 разрывает сплайн");
-    assert!(matches!(&p.ops[4], Op::Linear { .. }), "bare X/Y — модальный G1");
+    assert!(
+        cont_hex.starts_with("58322059"),
+        "payload `X2 Y2`: {cont_hex}"
+    );
+    assert!(
+        matches!(&p.ops[3], Op::Linear { .. }),
+        "G1 разрывает сплайн"
+    );
+    assert!(
+        matches!(&p.ops[4], Op::Linear { .. }),
+        "bare X/Y — модальный G1"
+    );
 
     // G5.1 — квадратичная форма.
     let src51 = "G21 G90 G94\nG0 X0.0000 Y0.0000\nF100\nG5.1 X0 Y1\nX2 Y2\nM2\n";
@@ -1916,8 +2071,20 @@ fn spec_cov_lcnc_nurbs_g5_g51_open_lines_raw_and_mode_clear() {
         .parse(src51, "g51.ngc")
         .expect("G5.1: Ok + Raw")
         .program;
-    assert!(matches!(&p51.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
-    assert!(matches!(&p51.ops[2], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(
+        &p51.ops[1],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &p51.ops[2],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -1935,12 +2102,33 @@ fn spec_cov_lcnc_nurbs_q_word_absorbed_in_raw_line() {
         "M2\n",
     );
     let a = LinuxCncAdapter::new();
-    let p = a.parse(src, "nurbs_q.ngc").expect("Q в G5.x-строках — Raw").program;
+    let p = a
+        .parse(src, "nurbs_q.ngc")
+        .expect("Q в G5.x-строках — Raw")
+        .program;
     // Rapid + 3 Raw (G5.2/Q / продолжение с Q / G5.3) + PEND.
     assert_eq!(p.ops.len(), 5, "{:?}", p.ops);
-    assert!(matches!(&p.ops[1], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
-    assert!(matches!(&p.ops[2], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
-    assert!(matches!(&p.ops[3], Op::Raw { code: ErrorCode::UnsupportedSemantics, .. }));
+    assert!(matches!(
+        &p.ops[1],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &p.ops[2],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
+    assert!(matches!(
+        &p.ops[3],
+        Op::Raw {
+            code: ErrorCode::UnsupportedSemantics,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -1954,7 +2142,10 @@ fn spec_cov_lcnc_p_word_without_consumer_still_err() {
     // Легальные P (G4/G10/G64/цикл-dwell) покрыты векторами выше/other tests.
     let a = LinuxCncAdapter::new();
     for (src, ctx) in [
-        ("G21 G90\nG0 X1.0000 Y1.0000\nP5\nM2\n", "P в случайном кадре"),
+        (
+            "G21 G90\nG0 X1.0000 Y1.0000\nP5\nM2\n",
+            "P в случайном кадре",
+        ),
         (
             "G21 G90\nG0 X1.0000 Y1.0000\nG5.2 P1 L2\nX0 Y1 P1\nG5.3\nP9\nM2\n",
             "P после G5.3",
@@ -1981,7 +2172,10 @@ fn spec_cov_lcnc_p_word_without_consumer_still_err() {
     // режима: bare X/Y после обычного G0 — это ход, не Raw (фикс не расширяет
     // диспозицию на файлы без G5.x).
     let p = a
-        .parse("G21 G90\nG0 X1.0000 Y1.0000\nX2.0000 Y2.0000\nM2\n", "plain.ngc")
+        .parse(
+            "G21 G90\nG0 X1.0000 Y1.0000\nX2.0000 Y2.0000\nM2\n",
+            "plain.ngc",
+        )
         .expect("без G5.x bare-координаты — ходы, как раньше")
         .program;
     assert_eq!(p.ops.len(), 3); // Rapid + Rapid + PEND, Raw нет
@@ -2019,7 +2213,13 @@ fn spec_cov_lcnc_nurbs_tierb_corpus_files_ok_raw() {
             .ops
             .iter()
             .filter(|o| {
-                matches!(o, Op::Raw { code: ErrorCode::UnsupportedSemantics, .. })
+                matches!(
+                    o,
+                    Op::Raw {
+                        code: ErrorCode::UnsupportedSemantics,
+                        ..
+                    }
+                )
             })
             .count();
         assert!(raw_sem > 0, "{name}: ожидались Raw{{SEM}}-опы");
@@ -2066,9 +2266,15 @@ fn spec_cov_lcnc_nurbs_same_dialect_verbatim_roundtrip() {
     let p = a.parse(src, "rt.ngc").expect("Ok").program;
     let text = a.emit(&p).expect("emit").text;
     for needle in ["G5.2 P1 L3\n", "X0 Y1 P1\n", "G5.3\n"] {
-        assert!(text.contains(needle), "verbatim потерян: {needle:?} в {text:?}");
+        assert!(
+            text.contains(needle),
+            "verbatim потерян: {needle:?} в {text:?}"
+        );
     }
-    let p2 = LinuxCncAdapter::new().parse(&text, "rt2.ngc").expect("reparse").program;
+    let p2 = LinuxCncAdapter::new()
+        .parse(&text, "rt2.ngc")
+        .expect("reparse")
+        .program;
     let raws1: Vec<_> = p
         .ops
         .iter()
@@ -3347,5 +3553,355 @@ fn mround_g10_l20_set_here_anchor_links() {
         if to_f64(s) == [3.0, 4.0, 0.0]),
         "первый ход после L20: start = delta: {:?}",
         p.ops[1]
+    );
+}
+
+// ===========================================================================
+// SPEC v0.20 (зонд-сверка rs274, коммит c76ed9a): G92-mid = оп frame_preset
+// (зонды 1–3, 7, 8), G92.1/.2/.3 → Raw{TABLE} (зонд 4), tail после PEND →
+// Raw + диалект-расхождение (зонд 5), bare-T → Raw{TABLE} (зонд 6).
+// ===========================================================================
+
+/// Owning-результат parse (диагностики + notices) для unit-исходников.
+fn parse_out(src: &str) -> eid_core::adapter::ParseOutput {
+    LinuxCncAdapter::new()
+        .parse(src, "v020.ngc")
+        .expect("parses Ok")
+}
+
+#[test]
+fn v020_probe1_g92_mid_chaining() {
+    // Зонд 1: `G0 X10 Y10 / G92 X0 Y0 / G1 X5` — start следующего хода =
+    // (0,0) (присвоенные оси), end (5,0); оп-носитель — Raw (маркер
+    // "G92 mid-program"); Ok-файл (Err N2 снят).
+    let out = parse_out("%\nG0 X10. Y10. F100\nG92 X0. Y0.\nG1 X5.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4); // Rapid + Raw + Linear + PEND
+    assert!(
+        matches!(&p.ops[0], Op::Rapid { start: StartPoint::Unknown, end, .. }
+            if to_f64(end) == [10.0, 10.0, 0.0]),
+        "{:?}",
+        p.ops[0]
+    );
+    assert!(
+        matches!(&p.ops[1], Op::Raw { reason, code: ErrorCode::UnsupportedSemantics, .. }
+            if reason.starts_with("G92 mid-program")),
+        "{:?}",
+        p.ops[1]
+    );
+    assert!(
+        matches!(&p.ops[2], Op::Linear { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 0.0, 0.0] && to_f64(end) == [5.0, 0.0, 0.0]),
+        "чейнинг: start следующего хода = новое чтение (зонд 1): {:?}",
+        p.ops[2]
+    );
+    assert!(matches!(&p.ops[3], Op::ProgramEnd { .. }));
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.message.contains("G92 mid-program")),
+        "диагностика Ok-пути с маркером: {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn v020_probe3_g92_per_axis() {
+    // Зонд 3: неуказанные оси — чтение не меняется: G0 X10 Y10 / G92 X0 /
+    // G0 X5 Y5 → start (0,10,0) (Y переносится), end (5,5,0).
+    let out = parse_out("%\nG0 X10. Y10.\nG92 X0.\nG0 X5. Y5.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4); // Rapid + Raw + Rapid + PEND
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 10.0, 0.0] && to_f64(end) == [5.0, 5.0, 0.0]),
+        "per-axis: X присвоен 0, Y — прежнее чтение 10 (зонд 3): {:?}",
+        p.ops[2]
+    );
+}
+
+#[test]
+fn v020_probe8_g92_wcs_switch_unknown_start() {
+    // Зонд 8: регистр G92 глобален поверх WCS; после G92 смена G54→G55 →
+    // start следующего хода = unknown (rs274 пересчитывает от машины,
+    // машины в AST нет — честный unknown). Ход G0 X5 — end (5,0,0) в G55.
+    let out = parse_out("%\nG54 G0 X10.\nG92 X0.\nG55\nG0 X5. Y0. Z0.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4); // Rapid + Raw + Rapid(G55) + PEND
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { start: StartPoint::Unknown, end, state, .. }
+            if to_f64(end) == [5.0, 0.0, 0.0] && state.wcs == eid_core::ast::Wcs::G55),
+        "WCS-переключение после G92 → unknown-start (зонд 8); частичный end в
+         неизвестной позиции — E_RUNTIME_STATE (SPEC §2 v0.11), ход — полный:
+         {:?}",
+        p.ops[2]
+    );
+}
+
+#[test]
+fn v020_probe8b_g92_wcs_switch_with_origins_formula_holds() {
+    // Δ (регистр G92) сокращается в разности чтений — формула (b)
+    // reading_new = end + O_prev − O_new точна и после mid-G92:
+    // rebase (0,0,0), O54=(1,1,1), O55=(2,2,2) → start (−1,−1,−1)
+    // (совпадает с core-verify — подавление НЕ требуется).
+    let out = parse_out(
+        "%\nG54 G0 X10.\nG92 X0.\nG10 L2 P1 X1. Y1. Z1.\nG10 L2 P2 X2. Y2. Z2.\nG55\nG0 X5.\n%\n",
+    );
+    let p = out.program;
+    assert!(
+        matches!(&p.ops[4], Op::Rapid { start: StartPoint::Known(s), .. }
+            if to_f64(s) == [-1.0, -1.0, -1.0]),
+        "формула (b) с in-text origins точна после mid-G92: {:?}",
+        p.ops[4]
+    );
+}
+
+#[test]
+fn v020_probe2_g92_twice_replace_from_current_reading() {
+    // Зонд 2: повторная G92 — replace по пересчёту от текущего чтения (не
+    // аккумуляция): после G0 X5 чтение (5,10,0), G92 X0 → (0,10,0) — НЕ (−10).
+    let out = parse_out("%\nG0 X10. Y10.\nG92 X0.\nG0 X5.\nG92 X0.\nG0 X5.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 6); // Rapid + Raw + Rapid + Raw + Rapid + PEND
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 10.0, 0.0] && to_f64(end) == [5.0, 10.0, 0.0]),
+        "{:?}",
+        p.ops[2]
+    );
+    assert!(
+        matches!(&p.ops[4], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 10.0, 0.0] && to_f64(end) == [5.0, 10.0, 0.0]),
+        "вторая G92: replace от текущего чтения (зонд 2: 15 = 10+5, не 10+10): {:?}",
+        p.ops[4]
+    );
+}
+
+#[test]
+fn v020_probe7_g92_after_g53_reads_machine() {
+    // Зонд 7/7b: G92 после machine-хода — rebase от машинного чтения:
+    // G53 G0 X0 (машина 0, origin (0,0,0) in-text) / G92 X5 → чтение 5;
+    // G0 X7 → start (5,0,0), end (7,0,0). Команда X5 дала бы машину 0 (7b).
+    let out =
+        parse_out("%\nG10 L2 P1 X0. Y0. Z0.\nG53 G0 X0. Y0. Z0.\nG92 X5.\nG0 X7. Y0. Z0.\n%\n");
+    let p = out.program;
+    assert!(
+        matches!(&p.ops[1], Op::Rapid { start: StartPoint::Unknown, end, state, .. }
+            if to_f64(end) == [0.0, 0.0, 0.0] && state.frame == eid_core::ast::Frame::Machine),
+        "{:?}",
+        p.ops[1]
+    );
+    assert!(
+        matches!(&p.ops[3], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [5.0, 0.0, 0.0] && to_f64(end) == [7.0, 0.0, 0.0]),
+        "rebase от машинного чтения (зонд 7: value = машина − programmed): {:?}",
+        p.ops[3]
+    );
+}
+
+#[test]
+fn v020_probe7_corner_unknown_unspecified_axes() {
+    // Corner зонда 7: неуказанные оси после machine-истории БЕЗ in-text
+    // origin (G55 не define'd) — чтение не вычислимо → Raw{E_RUNTIME_STATE}
+    // (честный unknown), следующий ход: start Unknown, полный end.
+    let out = parse_out(
+        "%\nG10 L2 P1 X1. Y2. Z3.\nG53 G0 X0. Y0. Z0.\nG55\nG92 X5.\nG0 X1. Y1. Z1.\n%\n",
+    );
+    let p = out.program;
+    assert_eq!(p.ops.len(), 5); // WcsDefine + Rapid(machine) + Raw + Rapid + PEND
+    match &p.ops[2] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RuntimeState);
+            assert!(reason.starts_with("G92 mid-program"), "{reason}");
+        }
+        other => panic!("op 2 must be Raw (corner), got {other:?}"),
+    }
+    assert!(
+        matches!(&p.ops[3], Op::Rapid { start: StartPoint::Unknown, end, .. }
+            if to_f64(end) == [1.0, 1.0, 1.0]),
+        "полный end при corner-unknown старте (SPEC §2 v0.11): {:?}",
+        p.ops[3]
+    );
+    assert!(
+        out.diagnostics
+            .iter()
+            .any(|d| d.code == ErrorCode::RuntimeState),
+        "{:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn v020_g92_mid_machine_frame_still_err_n16() {
+    // Machine-frame правило §5.3(a) — без изменений: mid-program G92 тоже
+    // ломает известность машинных координат → N16.
+    let err = LinuxCncAdapter::new()
+        .parse("%\nG0 X10.\nG92 X0.\nG53 G0 X0.\n%\n", "v020.ngc")
+        .expect_err("G53 после mid-G92 — E_RUNTIME_STATE");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::RuntimeState),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn v020_g92_1_cancel_requires_machine_table() {
+    // Зонд 4 (Q4 частично): G92.1 = reset всего регистра — возврат чтений
+    // требует абсолютной машинной позиции → Raw{E_REQUIRES_MACHINE_TABLE}
+    // (код сменён с SEMANTICS). Отменяющая семантика к чейнингу НЕ
+    // применяется (регистр в AST не хранится) — следующий ход цепляется
+    // от текущего чтения.
+    let out = parse_out("%\nG0 X10. Y10. F100\nG92 X0.\nG92.1\nG1 X5.\n%\n");
+    let p = out.program;
+    match &p.ops[2] {
+        Op::Raw { code, reason, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable);
+            assert!(reason.contains("зонд 4"), "{reason}");
+        }
+        other => panic!("op 2 must be Raw, got {other:?}"),
+    }
+    assert!(
+        matches!(&p.ops[3], Op::Linear { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 10.0, 0.0] && to_f64(end) == [5.0, 10.0, 0.0]),
+        "чейнинг от текущего чтения (G92.1 регистр AST не меняет): {:?}",
+        p.ops[3]
+    );
+}
+
+#[test]
+fn v020_probe5_tail_raw_and_state_not_absorbed() {
+    // Зонд 5: хвост после M2 — Raw-опы; состояние хвост-строками НЕ
+    // абсорбируется (rs274 их никогда не парсит): M3 S500 в хвосте не даёт
+    // spindle-оп; % после M2 — без опа.
+    let out = parse_out("%\nG0 X10.\nM2\nM3 S500\nG0 X20.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4, "[Rapid, PEND, Raw(M3), Raw(G0 X20)]");
+    assert!(matches!(&p.ops[0], Op::Rapid { .. }));
+    assert!(
+        matches!(&p.ops[1], Op::ProgramEnd { .. }),
+        "PEND, не forced-last"
+    );
+    // Хвост — только Raw-опы (состояние не абсорбируется, ходов нет).
+    assert!(
+        p.ops[2..].iter().all(|o| matches!(o, Op::Raw { .. })),
+        "хвост не даёт motion/процесс-опов: {:?}",
+        &p.ops[2..]
+    );
+    match &p.ops[2] {
+        Op::Raw {
+            reason,
+            code,
+            payload_hex,
+            ..
+        } => {
+            assert_eq!(*code, ErrorCode::UnsupportedSemantics);
+            assert!(reason.contains("dialect-divergent"), "{reason}");
+            assert!(
+                reason.contains("rs274-file") && reason.contains("grbl-stream"),
+                "{reason}"
+            );
+            assert_eq!(*payload_hex, hex_of("M3 S500\n"), "payload lossless (D9)");
+        }
+        other => panic!("op 2 must be Raw-хвост, got {other:?}"),
+    }
+    match &p.ops[3] {
+        Op::Raw { payload_hex, .. } => {
+            assert_eq!(*payload_hex, hex_of("G0 X20.\n"), "payload lossless (D9)");
+        }
+        other => panic!("op 3 must be Raw-хвост, got {other:?}"),
+    }
+}
+
+/// hex-payload строки с LF (D9) — для lossless-проверок.
+fn hex_of(s: &str) -> String {
+    s.as_bytes().iter().map(|b| format!("{b:02X}")).collect()
+}
+
+#[test]
+fn v020_g92_mid_zero_length_after_rebase_dropped() {
+    // Ребейз может дать zero-length ход (G92 X0 Y0 / G1 X0) — drop+notice
+    // (SPEC §3), файл Ok; «вооружение» подавления снимается на следующем
+    // выжившем опе (маркер-механизм по AST).
+    let out = parse_out("%\nG0 X10. Y10.\nG92 X0. Y0.\nG1 X0. F100\n%\n");
+    let p = out.program;
+    assert!(
+        p.ops.iter().all(|o| !matches!(o, Op::Linear { .. })),
+        "zero-length Linear дропнут: {:?}",
+        p.ops
+    );
+    assert!(
+        out.notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::ZeroLengthMotion),
+        "{:?}",
+        out.notices
+    );
+}
+
+#[test]
+fn v020_g92_mid_cycle_chain() {
+    // Цикл после mid-G92: traverse развёртки цепляется от ребейзнутого
+    // чтения (0,10,0).
+    let out = parse_out("%\nG0 X10. Y10.\nG92 X0.\nG81 X1. Y1. Z-2. R1. F50\n%\n");
+    let p = out.program;
+    match &p.ops[2] {
+        Op::Rapid {
+            start: StartPoint::Known(s),
+            end,
+            sub: Some(1),
+            ..
+        } => {
+            assert_eq!(to_f64(s), [0.0, 10.0, 0.0], "rebase в развёртку");
+            assert_eq!(to_f64(end), [1.0, 1.0, 0.0]);
+        }
+        other => panic!("op 2 = derived traverse (sub=1), got {other:?}"),
+    }
+}
+
+#[test]
+fn v020_g92_mid_on_raw_line_with_other_reason() {
+    // `G28 G92 X0` — строка уходит в Raw{TABLE} (G28), но G92 в блоке
+    // исполняется (rs274) → rebase применён, маркер дописан в reason
+    // (суффикс), подавление start-проверки сработало → файл Ok.
+    let out = parse_out("%\nG0 X10. Y10.\nG28 G92 X0.\nG0 X5. Y5. Z5.\n%\n");
+    let p = out.program;
+    assert_eq!(p.ops.len(), 4); // Rapid + Raw + Rapid + PEND
+    match &p.ops[1] {
+        Op::Raw { reason, code, .. } => {
+            assert_eq!(*code, ErrorCode::RequiresMachineTable, "G28 — основание");
+            assert!(
+                reason.contains("G92 mid-program"),
+                "маркер-суффикс в reason: {reason}"
+            );
+        }
+        other => panic!("op 1 must be Raw, got {other:?}"),
+    }
+    assert!(
+        matches!(&p.ops[2], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [0.0, 10.0, 0.0] && to_f64(end) == [5.0, 5.0, 5.0]),
+        "rebase применён и на строке с другим raw-основанием: {:?}",
+        p.ops[2]
+    );
+}
+
+#[test]
+fn v020_negative_regress_p_word_and_l2_p19() {
+    // Пин негативов v0.20: NURBS-фикс (spline_active) не маскирует
+    // «P-слово без потребителя»; G10 L2 P1.9 — Err (as-cast-гейт).
+    let a = LinuxCncAdapter::new();
+    let err = a
+        .parse("G21 G90\nG0 X1. Y1.\nP5\nM2\n", "r.ngc")
+        .expect_err("P без G5.x-контекста — Err");
+    assert!(
+        err[0].message.contains("P-слово без потребителя"),
+        "{}",
+        err[0].message
+    );
+    let err = a
+        .parse("G21 G90\nG10 L2 P1.9 X1. Y1. Z1.\nM2\n", "r.ngc")
+        .expect_err("G10 L2 P1.9 — Err");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
     );
 }

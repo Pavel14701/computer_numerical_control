@@ -1,9 +1,12 @@
 //! eid-linuxcnc — канонизатор и эмиттер LinuxCNC (Агент D, IMPLEMENTATION-PLAN §2-D).
 //! Интерфейс заморожен. quirks: G90.1/G91.1 ABSORB; O-code/M98/M99 → SYNTAX;
 //! `#`-параметры → RUNTIME_STATE, if/while → SYNTAX (SPEC §1.1 v0.3);
-//! G10 L2 vs L20 — разные узлы; G92 mid-program → отказ; G93 → разрешение
-//! в G94-feed на уровне опа; G5.x — scope decision RAW; M62–M73 → SEMANTICS;
-//! G76 — токарная резьба, отказ (§1.2).
+//! G10 L2 vs L20 — разные узлы; mid-program G92 → Raw-носитель узла
+//! frame_preset + чейнинг-ребейз чтений (SPEC §5.3 v0.20, зонды 1–3/7/8);
+//! G92.1–.3 → Raw{TABLE} (зонд 4); одиночное T → Raw{TABLE} (зонд 6);
+//! хвост после M2/M30 → Raw + диалект-расхождение (SPEC §5.2 v0.20, зонд 5);
+//! G93 → разрешение в G94-feed на уровне опа; G5.x — scope decision RAW;
+//! M62–M73 → SEMANTICS; G76 — токарная резьба, отказ (§1.2).
 //!
 //! Итерация 2 (Агент D): parse реализован (lexer.rs → parser.rs →
 //! canonicalize.rs). Итерация 3: emit v0 (emit.rs; COVERAGE §5, EQUIVALENCE

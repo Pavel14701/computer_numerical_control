@@ -43,9 +43,11 @@
 //! порождающего кода (несвязные снапшоты eid-text AST — парсер EID не
 //! проверяет непрерывность состояния между опами).
 //!
-//! Валидация: перед эмиссией — `eid_core::parser::validate` (каноническая
+//! Валидация: перед эмиссией — `eid_core::verify::validate` (каноническая
 //! форма §3: zero-length отсутствуют, feed на linear/arc, PEND ровно один
-//! раз и последний, геометрия §6, связывание Q11) — отказ пробрасывается
+//! раз и последний — с v0.20 Raw-хвост после PEND отсекается до валидации
+//! и добавляется дословно в конец вывода, геометрия §6, связывание Q11 c
+//! подавлением mid-G92-ребейза) — отказ пробрасывается
 //! как Err(Vec<Diagnostic>).
 
 use crate::canonicalize::{plane_def, to_f64, Plane};
@@ -304,8 +306,46 @@ fn validate_linuxcnc(table: &EmissionLegality, program: &Program) -> Vec<Diagnos
 /// эмиссии (COVERAGE §5, через таблицу) или неосевой normal дуги; warnings
 /// возвращаются отдельно.
 pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
+    // v0.20 (зонд 5, SPEC §5.2): Raw-хвост после PEND легален (диалект-
+    // расхождение rs274-file/grbl-stream). Замороженный core-validate требует
+    // «PEND последний» (D6) → хвост (по построению парсера — только Raw)
+    // отсекается: каноническая форма и легальность проверяются по телу
+    // (shadow), байты хвоста дословно добавляются в конец вывода (same-dialect
+    // fidelity D9). Не-Raw оп после PEND (невозможен из канонизатора;
+    // защита EID-text AST) — без отсечки: validate/таблица отклоняют
+    // (program_end_not_last).
+    let split = program
+        .ops
+        .iter()
+        .position(|o| matches!(o, Op::ProgramEnd { .. }))
+        .filter(|&i| {
+            program.ops[i + 1..]
+                .iter()
+                .all(|o| matches!(o, Op::Raw { .. }))
+        })
+        .map(|i| i + 1);
+    let (body_ops, tail_ops): (&[Op], &[Op]) = match split {
+        Some(i) => (&program.ops[..i], &program.ops[i..]),
+        None => (&program.ops[..], &[]),
+    };
+    let shadow;
+    let validate_target: &Program = if tail_ops.is_empty() {
+        program
+    } else {
+        shadow = Program {
+            ops: body_ops.to_vec(),
+            ..program.clone()
+        };
+        &shadow
+    };
     // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST).
-    parser::validate(program)?;
+    // v0.20: start-проверки для опов после mid-G92-ребейза подавляются (тот
+    // же маркер-механизм, что в parse-finish; зонды 1–3/8).
+    let vdiags = eid_core::verify::validate(validate_target);
+    let vdiags = crate::parser::strip_mid_g92_start_diags(vdiags, &validate_target.ops);
+    if !vdiags.is_empty() {
+        return Err(vdiags);
+    }
     // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
     if program.eid_version != crate::parser::EID_VERSION {
         return Err(vec![diag(
@@ -319,12 +359,18 @@ pub fn emit_program(program: &Program) -> Result<EmitOut, Vec<Diagnostic>> {
     }
     // Легальность эмиссии — против таблицы (COVERAGE §5), fail-fast до прохода.
     let table = LinuxCncAdapter::new().emission_legality();
-    let problems = validate_linuxcnc(&table, program);
+    let problems = validate_linuxcnc(&table, validate_target);
     if !problems.is_empty() {
         return Err(problems);
     }
-    let mut w = Writer::new(program);
+    let mut w = Writer::new(program, body_ops);
     w.run()?;
+    // Raw-хвост после PEND (v0.20): байты дословно, same-dialect fidelity.
+    for op in tail_ops {
+        if let Op::Raw { payload_hex, .. } = op {
+            w.raw(payload_hex)?;
+        }
+    }
     Ok(EmitOut {
         text: w.text,
         warnings: w.warnings,
@@ -387,6 +433,9 @@ fn finite3(a: &Num, b: &Num, c: &Num, what: &'static str) -> Result<(), Vec<Diag
 
 struct Writer<'a> {
     program: &'a Program,
+    /// Опы для вывода: у программ с Raw-хвостом (v0.20) — тело до PEND
+    /// (хвост добавляется в emit_program дословно после run()).
+    ops: &'a [Op],
     text: String,
     warnings: Vec<Diagnostic>,
     // Модальное состояние вывода (то, что увидит reparse).
@@ -399,7 +448,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(program: &'a Program) -> Self {
+    fn new(program: &'a Program, ops: &'a [Op]) -> Self {
         let cur_wcs = program
             .frame_preset
             .as_ref()
@@ -407,6 +456,7 @@ impl<'a> Writer<'a> {
             .unwrap_or(Wcs::G54);
         Self {
             program,
+            ops,
             text: String::new(),
             warnings: Vec::new(),
             cur_wcs,
@@ -469,8 +519,8 @@ impl<'a> Writer<'a> {
                 num_text(&pr.values.z)
             ));
         }
-        // 4. Опы.
-        for op in &self.program.ops {
+        // 4. Опы (тело; Raw-хвост v0.20 добавляется в emit_program).
+        for op in self.ops {
             self.op(op)?;
         }
         Ok(())

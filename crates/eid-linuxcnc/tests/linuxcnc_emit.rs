@@ -1074,3 +1074,106 @@ fn mround_emit_nonfinite_coord_rejected() {
     };
     assert!(d.iter().any(|x| x.code == ErrorCode::InvalidInput), "{d:?}");
 }
+
+// ===========================================================================
+// SPEC v0.20: Raw-хвост после PEND (зонд 5) и mid-G92 Raw-носитель
+// (зонды 1–3) — эмиссия same-dialect lossless + R1 round-trip.
+// ===========================================================================
+
+#[test]
+fn v020_emit_tail_after_pend_roundtrip() {
+    // Зонд 5: [Rapid, PEND, Raw(G0-хвост), Raw(M2)] эмитится: тело до M2,
+    // затем хвост-байты дословно (same-dialect fidelity); reparse = тот же
+    // AST (semantic_diff пуст, R1).
+    let src = "G21 G90\nG0 X1.0000 Y1.0000 Z1.0000\nM2\nG0 X10.0000 Y10.0000 Z5.0000\nM2\n";
+    let a = adapter();
+    let p1 = a.parse(src, "tail.ngc").expect("parse").program;
+    let text = a.emit(&p1).expect("emit с хвостом — Ok").text;
+    assert!(text.contains("G0 X1.0000 Y1.0000 Z1.0000"), "тело: {text}");
+    assert!(text.contains("M2"), "PEND → M2: {text}");
+    // Хвост-байты дословно (D9): исходная строка G0 X10... вошла вербатим.
+    assert!(
+        text.contains("G0 X10.0000 Y10.0000 Z5.0000"),
+        "хвост дословно: {text}"
+    );
+    let p2 = adapter()
+        .parse(&text, "tail2.ngc")
+        .expect("reparse")
+        .program;
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "R1 с хвостом: {d:?}\n--- emitted ---\n{text}");
+    // Детерминизм: двойной emit байт-в-байт.
+    let t2 = a.emit(&p1).expect("emit #2").text;
+    assert_eq!(t2, text, "double emit byte-identical");
+}
+
+#[test]
+fn v020_emit_mid_g92_roundtrip() {
+    // Зонд 1: mid-G92 Raw-носитель эмитится вербатим (последующие ходы —
+    // как запрограммированы в сдвинутой системе); reparse восстанавливает
+    // тот же AST, включая rebase-чейнинг (start (0,0)).
+    let src = "%\nG0 X10. Y10. F100\nG92 X0. Y0.\nG1 X5.\n%\n";
+    let a = adapter();
+    let p1 = a.parse(src, "g92mid.ngc").expect("parse").program;
+    let text = a.emit(&p1).expect("emit с mid-G92 — Ok").text;
+    assert!(text.contains("G92 X0. Y0."), "G92 вербатим (D9): {text}");
+    assert!(text.contains("G1 X5.0000"), "следующий ход: {text}");
+    let p2 = adapter()
+        .parse(&text, "g92mid2.ngc")
+        .expect("reparse")
+        .program;
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "R1 с mid-G92: {d:?}\n--- emitted ---\n{text}");
+}
+
+#[test]
+fn v020_emit_program_end_duplicate_ast_rejected() {
+    // Защитник (EID-text путь): не-Raw оп после PEND → program_end_not_last
+    // из таблицы легальности (конструкции после конца, исполнимые на станке,
+    // диалект-расходятся — кросс-диалект отказывает по правилу Raw).
+    let src = "G21 G90\nG0 X1.0000 Y1.0000 Z1.0000\nM2\nG0 X10.0000 Y10.0000 Z5.0000\nM2\n";
+    let a = adapter();
+    let mut p = a.parse(src, "guard.ngc").expect("parse").program;
+    // Превращаем хвостовой Raw в обычный Rapid (модель не-Raw хвоста).
+    let idx = p
+        .ops
+        .iter()
+        .position(|o| matches!(o, Op::Raw { .. }))
+        .expect("tail Raw present");
+    let state = eid_core::ast::State {
+        feed: None,
+        spindle: eid_core::ast::Spindle::Off,
+        coolant: eid_core::ast::Coolant::default(),
+        tool: None,
+        frame: eid_core::ast::Frame::Wcs,
+        wcs: eid_core::ast::Wcs::G54,
+        feed_restated: false,
+    };
+    p.ops[idx] = Op::Rapid {
+        start: eid_core::ast::StartPoint::Unknown,
+        end: eid_core::ast::Point3 {
+            x: eid_core::ast::Num::new("10.0000".into(), 10.0),
+            y: eid_core::ast::Num::new("10.0000".into(), 10.0),
+            z: eid_core::ast::Num::new("5.0000".into(), 5.0),
+        },
+        state,
+        src: eid_core::ast::SrcSpan {
+            file: "guard.ngc".into(),
+            line_start: 4,
+            col_start: 1,
+            line_end: 4,
+            col_end: 30,
+        },
+        sub: None,
+    };
+    let Err(d) = a.emit(&p) else {
+        panic!("не-Raw оп после PEND обязан быть отклонён")
+    };
+    // Каноническая форма core-validate («program_end must be the last op»)
+    // срабатывает до таблицы легальности — оба сообщения об одном классе.
+    assert!(
+        d.iter().any(|x| x.message.contains("program_end_not_last")
+            || x.message.contains("program_end must be the last op")),
+        "{d:?}"
+    );
+}

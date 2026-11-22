@@ -8,12 +8,16 @@
 //!
 //! Классы отказов (правило двух классов, CORPUS §1.2 v0.5):
 //!  * жёсткий Err — структурные (искажают интерпретацию последующих опов):
-//!    units/path-переключения, G92/L20 вне пресетки, machine-frame без
-//!    in-text origins (§5.3), сломанные дуги (§6), PEND-инвариант, поток
+//!    units/path-переключения, L20 вне пресетки, machine-frame без
+//!    in-text origins (§5.3), сломанные дуги (§6), PEND-дубликат, поток
 //!    управления, `#`-параметры, O-code, лимиты;
 //!  * Ok + диагностика (line-level RAW) — локальные конструкции: вендорские
 //!    M/G (SEMANTICS/SYNTAX), G43 H (REQUIRES), G28/G30 (REQUIRES),
-//!    одиночное T (предвыбор, SEMANTICS), block delete (RUNTIME_STATE)…
+//!    одиночное T (lookup в момент T, REQUIRES — SPEC §5.2 v0.20, зонд 6),
+//!    block delete (RUNTIME_STATE), mid-program G92 (SEMANTICS — носитель
+//!    узла frame_preset; семантика применена к чейнингу, SPEC §5.3 v0.20),
+//!    хвост после M2/M30 (SEMANTICS — диалект-расхождение rs274/grbl,
+//!    SPEC §5.2 v0.20, зонд 5)…
 //!    Диагностики Ok-пути буферизуются: `ParseOut::diagnostics`
 //!    (LinuxCncAdapter::take_diagnostics).
 //!
@@ -22,14 +26,21 @@
 //!    встреча цикла сейчас → жёсткий Err E_UNSUPPORTED_SEMANTICS (СТОП-вопрос
 //!    отчёта; векторы N4/N6, чьи файлы содержат циклы, отложены);
 //!  * refuse-циклы (G74/G84/G87/G88) и вне-цикловые отказные коды (G76/G33/
-//!    G38/G5.x/G96/G97/G7/G8/G92.1–.3/M19/…) — line-level RAW по матрице
-//!    COVERAGE (N8 проходит без цикл-парсера);
+//!    G38/G5.x/G96/G97/G7/G8/G92.1–.3 (v0.20: REQUIRES_MACHINE_TABLE —
+//!    сброс регистра требует абсолютной машины, зонд 4)/M19/…) — line-level
+//!    RAW по матрице COVERAGE (N8 проходит без цикл-парсера);
 //!  * M98/M99/O-code → жёсткий Err E_UNSUPPORTED_SYNTAX (SPEC §1.1; brief
 //!    итерации 2; CORPUS §1.2 перечисляет N11 как Ok-класс — расхождение
 //!    заведено в отчёт как СТОП-вопрос);
 //!  * G10 L2 honors G90/G91 (старый origin None считается 0); L20 — всегда
 //!    относительная запись (delta = слова кадра, отсутствующие оси = 0);
-//!  * G92: отсутствующие оси = 0; второй G92 или G92 после motion — Err;
+//!  * G92 (v0.20, зонды 1–3/7/8): стартовая — заголовок Program.frame_preset
+//!    (отсутствующие оси = 0, back-compat goldens); mid-program — Raw-носитель
+//!    узла frame_preset + чейнинг-ребейз чтений (per-axis: указанные =
+//!    присвоенные, неуказанные = текущие чтения; replace-по-пересчёту;
+//!    глобальный регистр поверх WCS — смена G54→G55 → start следующего хода
+//!    = unknown, если разность origin'ов не вычислима из текста);
+//!    несколько G92 легальны (Q5 закрыт);
 //!  * R-слово дуги имеет приоритет над IJK при одновременном задании.
 
 use crate::canonicalize::{self, num_snap, p3_snap, to_f64, ArcError, Plane};
@@ -60,6 +71,12 @@ use eid_core::ast::{Coolant, Spindle};
 
 /// eid_version = версия grammar.ebnf (SPEC §10.4).
 pub const EID_VERSION: &str = "EID/L1 v0.3"; // grammar v0.3 (magic bump)
+
+/// Маркер Raw-носителя mid-program G92 (SPEC §5.3 v0.20): подстрока reason,
+/// по которой `finish()` и эмиттер опознают узел frame_preset и подавляют
+/// start-проверку следующего motion-опа (модель разрыва фрейма замороженного
+/// `eid_core::verify` mid-G92 не знает — chaining-ребейз легален).
+pub(crate) const MID_G92_REASON_PREFIX: &str = "G92 mid-program";
 
 /// Публичный результат parse: Program + line-level диагностики + notices.
 #[derive(Debug, Clone)]
@@ -138,6 +155,20 @@ struct St {
     /// строки; в снапшот — через snapshot() (производные развёртки 2..n —
     /// m_rapid/m_linear/m_dwell гасят по sub).
     feed_restated: bool,
+    /// v0.20 (зонд-сверка): mid-program G92 — позиционно-относительная
+    /// фрейм-операция исполнена ПОСЛЕ старта; machine-frame ходы §5.3(a)
+    /// невозможны до конца программы (Δ регистра содержит M₀).
+    positional_frame_op: bool,
+    /// Чтение текущей позиции неизвестно (corner mid-G92: неуказанные оси
+    /// после machine-истории без in-text origin) — связывание строго
+    /// unknown, наследование частичного end запрещено (SPEC §2 v0.11:
+    /// «genuinely-неизвестные позиции»).
+    reading_unknown: bool,
+    /// Программа завершилась (M2/M30): все последующие блоки — Raw-хвост
+    /// (SPEC §5.2 v0.20, зонд 5: rs274 молча игнорирует; grbl-стрим
+    /// исполняет — диалект-расхождение). Состояние хвост-строками НЕ
+    /// абсорбируется — rs274 их никогда не парсит.
+    program_ended: bool,
     last_s: Option<Num>,
     spindle: Spindle,
     coolant: Coolant,
@@ -296,6 +327,9 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
         wcs: Wcs::G54,
         feed: None,
         feed_restated: false,
+        positional_frame_op: false,
+        reading_unknown: false,
+        program_ended: false,
         last_s: None,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
@@ -315,6 +349,26 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
     };
 
     for ld in &lines {
+        // v0.20 (зонд 5, SPEC §5.2): блоки после M2/M30 — Raw-хвост
+        // (lossless same-dialect) + диагностика диалект-расхождения.
+        // rs274-файловый интерпретатор молча игнорирует хвост (exit 0,
+        // канон обрывается на PROGRAM_END), grbl-стрим исполняет (source
+        // protocol.c: главный цикл без проверки program_flow) → кросс-диалект
+        // для такой программы отказывает (правило Raw), same-dialect хранит
+        // байты честно. Бывший Err «program end is not the last block»
+        // (N12) снят. Состояние хвост-строками НЕ абсорбируется: rs274 хвост
+        // никогда не парсит. %/пустые строки — семантики не несут (как и до
+        // конца программы).
+        if st.program_ended && !matches!(ld.tok, LineTok::Blank | LineTok::Percent) {
+            st.push_raw(
+                ld.line_no,
+                &ld.raw,
+                ld.term,
+                "tail after program end: ignored in rs274-file semantics, EXECUTED in grbl-stream semantics — dialect-divergent (SPEC §5.2 v0.20, зонд 5)",
+                ErrorCode::UnsupportedSemantics,
+            );
+            continue;
+        }
         match &ld.tok {
             LineTok::Blank | LineTok::Percent => {}
             LineTok::Unknown => {
@@ -657,8 +711,8 @@ fn parse_block(
                 "G76 — токарный цикл резьбы, вне скоупа §1.2 (COVERAGE §2.5)",
             )),
             (92, 1) | (92, 2) | (92, 3) => Some((
-                ErrorCode::UnsupportedSemantics,
-                "сброс/приостановка G92-сдвигов (Q4, COVERAGE §2.3)",
+                ErrorCode::RequiresMachineTable,
+                "сброс/приостановка G92-регистра: возврат чтений требует абсолютной машинной позиции, которой в AST нет (зонд 4: SET_G92_OFFSET(0…) + возврат в прежнюю СК) — Q4 частично закрыт (SPEC §5.3 v0.20)",
             )),
             (96, _) | (97, _) => Some((
                 ErrorCode::UnsupportedSemantics,
@@ -794,11 +848,15 @@ fn parse_block(
         ));
     }
     if raw_reason.is_none() && has_t && !has_m6 {
-        // Одиночное T — легальный предвыбор в LinuxCNC, вне L1 (COVERAGE §3,
-        // SPEC §4; исправлено ревью — не E_INVALID_INPUT). N9.
+        // Одиночное T (v0.20, зонд 6/6b): rs274 выполняет tool-table lookup
+        // В МОМЕНТ T — отсутствующий номер = жёсткая ошибка с обрывом потока;
+        // существующий = молчаливый absorb (SELECT_TOOL). Наличие номера в
+        // таблице из текста программы не вычислимо → машинная зависимость →
+        // Raw{E_REQUIRES_MACHINE_TABLE} (SPEC §5.2 v0.20). Предвыбор
+        // абсорбируется ниже (raw-ветка) — зонд 6b.
         raw_reason = Some((
-            "одиночное T — предвыбор инструмента, вне L1 (COVERAGE §3)".into(),
-            ErrorCode::UnsupportedSemantics,
+            "одиночное T — rs274 делает tool-table lookup в момент T (зонд 6: отсутствующий номер = жёсткая ошибка с обрывом; зонд 6b: существующий = SELECT_TOOL-absorb) — машинная зависимость (SPEC §5.2 v0.20; COVERAGE §3)".into(),
+            ErrorCode::RequiresMachineTable,
         ));
     }
     // --- 3. Состояние кадра (SPEC §4, resolved-state) — ДО raw-ветки --------
@@ -951,25 +1009,61 @@ fn parse_block(
     }
 
     // --- 3.1 G92 / G10 L2/L20 (SPEC §3/§5.3) — тоже абсорбция состояния -----
+    let mut line_has_mid_g92 = false;
     for &(maj, min) in &gs {
         if (maj, min) == (92, 0) {
-            if st.preset.is_some() {
-                return Err(fl!(
-                    ErrorCode::UnsupportedSemantics,
-                    "второй G92 — множественные пресетки (Q5, SPEC v0.7; N17)",
-                ));
+            if st.preset.is_none() && !st.saw_motion {
+                // СТАРТОВАЯ пресетка — заголовочное поле Program.frame_preset
+                // (SPEC §3; отсутствующие оси = 0 — back-compat goldens;
+                // инвариант «ровно одна» снят v0.20, Q5: последующие G92 —
+                // опы, см. ниже).
+                let values = axes_from_words(&axes, &[0.0; 3]);
+                st.preset = Some(eid_core::ast::FramePreset {
+                    values: p3_snap(values),
+                    wcs: st.wcs,
+                });
+            } else {
+                // v0.20 (зонды 1–3, 7, 8): mid-program G92 = оп frame_preset.
+                line_has_mid_g92 = true;
+                // Семантика rs274: per-axis assignment от текущего чтения,
+                // replace-по-пересчёту, регистр глобален поверх WCS.
+                // Чейнинг: rebase текущего чтения (указанные оси = присвоенные
+                // значения, неуказанные = текущие чтения). Носитель узла в
+                // замороженном интерфейсе v0.2.0 (grammar v0.4 D5: FRAME_PRESET
+                // только до первого motion-опа; опа frame_preset в Op-enum
+                // нет) — line-level Raw: байты lossless same-dialect,
+                // кросс-диалект отказывает по правилу Raw. Расхождение с
+                // ruling-формулировкой («оп frame_preset») — в стоп-отчёте.
+                st.positional_frame_op = true;
+                let reading = current_reading_wcs(st);
+                let mut new_reading = reading;
+                for (i, a) in axes.iter().enumerate() {
+                    if let Some((v, _)) = a {
+                        new_reading[i] = Some(*v);
+                    }
+                }
+                if new_reading.iter().all(|o| o.is_some()) {
+                    let end = new_reading.map(|o| o.unwrap_or(0.0));
+                    st.last_motion = Some(LastMotion {
+                        end,
+                        frame: Frame::Wcs,
+                        wcs: st.wcs,
+                    });
+                    st.reading_unknown = false;
+                    if raw_reason.is_none() {
+                        raw_reason = Some((format!("{MID_G92_REASON_PREFIX} (v0.20 оп frame_preset): per-axis rebase чтений применён (указанные оси = присвоенные значения, неуказанные = текущие чтения; replace-по-пересчёту, регистр глобален поверх WCS — зонды 1–3/7/8); узел frame_preset в интерфейсе v0.2.0 (grammar v0.4 D5) не представим опом — байты lossless same-dialect Raw, кросс-диалект — отказ (правило Raw)"), ErrorCode::UnsupportedSemantics));
+                    }
+                } else {
+                    // Corner: неуказанные оси с невычислимым чтением
+                    // (machine-история без in-text origin) — честный unknown
+                    // (rs274 пересчитал бы от машины, машины в AST нет).
+                    st.last_motion = None;
+                    st.reading_unknown = true;
+                    if raw_reason.is_none() {
+                        raw_reason = Some((format!("{MID_G92_REASON_PREFIX} (v0.20 оп frame_preset): чтение неуказанных осей не вычислимо из текста (machine-история без in-text origin) — значение зависит от состояния станка (SPEC §2 принцип 7)"), ErrorCode::RuntimeState));
+                    }
+                }
             }
-            if st.saw_motion {
-                return Err(fl!(
-                    ErrorCode::UnsupportedSemantics,
-                    "G92 после motion-опа — пресетка только до первого движения (SPEC §3, Q4/Q5; N2)",
-                ));
-            }
-            let values = axes_from_words(&axes, &[0.0; 3]);
-            st.preset = Some(eid_core::ast::FramePreset {
-                values: p3_snap(values),
-                wcs: st.wcs,
-            });
         }
         if (maj, min) == (10, 0) {
             // L∉{2,20} — line-level REQUIRES raw (COVERAGE §2.3, скан выше):
@@ -1046,7 +1140,14 @@ fn parse_block(
     }
 
     // --- 3.2 Line-level raw-ветка (весь кадр → один RAW-узел, payload=строка)
-    if let Some((reason, code)) = raw_reason {
+    if let Some((mut reason, code)) = raw_reason {
+        // v0.20: mid-G92 на строке с ДРУГИМ raw-основанием (напр. `G92 X0 G28`)
+        // — rebase применён (rs274 исполняет G92 в блоке), маркер обязан быть
+        // в reason, иначе finish()/emit не подавят start-проверку следующего
+        // хода (см. strip_mid_g92_start_diags).
+        if line_has_mid_g92 && !reason.contains(MID_G92_REASON_PREFIX) {
+            reason.push_str("; [G92 mid-program (v0.20): rebase чтений применён]");
+        }
         if let Some(t) = t_word {
             st.selected_tool = Some(t); // предвыбор сохраняется для последующего M6
         }
@@ -1234,11 +1335,12 @@ fn parse_block(
         }
     }
 
-    // M2/M30 → ProgramEnd (SPEC §5.2; инвариант «ровно один раз и последний»
-    // проверяется в finish()).
+    // M2/M30 → ProgramEnd (SPEC §5.2; инвариант «ровно один раз» проверяется
+    // в finish(); «последний» снят v0.20 — хвост после PEND легален, Raw).
     if ms.iter().any(|&(maj, _)| maj == 2 || maj == 30) {
         let src = st.src(line_no, line);
         pending.push(Op::ProgramEnd { src });
+        st.program_ended = true;
     }
 
     // --- 5. Неиспользованные слова → сломанный вход -------------------------
@@ -1417,10 +1519,112 @@ fn is_known_m(maj: i64) -> bool {
 // Motion: связывание стартов (Q11, SPEC §2 принцип 2 v0.10) + геометрия §6
 // ===========================================================================
 
+/// Текущее чтение позиции в активной composed-системе (wcs ⊕ регистр G92) —
+/// база rebase mid-program G92 (SPEC §5.3 v0.20). `None` per-axis = чтение
+/// не вычислимо из текста (machine-история без in-text origin, смена WCS без
+/// origin'ов). Формулы зеркальны `link_start`; Δ (регистр G92) сокращается в
+/// разностях чтений, поэтому mid-G92-ребейз формулы не ломает (зонд 8:
+/// reading_new = end + O_prev − O_new — независимо от регистра).
+fn current_reading_wcs(st: &St) -> [Option<f64>; 3] {
+    if st.reading_unknown {
+        return [None; 3];
+    }
+    let known = |v: [f64; 3]| [Some(v[0]), Some(v[1]), Some(v[2])];
+    match st.last_motion {
+        Some(LastMotion {
+            end,
+            frame: Frame::Wcs,
+            wcs,
+        }) if wcs == st.wcs => known(end),
+        Some(LastMotion {
+            end,
+            frame: Frame::Wcs,
+            wcs,
+        }) => match (st.origin_of(wcs), st.origin_of(st.wcs)) {
+            (Some(a), Some(b)) => known([
+                end[0] + a[0] - b[0],
+                end[1] + a[1] - b[1],
+                end[2] + a[2] - b[2],
+            ]),
+            _ => [None; 3], // (b): разность origin'ов не вычислима
+        },
+        Some(LastMotion {
+            end,
+            frame: Frame::Machine,
+            ..
+        }) => {
+            // Δ = 0: machine-ходы при активной пресетке отклоняются (§5.3(a)).
+            match st.origin_of(st.wcs) {
+                Some(o) => known([end[0] - o[0], end[1] - o[1], end[2] - o[2]]),
+                None => [None; 3],
+            }
+        }
+        None => match st.preset.as_ref() {
+            // До первого motion-опа чтение = якорь стартовой пресетки.
+            Some(pr) if pr.wcs == st.wcs => known(to_f64(&pr.values)),
+            Some(pr) => match (st.origin_of(pr.wcs), st.origin_of(st.wcs)) {
+                (Some(a), Some(b)) => {
+                    let v = to_f64(&pr.values);
+                    known([v[0] + a[0] - b[0], v[1] + a[1] - b[1], v[2] + a[2] - b[2]])
+                }
+                _ => [None; 3],
+            },
+            None => [None; 3],
+        },
+    }
+}
+
 /// Результат связывания: Known(точка) | UnknownRequired (точка разрыва).
 enum Linked {
     Known([f64; 3]),
     UnknownRequired,
+}
+
+pub(crate) fn is_motion_op(op: &Op) -> bool {
+    matches!(op, Op::Rapid { .. } | Op::Linear { .. } | Op::Arc { .. })
+}
+
+/// v0.20: фильтрация start-диагностик core-verify для motion-опов, чей старт
+/// получен ребейзом mid-program G92 / corner-unknown (носитель — Raw-оп с
+/// reason-маркером [`MID_G92_REASON_PREFIX`]). Замороженная модель разрыва
+/// фрейма `eid_core::verify` mid-G92 не знает и требует
+/// `start = end предыдущего` (EQUIVALENCE §1.3) — после G92 это неверно
+/// (зонд 1: start следующего хода = новое чтение). Ребейз последующего
+/// движения мог быть zero-length-дропнут — «вооружение» снимается на
+/// первом ВЫЖИВШЕМ motion-опе AST. Общий механизм parse-finish'а и эмиттера
+/// (одинаковый маркер по AST). Публично в крейте (emit.rs).
+pub(crate) fn strip_mid_g92_start_diags(diags: Vec<Diagnostic>, ops: &[Op]) -> Vec<Diagnostic> {
+    let mut suppress: std::collections::BTreeSet<u32> = Default::default();
+    let mut armed = false;
+    for op in ops {
+        match op {
+            // contains (не starts_with): маркер может быть суффиксом при
+            // совмещении с другим raw-основанием строки (`G92 X0 G28`).
+            Op::Raw { reason, .. } if reason.contains(MID_G92_REASON_PREFIX) => armed = true,
+            _ if is_motion_op(op) && armed => {
+                if let Op::Rapid { src, .. } | Op::Linear { src, .. } | Op::Arc { src, .. } = op {
+                    suppress.insert(src.line_start);
+                }
+                armed = false;
+            }
+            _ => {}
+        }
+    }
+    if suppress.is_empty() {
+        return diags;
+    }
+    diags
+        .into_iter()
+        .filter(|d| {
+            !(d.code == ErrorCode::InvalidInput
+                    && d.message.starts_with("start")
+                    // Program-level диагностики (src: None) не трогаем.
+                    && d
+                        .src
+                        .as_ref()
+                        .is_some_and(|s| suppress.contains(&s.line_start)))
+        })
+        .collect()
 }
 
 fn link_start(
@@ -1435,11 +1639,11 @@ fn link_start(
         };
     }
 
-    // Machine-frame (SPEC §5.3): (a) нет позиционно-относительных пресеток;
-    // (b) origin активной WCS определён in-text (L20-происхождение не
-    // считается — M-производное).
+    // Machine-frame (SPEC §5.3): (a) нет позиционно-относительных фрейм-опов
+    // (стартовая пресетка, mid-program G92 v0.20, L20); (b) origin активной
+    // WCS определён in-text (L20-происхождение не считается — M-производное).
     if machine {
-        if st.preset.is_some() {
+        if st.preset.is_some() || st.positional_frame_op {
             return Err(fl!(
                 ErrorCode::RuntimeState,
                 "machine-frame ход при активном frame_preset — SPEC §5.3(a) (N16)",
@@ -1486,6 +1690,13 @@ fn link_start(
     }
 
     // WCS-движение.
+    if st.reading_unknown {
+        // Corner mid-G92 (v0.20): чтение неизвестно — точка разрыва фрейма;
+        // частичный end наследует неизвестное (E_RUNTIME_STATE в build_motion,
+        // SPEC §2 v0.11), полный end при start=unknown — легален (прямой
+        // отрезок, SPEC §2).
+        return Ok(Linked::UnknownRequired);
+    }
     Ok(match st.last_motion {
         None => {
             // Точка разрыва (a): первый motion-оп — якоря пресетки.
@@ -1587,7 +1798,9 @@ fn build_motion(
             // (0,0,0) (golden #03: `G1 X10` при неизвестном старте даёт
             // end = (10,0,0); COVERAGE §0.3 — модальные значения на входе =
             // дефолты). Machine-frame наследовать не из чего — строго.
-            if !machine && st.last_motion.is_none() {
+            // reading_unknown (corner mid-G92) — genuinely-неизвестная позиция:
+            // наследование запрещено (SPEC §2 v0.11).
+            if !machine && st.last_motion.is_none() && !st.reading_unknown {
                 Some([0.0; 3])
             } else {
                 None
@@ -2166,10 +2379,11 @@ fn expand_cycle(
 // ===========================================================================
 
 fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
-    // SPEC §3 v0.16: program_end ровно один раз, последний; ОТСУТСТВИЕ
-    // M2/M30 = неявный конец → авто-PEND + notice (не отказ; реальные
-    // посты часто не пишут program-end — 18+/32 Tier B). Локально — только
-    // авто-PEND; инварианты PEND (дубликат/не-последний), zero-length
+    // SPEC §3 v0.16: program_end ровно один раз; ОТСУТСТВИЕ M2/M30 = неявный
+    // конец → авто-PEND + notice (не отказ; реальные посты часто не пишут
+    // program-end — 18+/32 Tier B). «Последний» снят v0.20 (зонд 5: Raw-хвост
+    // после PEND легален — валидируется тело до PEND, см. ниже). Инварианты
+    // PEND (дубликат; не-последний при не-Raw опах после PEND), zero-length
     // drop+notice и feed-требование ДЕЛЕГИРОВАНЫ единственному экземпляру
     // правил — eid_core::verify::validate_with_notices (аудит #5).
     let end_count = st
@@ -2203,6 +2417,22 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         Some(PathKind::ExactStop) => PathMode::ExactStop,
         Some(PathKind::Blend) => PathMode::Blend { t: st.path_t },
     };
+    // v0.20 (зонд 5): Raw-хвост после PEND легален, но замороженный
+    // core-verify требует «PEND последний» (D6) → тело до PEND (хвост
+    // по построению парсера состоит только из Raw-опов) валидируется
+    // отдельно (shadow), хвост добавляется к выжившим как есть (Raw
+    // zero-length-дропу не подлежит). Не-Raw оп после PEND (невозможен из
+    // этого парсера; защитник для EID-text-AST) — полный validate → Err.
+    let tail_ops: Vec<Op> = match st
+        .ops
+        .iter()
+        .position(|o| matches!(o, Op::ProgramEnd { .. }))
+    {
+        Some(i) if st.ops[i + 1..].iter().all(|o| matches!(o, Op::Raw { .. })) => {
+            st.ops.split_off(i + 1)
+        }
+        _ => Vec::new(),
+    };
     let draft = Program {
         eid_version: EID_VERSION.to_string(),
         units: st.units.unwrap_or(Units::Mm),
@@ -2210,10 +2440,15 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         frame_preset: st.preset.clone(),
         ops: std::mem::take(&mut st.ops),
     };
-    let report = eid_core::verify::validate_with_notices(&draft);
+    let mut report = eid_core::verify::validate_with_notices(&draft);
+    // v0.20: start-проверки для опов после mid-G92-ребейза подавляются
+    // (замороженная модель verify разрыва mid-G92 не знает; зонды 1–3/8).
+    report.diagnostics = strip_mid_g92_start_diags(report.diagnostics, &draft.ops);
     if !report.diagnostics.is_empty() {
         return Err(report.diagnostics);
     }
+    let mut kept = report.kept_ops;
+    kept.extend(tail_ops);
     // Notice-тип kind'а един (core, v0.2 #22); скелет локальной структуры —
     // копирование в диалектный Notice (ZeroLengthArc до сюда не доходит —
     // degenerate-дуги отбрасываются на ходе разбора).
@@ -2229,7 +2464,7 @@ fn finish(mut st: St) -> Result<ParseOut, Vec<Diagnostic>> {
         units: st.units.unwrap_or(Units::Mm),
         path_mode,
         frame_preset: st.preset,
-        ops: report.kept_ops,
+        ops: kept,
     };
     Ok(ParseOut {
         program,
