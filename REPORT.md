@@ -14,9 +14,9 @@
 - **Claim «any-to-any на диких файлах»** — пробы: `mit_tball_tball.gcode` (2680 опов, 2.5D-контур) — кросс grbl→linuxcnc→grbl **байт-идентичен первому раунду**; `mit_shpk_MIT_EC_Logo.nc` (50KB) — кросс **back == same-dialect-round байт-в-байт**; `olle_bricka_short_wall.tap` (**49 Z-градаций** — Z-рельеф-класс) и `gcb_TEST_MillHolesGrid` (54KB, 24 Z) — same-dialect fixed-point ✓.
 - **Claim «граница 4/5-axis названа и измерена»** — корпус-аудит 157 файлов: **131 чисто 3-осевых (83.4%)**, 26 с именованными скрытыми классами (ротационные 11, RTCP/TWP 1, трансформации 5, полярные 2, NURBS 15 — multi-tag; все Raw с диспозицией). `vis_SmilinJack` — обнаружен аудитом как **фактически 4-осевой** (A-слова: 3 Raw, parse+same-dialect ✓, кросс-отказ честен); `ncm_g434_rtcp_5x` — **99.98% Raw** by design (same-dialect verbatim ✓). Прежний «SmilinJack = 3D-контур» — ложное evidence, поймано проверкой до публикации.
 
-Каждый адаптер: парсер с канонизацией (modal state → resolved-state AST), детерминированный эмиттер с legality-таблицей, **развёртывание canned cycles по §7.7** (4 поверхности развёртки на единых v0.18-константах, rs274-референс 0 divergences), RAW двух классов (same-dialect verbatim / кросс-диалект отказ), verify-проход со stage-атрибуцией, semantic_diff по допускам EQUIVALENCE §4; runner R1–R4; Tier A 68 векторов + Tier B 157 файлов; CLI (translate/verify, живой режим); профили с emission-опциями; **sim real (LinuxCNC 2.9 rs274 в Docker) + sim mock**.
+Каждый адаптер: парсер с канонизацией (modal state → resolved-state AST), детерминированный эмиттер с legality-таблицей, **развёртывание canned cycles по §7.7** (4 поверхности развёртки на единых v0.18-константах, rs274-референс 0 divergences), RAW двух классов (same-dialect verbatim / кросс-диалект отказ), verify-проход со stage-атрибуцией, semantic_diff по допускам EQUIVALENCE §4; runner R1–R4; Tier A 68 векторов + Tier B 157 файлов (свип Ok 116/157 после v0.20-волны); CLI (translate/verify, живой режим); профили с emission-опциями; **sim real (LinuxCNC 2.9 rs274 в Docker) + sim mock**.
 
-**Числа:** **1161 тест passed / 0 failed** · 100+ коммитов · SPEC v0.19 (16+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
+**Числа:** **1161 тест passed / 0 failed** · 100+ коммитов · SPEC v0.20 (20+ ревизий) · аудит 36 пунктов: все обработаны · Tier A R3 **83/0 golden + 35/0 consistency** · Tier B **157 crash=0** · **rs274 canonical comparison 48/48 — 0 divergences** · mutation kill-rate изменённых поверхностей 80.5% (fanuc 90.3%) · CI fmt+clippy gates зелёные.
 
 **Временная формулировка (честная):** финальный push — итерации 7–10 за 4 дня; проект — от пустой директории до 1115 тестов через 16+ ревизий спеки, 4 СТОП-протокола (агент→оркестратор, все корректные) и 10 формально закрытых итераций — быстро, но не за счёт пропущенных шагов.
 
@@ -183,6 +183,8 @@ Send+Sync применён: `run_tier_b_parallel` (std::thread::scope + AtomicUs
 - **COVERAGE v0.9.6**: §6.71 закрыт, CHANGELOG emission-гейт. Workspace **1115/0**.
 
 ## 11. Итерация 11 — решения ревью + референс-верификация 3-axis границы — ЗАВЕРШЕНА
+
+*(итерация 11: NURBS 11/15 Ok+Raw — корень Err: строки-продолжения G5.x; Q10 закрыт навсегда; NaN-классификация; корпус-аудит 157 — 131 чисто 3-осевых, SmilinJack 4-осевой пойман до публикации; workspace был 1123/0)*
 
 **Ревью-триада выполнена** (решения пользователя 2026-11-22):
 1. **NURBS/Q10 закрыты** (SPEC v0.19, 38f583c; реализация D, 449cd42): Q10 — инлайнинг отклонён навсегда для L1 (пин «тело ровно 1 раз»); NURBS — найден **корень** Err (строки-продолжения G5.x без G-кода парсились как модальные ходы) → spline_active-режим, **11/15 файлов Ok+Raw** (4 Curva честно Err на `#`-параметрах — класс §1.1, не маскирован); свип 65/92→76/81, R3 держатся.
