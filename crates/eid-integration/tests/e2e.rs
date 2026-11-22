@@ -640,6 +640,94 @@ fn e2e_preamble_off_emits_verbatim_and_rolls_back_clean() {
 }
 
 // ---------------------------------------------------------------------------
+// Haas-диалект (этап 3, agent C: адаптер eid-haas LIVE в registry) — 2 кейса
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_haas_live_target_parse_back_equiv() {
+    // Цель haas live: parse(выход haas) ≡ parse(источник) — semantic_diff 0.
+    // Источник linuxcnc с ЯВНЫМ G61.1 (exact_stop): Haas G61 = exact_stop по
+    // ЗНАЧЕНИЮ (совпадает с Fanuc, COVERAGE §2.2/§5.2) — value-shift не
+    // возникает; источник exact_path дал бы задокументированный сдвиг
+    // ExactPath→G61→ExactStop (warning-канал, COVERAGE §5.2). Haas-специфика
+    // заголовка: G91.1 НЕ эмитится (группы 04 в словаре нет) — полные end-
+    // слова ходов покрывают это (I/J/K инкрементальные — дефолт контроллера).
+    let src = "G21 G90 G94 G17
+G61.1
+M3 S8000
+M8
+G0 X0 Y0 Z5
+G1 X10 F150
+M5
+M9
+M2
+";
+    let out = translate_text("linuxcnc", "haas", src, "haas_target.linuxcnc.ngc")
+        .expect("haas-цель live: translate linuxcnc → haas");
+    assert_eq!(out.from, "linuxcnc");
+    assert_eq!(out.to, "haas", "registry-имя обёртки HaasNamedAdapter");
+    assert!(out.emitted.contains("G61"), "exact_stop эмиссия — G61: {:?}", out.emitted);
+    assert!(out.emitted.contains("M30"), "program_end haas — M30");
+    assert!(
+        !out.emitted.contains("G91.1"),
+        "G91.1 в словаре Haas отсутствует: {:?}",
+        out.emitted
+    );
+    assert!(
+        out.q3_warnings.is_empty(),
+        "exact_stop → G61 1:1 без потерь: {:?}",
+        out.q3_warnings
+    );
+
+    // parse-back: выход читается haas-адаптером и AST эквивалентен источнику.
+    let a = parse("linuxcnc", src, "in.linuxcnc.ngc");
+    let b = parse("haas", &out.emitted, "out.haas.ngc");
+    assert_equivalent(&a, &b, "linuxcnc(G61.1)→haas parse-back");
+
+    // haas-профиль жив: mock-sim принимает эмиссию (verify-путь #10/#27)
+    let profile = MachineProfile::haas_default();
+    let report = mock_sim(&profile, &out.emitted, "out.haas.ngc");
+    assert!(
+        report.is_ok(),
+        "mock-sim haas-профиль: {:?}",
+        report.errors
+    );
+}
+
+#[test]
+fn e2e_haas_raw_rule_cross_refusal_and_same_dialect_verbatim() {
+    // Macro B — живой диалект Haas тоже (Haas Macro B Fanuc-совместим,
+    // анализ §4.3): ok-файл tier_b парсится haas-адаптером в Raw-опы →
+    // кросс-диалект с Raw → честный E_RAW_UNTRANSLATABLE (SPEC §8.2);
+    // same-dialect haas→haas → verbatim (SPEC §8.1).
+    let path = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let src = std::fs::read_to_string(&path).expect("mpe_while_clear_variables.nc");
+
+    let err = translate_text("haas", "grbl-1.1", &src, "wcv.haas.nc")
+        .expect_err("кросс-диалект haas с Raw обязан отказать");
+    match &err {
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags.len(), 1, "ровно одна диагностика: {diags:?}");
+            assert_eq!(diags[0].code, ErrorCode::RawUntranslatable);
+            assert!(diags[0].message.contains("RAW op(s)"), "{diags:?}");
+        }
+        other => panic!("ожидался Err(Emit/RawUntranslatable), фактический: {other:?}"),
+    }
+
+    let out = translate_text("haas", "haas", &src, "wcv.haas.nc")
+        .expect("same-dialect haas → verbatim RAW легален");
+    assert_eq!(out.from, "haas");
+    assert_eq!(out.to, "haas");
+    for needle in ["WHILE[", "END1", "#1 = #1 + 1"] {
+        assert!(
+            out.emitted.contains(needle),
+            "Macro B payload потерян при same-dialect: {needle:?} в {:?}",
+            out.emitted
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Fanuc-диалект (#25 закрыт: адаптер eid-fanuc LIVE в registry) — 2 кейса
 // ---------------------------------------------------------------------------
 

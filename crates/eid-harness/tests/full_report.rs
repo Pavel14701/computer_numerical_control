@@ -211,8 +211,8 @@ fn corpus_manifest() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/manifest.toml")
 }
 
-/// Полный registry итерации 23+: 4 адаптера (eid-l1, grbl-1.1, linuxcnc,
-/// fanuc — под явным ключом манифеста).
+/// Полный registry итерации 23+: 5 адаптеров (eid-l1, grbl-1.1, linuxcnc,
+/// fanuc + haas — под явным ключом CLI-словаря).
 fn full_registry() -> Registry {
     let mut reg = Registry::new();
     reg.register(Arc::new(EidTextAdapter::new())); // "eid-l1"
@@ -221,7 +221,34 @@ fn full_registry() -> Registry {
     // fanuc: ЖИВОЙ адаптер eid-fanuc под manifest-ключом "fanuc"
     // (диалект-имя крейта "fanuc-mill" != ключ манифеста — см. register_as).
     reg.register_as("fanuc", Arc::new(eid_fanuc::FanucAdapter::new()));
+    // haas: ЖИВОЙ адаптер eid-haas под CLI-ключом "haas" (этап 3, agent C;
+    // диалект-имя крейта "haas-mill" != ключ словаря — см. register_as;
+    // в манифесте tier_b haas-файлов нет — live-путь покрывают
+    // integration/e2e и cli_matrix тесты).
+    reg.register_as("haas", Arc::new(eid_haas::HaasAdapter::new()));
     reg
+}
+
+#[test]
+fn haas_registered_live_in_full_registry() {
+    // Регистрация "haas" (этап 3, agent C): адаптер живой в полном registry
+    // под ключом "haas"; verify-side (parse) работает на haas-исходнике.
+    let reg = full_registry();
+    let a = reg.get("haas").expect("haas в registry (register_as)");
+    assert_eq!(a.dialect_name(), "haas-mill", "канон крейта eid-haas");
+    // Registry-имя !== канону крейта — что и требовало register_as.
+    let mut reg2 = Registry::new();
+    reg2.register(Arc::new(eid_haas::HaasAdapter::new()));
+    assert!(reg2.get("haas").is_none(), "без register_as ключ = haas-mill");
+    assert!(reg2.get("haas-mill").is_some());
+    // Живой parse haas-фрагмента через registry-адаптер.
+    let prog = a
+        .parse("G21 G90 G94 G17;
+G0 X5. Y5. Z5.;
+M30;
+", "live.haas.ngc")
+        .expect("haas parse ok");
+    assert!(matches!(prog.ops.first(), Some(eid_core::ast::Op::Rapid { .. })));
 }
 
 #[test]
@@ -302,7 +329,7 @@ fn full_run_generates_report_iter23() {
         "# REPORT-ITER23 — полный прогон корпуса через eid-harness runner\n\n\
         - прогон: контрольная точка итераций 2–5 (Агент B); NOTHING FIXED — сырые расхождения для классификации оркестратором (CORPUS §9)\n\
         - corpus: `{}` (векторов: {})\n\
-        - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter, `fanuc` = FanucAdapter (eid-fanuc, ключ `fanuc` = манифест tier_b); R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)\n\
+        - адаптеры: `eid-l1` = EidTextAdapter, `grbl-1.1` = GrblAdapter, `linuxcnc` = LinuxCncAdapter, `fanuc` = FanucAdapter (eid-fanuc, ключ `fanuc` = манифест tier_b), `haas` = HaasAdapter (eid-haas, ключ `haas` = CLI-словарь; haas-файлов в манифесте нет); R4 — translate_checked/translate_checked_golden (CORPUS v0.5.3)\n\
         - сводка runner: Pass = {}, Fail = {}, Pending = {}, Skipped = {}\n\n\
         ## Отказы по этапам (Diagnostic.stage, interface v0.1.2)\n\n\
         | Этап | Fail |\n|---|---:|\n| Parse | {} |\n| Canonicalize | {} |\n| Verify | {} |\n| Emit | {} |\n| не-диагностический | {} |\n\n\

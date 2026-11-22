@@ -11,7 +11,7 @@ use eid_integration::translate::{
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1, fanuc; без адаптера (pending): grbl-hal, fluidnc";
+const DIALECT_NAMES: &str = "grbl-1.1 (алиас: grbl), linuxcnc, eid-l1, fanuc, haas; без адаптера (pending): grbl-hal, fluidnc";
 
 const TRANSLATE_FLAGS: &[&str] = &["--from", "--to", "--profile", "--input", "--output"];
 const VERIFY_FLAGS: &[&str] = &["--profile", "--dialect", "--input"];
@@ -83,7 +83,8 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
 
     // --profile опционален (#10): не задан → дефолтный профиль по целевому
     // диалекту (--to): семейство GRBL → grbl_default, fanuc → fanuc_default,
-    // linuxcnc/eid-l1 → linuxcnc_default (лимиты COVERAGE §1.2 совпадают).
+    // haas → haas_default, linuxcnc/eid-l1 → linuxcnc_default (лимиты
+    // COVERAGE §1.2 совпадают).
     let (profile, profile_path) = match get_flag(&flags, "--profile") {
         Some(path_str) => {
             let path = PathBuf::from(path_str);
@@ -367,12 +368,13 @@ fn wants_help(args: &[String]) -> bool {
 
 /// Канонические имена диалектов; `grbl` — алиас `grbl-1.1`
 /// (короткая форма из IMPLEMENTATION-PLAN §5, критерий #9). "fanuc" — live
-/// (#25 закрыт: адаптер eid-fanuc в registry). grbl-hal/fluidnc остаются
+/// (#25 закрыт: адаптер eid-fanuc в registry); "haas" — live (этап 3
+/// agent C: адаптер eid-haas в registry). grbl-hal/fluidnc остаются
 /// pending: имя валидно, адаптера нет → exit 1 с честным pending-сообщением,
 /// не usage.
 fn parse_dialect(s: &str, flag: &str) -> CliResult<String> {
     const KNOWN: &[&str] = &[
-        "grbl-1.1", "grbl-hal", "fluidnc", "linuxcnc", "eid-l1", "fanuc",
+        "grbl-1.1", "grbl-hal", "fluidnc", "linuxcnc", "eid-l1", "fanuc", "haas",
     ];
     let canonical = if s == "grbl" { "grbl-1.1" } else { s };
     if KNOWN.contains(&canonical) {
@@ -525,14 +527,14 @@ eid — транслятор G-кода через канонический фо
   --input <file>      Входной файл G-кода
   --output <file>     Выходной файл (translate)
 
-СТАТУС (регистрация fanuc, Агент E):
-  translate: live для grbl-1.1, linuxcnc, fanuc, eid-l1 (реальные адаптеры
-  C/D/eid-fanuc/A). grbl-hal/fluidnc — pending (Агент C, семейство GRBL).
-  RAW-правило (SPEC §8.2): программа с Raw-опами не переводится кросс-диалектно
-  (E_RAW_UNTRANSLATABLE, exit 1); same-dialect — verbatim. verify: parse +
-  validate + mock-sim (structural-проверки: program_end, zero-length,
-  axis_limits профиля с приведением единиц mm/in — #27; лимиты профиля
-  применяются конвейером — #2).
+СТАТУС (регистрация haas, этап 3 agent C):
+  translate: live для grbl-1.1, linuxcnc, fanuc, haas, eid-l1 (реальные
+  адаптеры C/D/eid-fanuc/C-eid-haas/A). grbl-hal/fluidnc — pending (Агент C,
+  семейство GRBL). RAW-правило (SPEC §8.2): программа с Raw-опами не
+  переводится кросс-диалектно (E_RAW_UNTRANSLATABLE, exit 1); same-dialect —
+  verbatim. verify: parse + validate + mock-sim (structural-проверки:
+  program_end, zero-length, axis_limits профиля с приведением единиц mm/in —
+  #27; лимиты профиля применяются конвейером — #2).
   real sim (rs274ngc): если не обнаружен в системе — mock-only MVP (REPORT).
 
 КОДЫ ВЫХОДА:
@@ -557,7 +559,8 @@ eid translate — перевод G-кода между диалектами че
   --profile <toml>    MachineProfile (см. crates/eid-integration/profiles/*.toml);
                       ОПЦИОНАЛЕН (#10): без него — дефолтный профиль по целевому
                       диалекту (--to): семейство GRBL → grbl_default, fanuc →
-                      fanuc_default, linuxcnc/eid-l1 → linuxcnc_default
+                      fanuc_default, haas → haas_default,
+                      linuxcnc/eid-l1 → linuxcnc_default
   --input <file>      Входной файл G-кода (существует, читается)
   --output <file>     Выходной файл (не совпадает с input; каталог должен существовать)
 
@@ -570,11 +573,11 @@ max_word_chars — до parse, max_ops_per_program / max_unroll_iterations — �
   eid translate --from grbl --to linuxcnc --profile crates/eid-integration/profiles/grbl_default.toml --input corpus/tier_a/v0/01_linear_box/linear_box.grbl.ngc --output pocket.ngc
   eid translate --from grbl --to linuxcnc --input in.ngc --output out.ngc   # дефолт-профиль
 
-СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/fanuc/eid-l1 через registry
-(eid-integration::translate). Отказы parse/emit — диагностики в stderr
-([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
-emit-warnings (Q3, напр. path_mode ExactPath → G61 у fanuc) печатаются
-отдельно (notice/warning, не отказ).
+СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/fanuc/haas/eid-l1 через
+registry (eid-integration::translate). Отказы parse/emit — диагностики в
+stderr ([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
+emit-warnings (Q3, напр. path_mode ExactPath → G61 у fanuc/haas, G110–G112
+у haas) печатаются отдельно (notice/warning, не отказ).
 
 КОДЫ ВЫХОДА: 0 — перевод выполнен; 1 — профиль/файлы/отказ трансляции; 2 — usage.
 "

@@ -1091,8 +1091,12 @@ fn adapter_parse_and_notices() {
     let _p2 = adapter.parse("G21 G90;\nG0 X5.;\n", "b.ngc").expect("ok");
     let n2 = adapter.take_notices();
     assert!(n2.iter().any(|n| n.kind == NoticeKind::MissingProgramEnd));
-    let r = adapter.emit(&p);
-    assert!(r.is_err(), "эмиссия — этап 3");
+    // Этап 3: эмиссия жива; warnings в буфере адаптера (take_warnings;
+    // дефолт ExactPath → G61 консервативно + warning — COVERAGE §5.2).
+    let text = adapter.emit(&p).expect("эмиссия этапа 3");
+    assert!(text.starts_with("G21 G90 G94 G17\n"), "{text:?}");
+    let w = adapter.take_warnings();
+    assert!(w.iter().any(|x| x.contains("exact_path")), "{w:?}");
 }
 
 // ---------------------------------------------------------------------------

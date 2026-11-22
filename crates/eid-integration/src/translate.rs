@@ -10,9 +10,10 @@
 //! точка в core; дрейф более невозможен).
 //!
 //! Реальные адаптеры: GrblAdapter / LinuxCncAdapter / FanucNamedAdapter
-//! ("fanuc", eid-fanuc) / EidTextAdapter (eid-l1) — вызываются через trait
-//! object (`&dyn Adapter`, freeze v0.1). grbl-hal/fluidnc — pending (Агент C,
-//! семейство GRBL). Профиль станка: сигнатуры Adapter (v0.1, заморожены) профиль не
+//! ("fanuc", eid-fanuc) / HaasNamedAdapter ("haas", eid-haas) /
+//! EidTextAdapter (eid-l1) — вызываются через trait object (`&dyn Adapter`,
+//! freeze v0.1). grbl-hal/fluidnc — pending (Агент C, семейство GRBL).
+//! Профиль станка: сигнатуры Adapter (v0.1, заморожены) профиль не
 //! принимают, поэтому лимиты профиля применяются КОНВЕЙЕРНОЙ обвязкой
 //! (`*_with_profile`, аудит #2): max_source_lines/max_word_chars — до parse
 //! (guard зависания лексера), max_ops_per_program и max_unroll_iterations —
@@ -35,6 +36,7 @@ use eid_core::diag::LimitInfo;
 use eid_core::diag::{raw_refusal, Diagnostic, ErrorCode, Stage};
 use eid_fanuc::FanucAdapter;
 use eid_grbl::GrblAdapter;
+use eid_haas::HaasAdapter;
 use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
 
@@ -58,23 +60,26 @@ pub enum AnyAdapter {
     Grbl(GrblAdapter),
     LinuxCnc(LinuxCncAdapter),
     Fanuc(FanucNamedAdapter),
+    Haas(HaasNamedAdapter),
     EidText(eid_core::adapter::EidTextAdapter),
 }
 
 impl AnyAdapter {
     /// Registry по каноническому имени диалекта ("grbl-1.1", "linuxcnc",
-    /// "fanuc", "eid-l1"); алиас "grbl" = "grbl-1.1" (CLI, критерий #9).
-    /// "fanuc" — live (eid-fanuc этапы 1–3 готовы, #25 закрыт регистром
-    /// [`FanucNamedAdapter`]); pending остаются только grbl-hal/fluidnc.
+    /// "fanuc", "haas", "eid-l1"); алиас "grbl" = "grbl-1.1" (CLI, критерий
+    /// #9). "fanuc" — live (#25, [`FanucNamedAdapter`]); "haas" — live
+    /// (eid-haas этапы 1–3 готовы, регистр [`HaasNamedAdapter`]); pending
+    /// остаются только grbl-hal/fluidnc.
     pub fn for_name(name: &str) -> Result<AnyAdapter, TranslateError> {
         match name {
             "grbl-1.1" | "grbl" => Ok(AnyAdapter::Grbl(GrblAdapter::new())),
             "linuxcnc" => Ok(AnyAdapter::LinuxCnc(LinuxCncAdapter::new())),
             "fanuc" => Ok(AnyAdapter::Fanuc(FanucNamedAdapter::new())),
+            "haas" => Ok(AnyAdapter::Haas(HaasNamedAdapter::new())),
             "eid-l1" => Ok(AnyAdapter::EidText(eid_core::adapter::EidTextAdapter::new())),
             "grbl-hal" | "fluidnc" => Err(TranslateError::AdapterPending {
                 dialect: name.to_string(),
-                message: "adapter pending (C iteration 4+: семейство GRBL); доступно: grbl-1.1, linuxcnc, fanuc, eid-l1".to_string(),
+                message: "adapter pending (C iteration 4+: семейство GRBL); доступно: grbl-1.1, linuxcnc, fanuc, haas, eid-l1".to_string(),
             }),
             other => Err(TranslateError::UnknownDialect(other.to_string())),
         }
@@ -90,6 +95,7 @@ impl AnyAdapter {
             AnyAdapter::Grbl(a) => a,
             AnyAdapter::LinuxCnc(a) => a,
             AnyAdapter::Fanuc(a) => a,
+            AnyAdapter::Haas(a) => a,
             AnyAdapter::EidText(a) => a,
         }
     }
@@ -113,6 +119,11 @@ impl AnyAdapter {
                 .into_iter()
                 .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
                 .collect(),
+            AnyAdapter::Haas(a) => a
+                .take_notices()
+                .into_iter()
+                .map(|n| format!("{:?}: {} (op {})", n.kind, n.message, n.op_index))
+                .collect(),
             AnyAdapter::EidText(a) => a
                 .take_notices()
                 .into_iter()
@@ -129,12 +140,14 @@ impl AnyAdapter {
         }
     }
 
-    /// Q3-warning-строки последнего emit (Grbl/Fanuc: warnings-буфер
-    /// адаптера, напр. path_mode-потеря #40/#41/#45 — COVERAGE §6.1/§5.1).
+    /// Q3-warning-строки последнего emit (Grbl/Fanuc/Haas: warnings-буфер
+    /// адаптера, напр. path_mode-потеря #40/#41/#45 — COVERAGE §6.1/§5.1/
+    /// §5.2 Haas-расширенные слоты G110–G112).
     pub fn take_q3_warnings(&mut self) -> Vec<String> {
         match self {
             AnyAdapter::Grbl(a) => a.take_warnings(),
             AnyAdapter::Fanuc(a) => a.take_warnings(),
+            AnyAdapter::Haas(a) => a.take_warnings(),
             _ => Vec::new(),
         }
     }
@@ -177,6 +190,54 @@ impl FanucNamedAdapter {
 impl Adapter for FanucNamedAdapter {
     fn dialect_name(&self) -> &'static str {
         "fanuc"
+    }
+
+    fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
+        self.inner.parse(src, file)
+    }
+
+    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+        self.inner.emit(program)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HaasNamedAdapter — регистр "haas" поверх eid-haas::HaasAdapter
+// ---------------------------------------------------------------------------
+
+/// Обёртка [`HaasAdapter`] с registry-именем "haas" (ключ CLI-словаря /
+/// MachineProfile; канон крейта eid-haas — "haas-mill", крейт стабилен —
+/// имя не меняем: расширяем РЕЕСТР, не trait v0.1.2). parse/emit — дословная
+/// делегация (emit возвращает warnings в буфер адаптера, паттерн
+/// FanucNamedAdapter); notices/warnings — те же буферы, забирать
+/// [`HaasNamedAdapter::take_notices`]/[`HaasNamedAdapter::take_warnings`].
+#[derive(Debug, Default)]
+pub struct HaasNamedAdapter {
+    inner: HaasAdapter,
+}
+
+impl HaasNamedAdapter {
+    pub fn new() -> Self {
+        Self {
+            inner: HaasAdapter::new(),
+        }
+    }
+
+    /// Notices последнего parse (drop-with-notice; паттерн Grbl/Fanuc).
+    pub fn take_notices(&mut self) -> Vec<eid_haas::canonicalize::Notice> {
+        self.inner.take_notices()
+    }
+
+    /// Warnings последнего emit (path_mode/расширенные слоты/снапшоты;
+    /// паттерн Grbl/Fanuc).
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        self.inner.take_warnings()
+    }
+}
+
+impl Adapter for HaasNamedAdapter {
+    fn dialect_name(&self) -> &'static str {
+        "haas"
     }
 
     fn parse(&self, src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {

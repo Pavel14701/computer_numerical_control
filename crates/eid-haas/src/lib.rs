@@ -35,40 +35,131 @@
 //! RUNTIME); компенсации G43/G44/G143 → Raw RT + семейства Haas-состава
 //! G40={G41,G42,G141}, G49={G43,G44,G143}; Macro B → line-level Raw
 //! (система-переменные #500–#699/#109xxx ≠ Fanuc — в диагностике).
+//! Этап 3: эмиссия EID → Haas NGC (emit.rs, COVERAGE §5.2 / анализ §8):
+//! HaasEmissionLegality (ConversionTarget-паттерн) с ТИПИЗИРОВАННЫМИ
+//! условиями HaasEmissionCondition/HaasEmissionWarning (enum + тотальные
+//! code()/text() — INTERFACE-V0.2 §2.5 В1, паник на emit-пути нет),
+//! заголовок G20|G21 G90 G94 G17 (G91.1 НЕ эмитится — группы 04 в словаре
+//! нет), p7..9 → G110–G112 + warning (зеркало W_WCS_EXTENDED; G59.x-огово-
+//! рение происхождения таблиц), WCS_DEFINE p>6 → SYNTAX-отказ (L2-домен
+//! P0..P6; L20 = profile-опция), wcs_set_here → SEMANTICS-отказ (ловушка
+//! №2b), mist → SEMANTICS-отказ (M07 = Shower — другой канал), dwell
+//! P-dot-rule обратный (целые мс → bare P500; sub-ms → dotted P0.0005 сек),
+//! полный круг БЕЗ end-слов, decimal point ВСЕГДА, frame_preset G92 первым
+//! блоком (G92.1 не эмитится — кода нет, Setting 129 `?`), G53 G0|G1,
+//! program_end M30, T## M06, F-правило sub=1 (v0.18).
 #![allow(dead_code)]
 
 pub mod block;
 pub mod canonicalize;
+pub mod emit;
 pub mod lexer;
 pub mod state;
 
 use eid_core::adapter::Adapter;
 use eid_core::ast::Program;
-use eid_core::diag::{Diagnostic, ErrorCode};
+use eid_core::diag::Diagnostic;
 use std::cell::RefCell;
 
 /// Адаптер Haas mill NGC (dialect_name = "haas-mill").
 /// drop-with-notice (zero-length / DPI-assumed) — не ошибка: notices
 /// буферизуются, забрать через [`HaasAdapter::take_notices`]
-/// (паттерн GrblAdapter/FanucAdapter). Этап 1 — parse-сторона; эмиссия
-/// EID → Haas NGC (dwell P-dot, полный круг без end-слов, decimal point
-/// обязателен, p7..9 → G110–G112, M30) — этап 3.
+/// (паттерн GrblAdapter/FanucAdapter). Warnings эмиссии — через
+/// [`HaasAdapter::take_warnings`].
 #[derive(Debug, Default)]
 pub struct HaasAdapter {
     notices: RefCell<Vec<canonicalize::Notice>>,
+    warnings: RefCell<Vec<String>>,
 }
 
 impl HaasAdapter {
     pub fn new() -> Self {
         Self {
             notices: RefCell::new(Vec::new()),
+            warnings: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// ConversionTarget-таблица легальности эмиссии в Haas mill NGC
+    /// (COVERAGE §5.2). legal — виды опов, представимые ходами; illegal —
+    /// (условие, код класса), зеркало тотального `HaasEmissionCondition::
+    /// code()` (согласие — тест `legality_table_complete` в emit.rs-тестах).
+    /// `emit` валидирует программу ПРОТИВ этой таблицы — коды отказа берутся
+    /// только из enum-match (единый путь отказа, без паник). E_RAW_
+    /// UNTRANSLATABLE намеренно НЕ в таблице: это translate-путь (SPEC
+    /// §8.2), не same-dialect эмиссия.
+    pub fn emission_legality(&self) -> emit::HaasEmissionLegality {
+        emit::HaasEmissionLegality {
+            // 9 из 10 видов опов (wcs_set_here запрещён ловушкой №2b);
+            // frame_preset — мета программы (G92, EQUIVALENCE §1.4).
+            legal: vec![
+                "rapid",
+                "linear",
+                "arc",
+                "dwell",
+                "tool_change",
+                "wcs_define",
+                "program_stop",
+                "program_end",
+                "raw",
+                "frame_preset",
+            ],
+            illegal: vec![
+                // Ловушка №2b: Haas L20 = запись origin доп. СК, НЕ «set here».
+                (emit::HaasEmissionCondition::WcsSetHere, USEM),
+                // L2-домен Haas P0..P6 (p7..9 = расширенные origin — L20,
+                // profile-опция НЕ дефолт; COVERAGE §5.2).
+                (
+                    emit::HaasEmissionCondition::WcsDefinePOutsideL2Domain,
+                    SYN,
+                ),
+                // M07 = Shower — другой канал СОЖ; mist-spray не представим.
+                (
+                    emit::HaasEmissionCondition::CoolantMistUnrepresentable,
+                    USEM,
+                ),
+                // G53 ходы прямые (SPEC §5.3).
+                (emit::HaasEmissionCondition::MachineFrameArc, USEM),
+                (emit::HaasEmissionCondition::MotionFeedNone, INVAL), // §3/§4
+                (emit::HaasEmissionCondition::ArcUnknownStart, INVAL),
+                (emit::HaasEmissionCondition::ArcNormalNonCanonical, INVAL),
+                (emit::HaasEmissionCondition::RawPayloadNotHex, INVAL),
+                (emit::HaasEmissionCondition::ProgramEndMissing, INVAL),
+                (emit::HaasEmissionCondition::ProgramEndDuplicate, INVAL),
+                (emit::HaasEmissionCondition::ProgramEndNotLast, INVAL),
+            ],
+            warnings: vec![
+                // COVERAGE §5.2: exact_path → ближайший G61 консервативно
+                // (дефолт как Fanuc; профиль bare-дефолт — этап 8).
+                (
+                    emit::HaasEmissionWarning::PathModeExactPath,
+                    emit::HaasEmissionWarning::PathModeExactPath.text(),
+                ),
+                // blend(t) → bare G64, t теряется.
+                (
+                    emit::HaasEmissionWarning::PathModeBlendT,
+                    emit::HaasEmissionWarning::PathModeBlendT.text(),
+                ),
+                // p7..9 → G110–G112 + оговорка происхождения G59.x-таблиц
+                // (нативная симметрия слотов #7–#9; зеркало W_WCS_EXTENDED).
+                (
+                    emit::HaasEmissionWarning::WcsExtendedSlot,
+                    emit::HaasEmissionWarning::WcsExtendedSlot.text(),
+                ),
+            ],
         }
     }
 
     /// Notices последнего `parse` (DPI-assumed, отброшенные zero-length,
-    /// auto-PEND); опустошает буфер.
+    /// auto-PEND, W_WCS_EXTENDED); опустошает буфер.
     pub fn take_notices(&self) -> Vec<canonicalize::Notice> {
         std::mem::take(&mut *self.notices.borrow_mut())
+    }
+
+    /// Warnings последнего `emit` (потери path_mode/расширенные слоты/
+    /// снапшотов); опустошает буфер.
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.warnings.borrow_mut())
     }
 }
 
@@ -83,16 +174,16 @@ impl Adapter for HaasAdapter {
         Ok(out.program)
     }
 
-    fn emit(&self, _program: &Program) -> Result<String, Vec<Diagnostic>> {
-        // Этап 3 (бриф: этап 1 из 3 — скелет/лексер/модальности/движение).
-        Err(vec![Diagnostic {
-            code: ErrorCode::UnsupportedSyntax,
-            message: "Haas emission (EID → Haas NGC) — stage-3 scope, not implemented in stage 1"
-                .into(),
-            src: None,
-            options: Vec::new(),
-            limit: None,
-            stage: eid_core::diag::Stage::Verify,
-        }])
+    fn emit(&self, program: &Program) -> Result<String, Vec<Diagnostic>> {
+        let mut warnings = Vec::new();
+        let result = emit::emit_with_warnings(program, &mut warnings);
+        // Warnings — в буфер адаптера (забрать take_warnings); паттерн
+        // FanucAdapter.
+        if let Ok(out) = &result {
+            *self.warnings.borrow_mut() = out.warnings.clone();
+        }
+        result.map(|out| out.text)
     }
 }
+
+use eid_core::diag::ErrorCode::{InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN};

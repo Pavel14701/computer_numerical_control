@@ -10,7 +10,7 @@
 use eid_core::ast::Units;
 use eid_integration::profile::{
     AxisRange, DialectKind, Limits, MachineProfile, FANUC_DEFAULT_PROFILE, GRBL_DEFAULT_PROFILE,
-    LINUXCNC_DEFAULT_PROFILE, MAX_WORD_CHARS_CAP,
+    HAAS_DEFAULT_PROFILE, LINUXCNC_DEFAULT_PROFILE, MAX_WORD_CHARS_CAP,
 };
 use std::path::PathBuf;
 
@@ -140,8 +140,10 @@ fn malformed_toml_is_err() {
 
 #[test]
 fn unknown_dialect_is_err() {
+    // "okuma" — вне словаря DialectKind (регистрация "haas" — этап 3
+    // agent C: haas теперь ВАЛИДНОЕ имя, см. load_haas_default_profile).
     let path = write_temp("unknown_dialect.toml", UNKNOWN_DIALECT_TOML);
-    let err = MachineProfile::load(&path).expect_err("диалект haas вне словаря");
+    let err = MachineProfile::load(&path).expect_err("диалект okuma вне словаря");
     assert!(
         err.contains("unknown variant") || err.contains("невалидный TOML"),
         "неожиданная ошибка: {err}"
@@ -471,10 +473,26 @@ fn default_constructors_pass_validation() {
         MachineProfile::grbl_default(),
         MachineProfile::linuxcnc_default(),
         MachineProfile::fanuc_default(),
+        MachineProfile::haas_default(),
     ] {
         p.validate()
             .unwrap_or_else(|e| panic!("дефолт {} невалиден: {e}", p.name));
     }
+}
+
+#[test]
+fn load_haas_default_profile() {
+    // Регистрация "haas" (этап 3, agent C): haas-диалект валиден в профилях;
+    // профиль грузится и несёт дефолты COVERAGE §1.2 (паттерн fanuc).
+    let path = write_temp("haas_default.toml", HAAS_DEFAULT_PROFILE);
+    let p = MachineProfile::load(&path).expect("haas_default.toml должен грузиться");
+    assert_eq!(p.name, "Haas default");
+    assert_eq!(p.dialect, DialectKind::Haas);
+    assert_eq!(p.dialect.as_name(), "haas");
+    assert_eq!(DialectKind::from_name("haas"), Some(DialectKind::Haas));
+    assert_eq!(p.limits, coverage_defaults());
+    assert!(!p.emit_r_arcs);
+    assert_eq!(p, MachineProfile::haas_default());
 }
 
 // TOML-фрагменты тестов.

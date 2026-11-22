@@ -1,0 +1,1067 @@
+//! Эмиттер EID/L1 → текст Haas mill NGC (Агент C, этап 3; COVERAGE §5.2
+//! v0.9.2, haas_dialect_analysis.md §8 Reverse gap, EQUIVALENCE §1.4/§2/§4,
+//! бриф этапа 3 оркестратора).
+//!
+//! Структура вывода (детерминировано: один AST → одни байты; двойной emit —
+//! байт-в-байт):
+//!  1. заголовок `G20|G21 G90 G94 G17` — всегда явно: units (§2.5), G90/G94 —
+//!     дефолты NGC, G17 — плоскость (дуги её переустанавливают).
+//!     **G91.1 НЕ ЭМИТИТСЯ** — режима центров дуг в словаре Haas НЕТ
+//!     (группы 04 не существует; I/J/K инкрементальные от start ВСЕГДА —
+//!     канон §6; эмиссия даёт IJK-оффсеты от старта, EQUIVALENCE §4).
+//!  2. path_mode — всегда явно, одна строка (SPEC §3: одно значение):
+//!     exact_stop → `G61` (значение совпадает с Fanuc — COVERAGE §2.2);
+//!     exact_path → **warning + `G61`** (консервативный дефолт — эквивалента
+//!     нет: G61 = exact stop, G64 = cancel; COVERAGE §5.2 — «выбор профиля»,
+//!     дефолт как Fanuc §5.1); blend(t) → bare `G64` + warning при t
+//!     (G64 = cancel G61 — квантификатора в словаре Haas нет, t теряется).
+//!  3. frame_preset (EQUIVALENCE §1.4): выборка preset.wcs (расширенные
+//!     слоты p7..9 → G110–G112 + warning, см. wcs_word), затем `G92 X_ Y_ Z_`
+//!     — до любого motion-опа; запекание в G10 запрещено. **G92.1 НЕ
+//!     ЭМИТИТСЯ** — кода сброса сдвига в словаре Haas нет; фиктивная очистка
+//!     запрещена (COVERAGE §5.2): сдвиг Haas персистентен вне программы
+//!     (Setting 129 `?` — очистка G52/G92 на M30 несверена) — документируется
+//!     этим комментарием, hygiene-опция недоступна (ревизия — этап 12).
+//!  4. опы по порядку: перед каждым — дельты его снапшота (фиксированный
+//!     порядок WCS → шпиндель → СОЖ, затем строки хода).
+//!  5. движение G0/G1/G2/G3: все три оси конца на каждом ходе; числа —
+//!     4 dp С ДЕСЯТИЧНОЙ ТОЧКОЙ ВСЕГДА (DPI-ловушка §1.2 анализа: bare
+//!     integer при machinists notation читается × least increment —
+//!     `X10` = 0.010 mm!); 4dp покрывает least increments полностью
+//!     (0.001 mm / 0.0001") — потерь нет; frame=machine → префикс
+//!     `G53 G0|G1` (одномодальный, явный G0/G1 в кадре — требование Haas).
+//!  6. дуги: плоскость из канонической нормали (+Z→G17, +Y→G18, +X→G19);
+//!     смена плоскости — отдельной строкой; центр — ТОЛЬКО in-plane пара
+//!     I/J/K (G17→I+J, G18→I+K, G19→J+K), инкремент от старта (группы 04
+//!     нет — дефолт контроллера); R НЕ эмитится никогда (EQUIVALENCE §4;
+//!     Haas R поддерживает, но канон-контракт — IJK; profile-флаг — этап 8);
+//!     **полный круг (sweep=360°, pitch=0) БЕЗ end-слов** (`G2 I_ J_` —
+//!     легальный Haas-формат, официальный ман; слова end==start при
+//!     перепарсе квантуются в zero-length drop); винтовой полный оборот
+//!     (pitch≠0) — с end-словом вне-плоскостной оси; частичная дуга — все
+//!     три оси.
+//!  7. dwell — **P-DOT-RULE ОБРАТНЫЙ** (уникальное Haas-правило, §1.2/§2.7
+//!     анализа): seconds·1000 целое (в допуске) → bare `P500` (= 500 мс —
+//!     decimal point ОТСУТСТВУЕТ НАМЕРЕННО: bare P читается в мс);
+//!     sub-ms остаток → dotted `P0.0005` (= 0.0005 сек — точка = сек).
+//!     X/U-fallback Fanuc-типа НЕдоступен (X/U dwell-форм в словаре Haas
+//!     нет). COVERAGE §5.2 предлагал «округление до 1 мс + notice ИЛИ
+//!     отказ — ревью»: бриф этапа 3 выбрал dotted-секунды — без потерь и
+//!     без округления (ячейку актуализирует приёмка).
+//!  8. tool_change → `T## M06` в одном блоке (Haas-идиома `T01 M06`;
+//!     M16-альтернатива — профиль, этап 8); STOP → M0/M1; PEND → `M30`
+//!     (дефолт, Haas-конвенция; профиль M02 — этап 8); WCS_DEFINE P1..P6 →
+//!     `G10 L2 P<n> X_ Y_ Z_`; **WCS_DEFINE P7..P9 → отказ E_UNSUPPORTED_
+//!     SYNTAX** (Haas L2-домен P0..P6; запись расширенных origin = `G10 L20
+//!     P1..P3` — машинно-абсолютная форма — profile-опция, НЕ дефолт —
+//!     аналогия golden_preset_no_bake); **WCS_SET_HERE → отказ
+//!     E_UNSUPPORTED_SEMANTICS** (Haas L20 = запись origin доп. СК, НЕ
+//!     «set here» — ловушка №2b, COVERAGE §5.2).
+//!
+//! WCS p7..9 (Wcs::G59_1..G59_3): эмитятся как `G110/G111/G112` (нативная
+//! симметрия слотов #7–#9 — бриф этапа 2/3, зеркало notice
+//! W_WCS_EXTENDED парс-стороны) + Q3-warning с оговоркой происхождения:
+//! если источник — LinuxCNC G59.1/.2/.3, таблица слота имеет чужое
+//! происхождение origin — эквивалентность условна (EQUIVALENCE §1.2).
+//!
+//! Хвост M5/M9 перед program_end НЕ эмитится (ruling COVERAGE §5: AST не
+//! хранит пост-конечное состояние; Haas M30 сам глушит шпиндель/СОЖ +
+//! Setting 129 `?`). Развёрнутые циклы §7.7 SPEC эмитятся как ходы
+//! self-собой (verbose — документированное следствие, SPEC §1.2; обратное
+//! свёртывание запрещено; M29-эмиссия не участвует — опасная коллизия с
+//! relay-выходом, COVERAGE §5.2).
+//!
+//! СОЖ: flood → M8, off → M9 (порядок выключений до включений).
+//! **mist → отказ E_UNSUPPORTED_SEMANTICS** (`coolant_mist_unrepresentable`):
+//! в словаре Haas NGC mist-spray-кода НЕТ — M07 = Shower (второй канал,
+//! опасная коллизия с Fanuc M07-mist, §3 анализа); M158/M159 = mist
+//! CONDENSER (не spray). Эмиссия M8/M158 была бы ошибочным каналом СОЖ —
+//! честный отказ; ревью coolant-модели (реестр `?`).
+//!
+//! RAW: payload-hex декодируется и выводится дословно (same-dialect
+//! fidelity, grammar D9 — включая терминатор строки). Кросс-диалектный
+//! запрет `E_RAW_UNTRANSLATABLE` — НЕ здесь: это правило translate-конвейера
+//! (SPEC §8.2), same-dialect эмиттер обязан воспроизводить байты.
+//!
+//! Warnings (не отказы) — в буфере адаптера (`HaasAdapter::take_warnings`):
+//! потери path_mode exact_path/blend(t), расширенные WCS-слоты, не-
+//! эмитируемая normal-компонента центра дуги, несвязные снапшоты
+//! state.tool/state.feed.
+//!
+//! Валидация: `eid_core::parser::validate` (канон-форма §3) → magic-проверка
+//! → легальность эмиссии против [`HaasEmissionLegality`] (ConversionTarget-
+//! паттерн MLIR): коды отказа берутся ТОЛЬКО из таблицы условий
+//! [`HaasEmissionCondition`] — **типизированный enum (В1, INTERFACE-V0.2
+//! §2.5)**: `code_of` — тотальная функция (исчерпывающий match, без Option
+//! и без panic на emit-пути); таблица `illegal` — зеркальные данные для
+//! интроспекции, согласие с match — тест `legality_table_complete`.
+
+use eid_core::ast::{Coolant, Dir, Frame, Num, Op, Program, Spindle, StartPoint, Units, Wcs};
+use eid_core::diag::{Diagnostic, ErrorCode, Stage};
+use eid_core::emitter::fmt_num;
+use eid_core::parser;
+
+use crate::state::{plane_axes, GCode};
+
+/// Результат эмиссии: текст + warnings (не отказы; забрать через
+/// [`crate::HaasAdapter::take_warnings`]).
+pub struct EmitOut {
+    pub text: String,
+    pub warnings: Vec<String>,
+}
+
+// ===========================================================================
+// Legality — ConversionTarget-паттерн (MLIR) + типизированные условия
+// (INTERFACE-V0.2 §2.5, В1): enum вместо &'static str, code_of/warning_of —
+// тотальные match-функции (compile-time полнота; паник-точек «таблица и
+// эмиттер разошлись» на emit-пути НЕТ). Таблица illegal/warnings — данные
+// для интроспекции и тестов; согласие с match — тест legality_table_complete.
+//
+// Состав (10 видов опов; 9 легальны — wcs_set_here запрещён ловушкой №2b;
+// wcs_define p>6 — вне L2-домена Haas):
+//   rapid/linear/arc — G0/G1/G2-G3 (IJK всегда); dwell — G4 P-dot reverse;
+//   tool_change — T## M06; program_stop — M0/M1; program_end — M30;
+//   wcs_define — G10 L2 P1..6; raw — same-dialect verbatim;
+//   frame_preset — G92 первым блоком (EQUIVALENCE §1.4).
+//   wcs_set_here — НЕ представимо: Haas L20 = запись origin G110–G129/G154,
+//   НЕ «set here» (ловушка №2b); «set here» через G92 требует машинной
+//   позиции — не статично → честный отказ SEMANTICS.
+//   coolant.mist — НЕ представим (M07 = Shower — другой канал) → SEMANTICS.
+// ===========================================================================
+
+/// Условие отказа легальности эмиссии в Haas mill NGC (типизированное;
+/// канонические строки — `as_str`, их читают тесты и COVERAGE §5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaasEmissionCondition {
+    /// `wcs_set_here` — эмиссия запрещена как L20 (ловушка №2b).
+    WcsSetHere,
+    /// `wcs_define_p_outside_l2_domain` — P вне домена Haas L2 (0..6;
+    /// p7..9 = расширенные origin — запись через L20, profile-опция).
+    WcsDefinePOutsideL2Domain,
+    /// `coolant_mist_unrepresentable` — mist-spray-кода в словаре нет.
+    CoolantMistUnrepresentable,
+    /// `machine_frame_arc` — дуга в G53 не эмитится (ходы прямые).
+    MachineFrameArc,
+    /// `motion_feed_none` — linear/arc без модального feed (SPEC §3/§4).
+    MotionFeedNone,
+    /// `arc_unknown_start` — IJK требует числового старта (SPEC §2 Q11).
+    ArcUnknownStart,
+    /// `arc_normal_non_canonical` — нормаль не единичная +ось (SPEC §6).
+    ArcNormalNonCanonical,
+    /// `raw_payload_not_hex` — payload не чётный hex (grammar D9 v0.3).
+    RawPayloadNotHex,
+    /// `program_end_missing` / `_duplicate` / `_not_last` — структура §3.
+    ProgramEndMissing,
+    ProgramEndDuplicate,
+    ProgramEndNotLast,
+}
+
+impl HaasEmissionCondition {
+    /// Каноническое имя условия (как в таблице/тестах; фанук-имена сохранены
+    /// 1:1, новые — haas-специфичные).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HaasEmissionCondition::WcsSetHere => "wcs_set_here",
+            HaasEmissionCondition::WcsDefinePOutsideL2Domain => "wcs_define_p_outside_l2_domain",
+            HaasEmissionCondition::CoolantMistUnrepresentable => "coolant_mist_unrepresentable",
+            HaasEmissionCondition::MachineFrameArc => "machine_frame_arc",
+            HaasEmissionCondition::MotionFeedNone => "motion_feed_none",
+            HaasEmissionCondition::ArcUnknownStart => "arc_unknown_start",
+            HaasEmissionCondition::ArcNormalNonCanonical => "arc_normal_non_canonical",
+            HaasEmissionCondition::RawPayloadNotHex => "raw_payload_not_hex",
+            HaasEmissionCondition::ProgramEndMissing => "program_end_missing",
+            HaasEmissionCondition::ProgramEndDuplicate => "program_end_duplicate",
+            HaasEmissionCondition::ProgramEndNotLast => "program_end_not_last",
+        }
+    }
+
+    /// Код класса отказа — ТОТАЛЬНАЯ функция (INTERFACE-V0.2 §2.5 В1:
+    /// исчерпывающий match; паник на emit-пути нет). Классы — правило
+    /// COVERAGE §5: вне словаря цели → E_UNSUPPORTED_SYNTAX; не представимо
+    /// ходами → E_UNSUPPORTED_SEMANTICS; нарушение канон-формы AST →
+    /// E_INVALID_INPUT.
+    pub fn code(self) -> ErrorCode {
+        use eid_core::diag::ErrorCode::{
+            InvalidInput as INVAL, UnsupportedSemantics as USEM, UnsupportedSyntax as SYN,
+        };
+        match self {
+            // Ловушка №2b: Haas L20 = запись origin доп. СК, НЕ «set here».
+            HaasEmissionCondition::WcsSetHere => USEM,
+            // Вне словаря цели: L2-домен Haas P0..P6 (COVERAGE §5.2).
+            HaasEmissionCondition::WcsDefinePOutsideL2Domain => SYN,
+            // M07 = Shower (другой канал); mist-spray не представим.
+            HaasEmissionCondition::CoolantMistUnrepresentable => USEM,
+            // G53 ходы прямые (SPEC §5.3).
+            HaasEmissionCondition::MachineFrameArc => USEM,
+            HaasEmissionCondition::MotionFeedNone => INVAL,
+            HaasEmissionCondition::ArcUnknownStart => INVAL,
+            HaasEmissionCondition::ArcNormalNonCanonical => INVAL,
+            HaasEmissionCondition::RawPayloadNotHex => INVAL,
+            HaasEmissionCondition::ProgramEndMissing => INVAL,
+            HaasEmissionCondition::ProgramEndDuplicate => INVAL,
+            HaasEmissionCondition::ProgramEndNotLast => INVAL,
+        }
+    }
+}
+
+/// Warning-условие эмиссии (легально-но-потерьное; типизированное — mirror
+/// §2.5). Тексты — тотальный match `warning_text`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaasEmissionWarning {
+    /// `path_mode_exact_path` — эквивалента нет → G61 консервативно.
+    PathModeExactPath,
+    /// `path_mode_blend_t` — t теряется (bare G64).
+    PathModeBlendT,
+    /// `wcs_extended_slot` — p7..9 → G110–G112 (+оговорка происхождения
+    /// G59.x-таблиц — EQUIVALENCE §1.2).
+    WcsExtendedSlot,
+}
+
+impl HaasEmissionWarning {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HaasEmissionWarning::PathModeExactPath => "path_mode_exact_path",
+            HaasEmissionWarning::PathModeBlendT => "path_mode_blend_t",
+            HaasEmissionWarning::WcsExtendedSlot => "wcs_extended_slot",
+        }
+    }
+
+    /// Текст warning — ТОТАЛЬНАЯ функция.
+    pub fn text(self) -> &'static str {
+        match self {
+            HaasEmissionWarning::PathModeExactPath => {
+                "Haas exact_path эквивалента нет (G61 = exact stop; G64 = cancel G61) — эмитится G61 (консервативный дефолт, COVERAGE §5.2; профиль bare-дефолт — этап 8)"
+            }
+            HaasEmissionWarning::PathModeBlendT => {
+                "path_mode blend t теряется — bare G64 (квантификатора в словаре Haas нет; G64 = cancel G61; COVERAGE §5.2)"
+            }
+            HaasEmissionWarning::WcsExtendedSlot => {
+                "wcs_extended_slot: state.wcs p7..9 (Wcs::G59_1..G59_3) → G110/G111/G112 — нативная симметрия слотов #7–#9 (зеркало notice W_WCS_EXTENDED парс-стороны); если источник — LinuxCNC G59.1/.2/.3, таблица слота имеет чужое происхождение origin — эквивалентность условна (EQUIVALENCE §1.2; COVERAGE §5.2)"
+            }
+        }
+    }
+}
+
+/// Статическая таблица легальности эмиссии в Haas mill NGC (данные
+/// ConversionTarget-паттерна; коды/тексты — тотальные match-функции enum'ов,
+/// согласие таблицы — тест `legality_table_complete`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HaasEmissionLegality {
+    /// Виды опов, представимые ходами Haas (имена = op_kind()).
+    pub legal: Vec<&'static str>,
+    /// Условия отказа: (условие, код класса) — зеркало `cond.code()`.
+    pub illegal: Vec<(HaasEmissionCondition, ErrorCode)>,
+    /// Легально-но-потерьные условия: (warning, текст) — зеркало `w.text()`.
+    pub warnings: Vec<(HaasEmissionWarning, &'static str)>,
+}
+
+impl HaasEmissionLegality {
+    /// Все коды отказа таблицы (без дубликатов).
+    pub fn codes(&self) -> Vec<ErrorCode> {
+        let mut v: Vec<ErrorCode> = self.illegal.iter().map(|(_, c)| *c).collect();
+        v.sort_by_key(|c| c.as_str());
+        v.dedup();
+        v
+    }
+
+    /// Вид опа легален?
+    pub fn is_legal_kind(&self, kind: &str) -> bool {
+        self.legal.contains(&kind)
+    }
+}
+
+/// Имя вида опа — ключ таблицы легальности (словарь manifest r4_expect).
+pub fn op_kind(op: &Op) -> &'static str {
+    match op {
+        Op::Rapid { .. } => "rapid",
+        Op::Linear { .. } => "linear",
+        Op::Arc { .. } => "arc",
+        Op::Dwell { .. } => "dwell",
+        Op::ToolChange { .. } => "tool_change",
+        Op::ProgramStop { .. } => "program_stop",
+        Op::ProgramEnd { .. } => "program_end",
+        Op::WcsDefine { .. } => "wcs_define",
+        Op::WcsSetHere { .. } => "wcs_set_here",
+        Op::Raw { .. } => "raw",
+    }
+}
+
+/// WCS-слово Haas; None — не бывает (все 9 значений enum представимы:
+/// G54–G59 1:1, p7..9 → G110–G112). Расширенные слоты — с warning
+/// (см. `wcs_is_extended`).
+fn wcs_word(w: Wcs) -> &'static str {
+    match w {
+        Wcs::G54 => "G54",
+        Wcs::G55 => "G55",
+        Wcs::G56 => "G56",
+        Wcs::G57 => "G57",
+        Wcs::G58 => "G58",
+        Wcs::G59 => "G59",
+        // НАТИВНАЯ СИММЕТРИЯ: слоты #7–#9 = G110–G112 (бриф этапа 2/3;
+        // COVERAGE §5.2 — эмиссия с notice; v0.9-дефолт «отказ» переопределён
+        // брифом — расхождение задокументировано warning'ом).
+        Wcs::G59_1 => "G110",
+        Wcs::G59_2 => "G111",
+        Wcs::G59_3 => "G112",
+    }
+}
+
+/// Расширенный слот (p7..9)? — источник warning'а wcs_extended_slot.
+fn wcs_is_extended(w: Wcs) -> bool {
+    matches!(w, Wcs::G59_1 | Wcs::G59_2 | Wcs::G59_3)
+}
+
+/// Плоскость по канонической нормали (SPEC §6: единичная +ось;
+/// +Z→G17, +Y→G18, +X→G19). Возвращает (плоскость, axis_0, axis_1, normal-
+/// ось). Не-осевой/отрицательный normal → Err(текст) — канон-форма такого не
+/// содержит; валидатор оборачивает в код таблицы, писатель — INVALID.
+fn plane_of(normal: &[Num; 3]) -> Result<(GCode, usize, usize, usize), String> {
+    let c = [normal[0].value(), normal[1].value(), normal[2].value()];
+    let (mut best, mut bi) = (0.0f64, 0usize);
+    for (i, &x) in c.iter().enumerate() {
+        if x.abs() > best {
+            best = x.abs();
+            bi = i;
+        }
+    }
+    let axial = (best - 1.0).abs() <= 0.001
+        && c[(bi + 1) % 3].abs() <= 0.001
+        && c[(bi + 2) % 3].abs() <= 0.001;
+    if !axial || c[bi] < 0.0 {
+        return Err(format!(
+            "arc: normal = ({:.4},{:.4},{:.4}) — не единичная +ось (SPEC §6: G17→+Z, G18→+Y, G19→+X)",
+            c[0], c[1], c[2]
+        ));
+    }
+    Ok(match bi {
+        2 => {
+            let (a0, a1, nl) = plane_axes(GCode::PlaneXY);
+            (GCode::PlaneXY, a0, a1, nl)
+        }
+        1 => {
+            let (a0, a1, nl) = plane_axes(GCode::PlaneZX);
+            (GCode::PlaneZX, a0, a1, nl)
+        }
+        _ => {
+            let (a0, a1, nl) = plane_axes(GCode::PlaneYZ);
+            (GCode::PlaneYZ, a0, a1, nl)
+        }
+    })
+}
+
+fn to_f64(p: &eid_core::ast::Point3) -> [f64; 3] {
+    [p.x.value(), p.y.value(), p.z.value()]
+}
+
+fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: None,
+        options: Vec::new(),
+        limit: None,
+    }
+}
+
+fn diag_src(code: ErrorCode, msg: impl Into<String>, src: &eid_core::ast::SrcSpan) -> Diagnostic {
+    Diagnostic {
+        code,
+        stage: Stage::Emit,
+        message: msg.into(),
+        src: Some(src.clone()),
+        options: Vec::new(),
+        limit: None,
+    }
+}
+
+// ===========================================================================
+// Точка входа + валидация легальности
+// ===========================================================================
+
+/// Эмиссия без warnings-буфера (совместимость; предупреждения теряются).
+pub fn emit(program: &Program) -> Result<String, Vec<Diagnostic>> {
+    let mut sink = Vec::new();
+    emit_with_warnings(program, &mut sink).map(|out| out.text)
+}
+
+/// Эмиссия + warnings (потери метаданных при целевой эмиссии, COVERAGE §5.2).
+pub fn emit_with_warnings(
+    program: &Program,
+    warnings: &mut Vec<String>,
+) -> Result<EmitOut, Vec<Diagnostic>> {
+    // Каноническая форма до эмиссии (R1: parse(emit(x)) — тот же AST) —
+    // с Haas-спецификой хвоста (контракт §4.4, COVERAGE §4): блоки после
+    // PEND — line-level Raw (subs-тела после M30 — норма Haas DNC-файлов) —
+    // ЛЕГАЛЬНЫ в same-dialect эмиссии. Core-verify структурно требует PEND
+    // последним (не знает о Haas-политике хвоста) — её «program_end must be
+    // the last op» отфильтровывается при условии «после PEND только Raw»;
+    // не-Raw опы после PEND остаются отказом (SPEC §3).
+    let tail_raw_only = match program
+        .ops
+        .iter()
+        .rposition(|o| !matches!(o, Op::Raw { .. }))
+    {
+        Some(i) => matches!(program.ops[i], Op::ProgramEnd { .. }),
+        None => false,
+    };
+    let mut ds: Vec<Diagnostic> = match parser::validate(program) {
+        Ok(()) => Vec::new(),
+        Err(v) => v,
+    };
+    if tail_raw_only {
+        ds.retain(|d| {
+            !(d.code == ErrorCode::InvalidInput
+                && d.message.contains("program_end must be the last op"))
+        });
+    }
+    if !ds.is_empty() {
+        return Err(ds);
+    }
+    // Magic — ровно "EID/L1 v0.3" (grammar v0.3; SPEC §10.4: v0.2 невалиден).
+    if program.eid_version != "EID/L1 v0.3" {
+        return Err(vec![diag(
+            ErrorCode::InvalidInput,
+            format!(
+                "eid_version `{}` не поддерживается (ожидается EID/L1 v0.3)",
+                program.eid_version
+            ),
+        )]);
+    }
+    // Легальность эмиссии — против таблицы (COVERAGE §5.2), fail-fast; коды —
+    // только из тотальных match-функций enum'ов (единый путь отказа, без
+    // паник «таблица и эмиттер разошлись» — INTERFACE-V0.2 §2.5).
+    let table = crate::HaasAdapter::default().emission_legality();
+    let problems = validate_haas(program);
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    let mut w = Writer::new(program);
+    w.run(&table, warnings)?;
+    // Копия warnings в EmitOut — буфер вызывателя НЕ опустошается (и адаптер,
+    // и тест читают свой Vec).
+    Ok(EmitOut {
+        text: w.text,
+        warnings: warnings.clone(),
+    })
+}
+
+/// Валидация легальности эмиссии (fail-fast, COVERAGE §5.2). Коды отказов —
+/// исключительтельно `cond.code()` (тотальный match; единый путь отказа).
+fn validate_haas(program: &Program) -> Vec<Diagnostic> {
+    let mut v = Vec::new();
+    let table = crate::HaasAdapter::default().emission_legality();
+    // «Последний не-Raw оп = PEND» — Haas-хвост (Raw-subs после M30, §4.4)
+    // не нарушает структуру; не-Raw опыт после PEND — нарушение.
+    let mut last_is_end = true; // отсутствует не-Raw оп ⇒ handled end_count==0
+    for op in &program.ops {
+        if !matches!(op, Op::Raw { .. }) {
+            last_is_end = matches!(op, Op::ProgramEnd { .. });
+        }
+        // Вид опа, объявленный illegal в таблице (wcs_set_here) — отсекается
+        // своим условием ниже; generic-ветка — только для НЕОБЪЯВленных видов
+        // (защита полноты: новый вид опа ⇒ дополнить таблицу). Код — fallback
+        // SYN (`op_kind_not_legal` в таблицу не входит — ветка покрытия).
+        let kind = op_kind(op);
+        if !table.is_legal_kind(kind) && !table.illegal.iter().any(|(c, _)| c.as_str() == kind) {
+            v.push(diag_src(
+                ErrorCode::UnsupportedSyntax,
+                format!("op_kind_not_legal: `{kind}` не легален для цели Haas"),
+                op_src(op),
+            ));
+        }
+        match op {
+            Op::WcsSetHere { src, .. } => v.push(diag_src(
+                HaasEmissionCondition::WcsSetHere.code(),
+                "wcs_set_here: эмиссия в Haas запрещена как G10 L20 — Haas L20 = запись origin G110–G129/G154 Pn от home, НЕ «set here» (ловушка №2b, COVERAGE §5.2); через G92 требует машинной позиции — не статично",
+                src,
+            )),
+            Op::Arc {
+                start,
+                normal,
+                state,
+                src,
+                ..
+            } => {
+                if matches!(start, StartPoint::Unknown) {
+                    v.push(diag_src(
+                        HaasEmissionCondition::ArcUnknownStart.code(),
+                        "arc with unknown start — IJK offsets require numeric start (SPEC §2 Q11)",
+                        src,
+                    ));
+                }
+                let n = [normal.x.clone(), normal.y.clone(), normal.z.clone()];
+                if let Err(m) = plane_of(&n) {
+                    v.push(diag_src(HaasEmissionCondition::ArcNormalNonCanonical.code(), m, src));
+                }
+                check_motion_state(&mut v, state, src, true);
+                if state.frame == Frame::Machine {
+                    v.push(diag_src(
+                        HaasEmissionCondition::MachineFrameArc.code(),
+                        "machine_frame_arc: дуга в G53 не эмитится (machine-frame ходы прямые; SPEC §5.3)",
+                        src,
+                    ));
+                }
+            }
+            Op::Linear { state, src, .. } => check_motion_state(&mut v, state, src, true),
+            Op::Rapid { state, src, .. } => check_motion_state(&mut v, state, src, false),
+            Op::Dwell { state, src, .. } | Op::ProgramStop { state, src, .. } => {
+                check_state_common(&mut v, state, src);
+            }
+            Op::ToolChange { state, src, .. } => check_state_common(&mut v, state, src),
+            Op::WcsDefine { p, state, src, .. } => {
+                check_state_common(&mut v, state, src);
+                // L2-домен Haas: P1..P6 (P0 = слот G52; p7..9 = расширенные
+                // origin — запись через L20, profile-опция НЕ дефолт).
+                if !(1..=6).contains(p) {
+                    v.push(diag_src(
+                        HaasEmissionCondition::WcsDefinePOutsideL2Domain.code(),
+                        format!(
+                            "wcs_define P{p} вне L2-домена Haas (P1..P6 = G54–G59; P0 = слот G52; расширенные origin p7..9 = G10 L20 P1..P3 — машинно-абсолютная запись, profile-опция НЕ дефолт — аналогия golden_preset_no_bake; COVERAGE §5.2)"
+                        ),
+                        src,
+                    ));
+                }
+            }
+            Op::Raw { payload_hex, src, .. } => {
+                if payload_hex.len() % 2 != 0
+                    || !payload_hex
+                        .bytes()
+                        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
+                {
+                    v.push(diag_src(
+                        HaasEmissionCondition::RawPayloadNotHex.code(),
+                        "raw_payload_not_hex: payload не чётный hex (grammar D9 v0.3)",
+                        src,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    // Инварианты §3 (енды): отсутствует / дубликат / не последний.
+    let end_count = program
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::ProgramEnd { .. }))
+        .count();
+    if end_count == 0 {
+        v.push(diag(
+            HaasEmissionCondition::ProgramEndMissing.code(),
+            "program_end_missing: PEND обязателен ровно один раз, последним (SPEC §3)",
+        ));
+    }
+    if end_count > 1 {
+        v.push(diag(
+            HaasEmissionCondition::ProgramEndDuplicate.code(),
+            format!("program_end_duplicate: {end_count} × PEND (SPEC §3)"),
+        ));
+    }
+    if !last_is_end && end_count > 0 {
+        v.push(diag(
+            HaasEmissionCondition::ProgramEndNotLast.code(),
+            "program_end_not_last: опы после PEND запрещены (SPEC §3)",
+        ));
+    }
+    v
+}
+
+fn op_src(op: &Op) -> &eid_core::ast::SrcSpan {
+    match op {
+        Op::Rapid { src, .. }
+        | Op::Linear { src, .. }
+        | Op::Arc { src, .. }
+        | Op::Dwell { src, .. }
+        | Op::ToolChange { src, .. }
+        | Op::ProgramStop { src, .. }
+        | Op::ProgramEnd { src }
+        | Op::WcsDefine { src, .. }
+        | Op::WcsSetHere { src, .. }
+        | Op::Raw { src, .. } => src,
+    }
+}
+
+fn check_motion_state(
+    v: &mut Vec<Diagnostic>,
+    state: &eid_core::ast::State,
+    src: &eid_core::ast::SrcSpan,
+    need_feed: bool,
+) {
+    if need_feed && state.feed.is_none() {
+        v.push(diag_src(
+            HaasEmissionCondition::MotionFeedNone.code(),
+            "motion_feed_none: linear/arc без модального feed (SPEC §3/§4)",
+            src,
+        ));
+    }
+    check_state_common(v, state, src);
+}
+
+/// Общие state-условия: wcs-домен (все 9 значений представимы — проверки
+/// нет) + mist-канал (отказ — M07 = Shower, mist-spray не представим).
+fn check_state_common(
+    v: &mut Vec<Diagnostic>,
+    state: &eid_core::ast::State,
+    src: &eid_core::ast::SrcSpan,
+) {
+    if state.coolant.mist {
+        v.push(diag_src(
+            HaasEmissionCondition::CoolantMistUnrepresentable.code(),
+            "coolant_mist_unrepresentable: mist-spray-кода в словаре Haas NGC нет — M07 = Shower (второй канал СОЖ, опасная коллизия с Fanuc M07-mist); M158/M159 = mist condenser (не spray); эмиссия M8/M158 была бы ошибочным каналом (COVERAGE §3/§5.2; ревью coolant-модели)",
+            src,
+        ));
+    }
+}
+
+// ===========================================================================
+// Писатель
+// ===========================================================================
+
+struct Writer<'a> {
+    program: &'a Program,
+    text: String,
+    // Модальное состояние вывода (то, что увидит reparse).
+    cur_wcs: Wcs,
+    cur_plane: GCode,
+    cur_spindle: Spindle,
+    cur_coolant: Coolant,
+    cur_feed: Option<Num>,
+    cur_tool: Option<u32>,
+}
+
+impl<'a> Writer<'a> {
+    fn new(program: &'a Program) -> Self {
+        let cur_wcs = program
+            .frame_preset
+            .as_ref()
+            .map(|p| p.wcs)
+            .unwrap_or(Wcs::G54);
+        Self {
+            program,
+            text: String::new(),
+            cur_wcs,
+            cur_plane: GCode::PlaneXY,
+            cur_spindle: Spindle::Off,
+            cur_coolant: Coolant::default(),
+            cur_feed: None,
+            cur_tool: None,
+        }
+    }
+
+    fn line(&mut self, s: impl Into<String>) {
+        self.text.push_str(&s.into());
+        self.text.push('\n');
+    }
+
+    /// WCS-строка выбора: расширенный слот p7..9 → G110–G112 + warning
+    /// (зеркало W_WCS_EXTENDED).
+    fn wcs_line(&mut self, wcs: Wcs, warnings: &mut Vec<String>) {
+        let word = wcs_word(wcs);
+        if wcs_is_extended(wcs) {
+            warnings.push(
+                HaasEmissionWarning::WcsExtendedSlot
+                    .text()
+                    .replace("p7..9", slot_text(wcs)),
+            );
+        }
+        self.line(word);
+        self.cur_wcs = wcs;
+    }
+
+    fn run(
+        &mut self,
+        _table: &HaasEmissionLegality,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        // 1. Заголовок — всегда явно (units §2.5; G90/G94 — дефолты NGC; G17).
+        //    G91.1 НЕ эмитится — режима центров в словаре Haas нет (группы 04
+        //    не существует; I/J/K инкрементальные — канон §6, дефолт
+        //    контроллера).
+        let units_word = if self.program.units == Units::In {
+            "G20"
+        } else {
+            "G21"
+        };
+        self.line(format!("{units_word} G90 G94 G17"));
+        // 2. path_mode — всегда явно, одна строка (SPEC §3: одно на
+        //    программу): exact_stop → G61 (1:1 значение); exact_path → G61 +
+        //    warning (эквивалента нет — COVERAGE §5.2, дефолт как Fanuc);
+        //    blend(t) → bare G64 + warning при t (G64 = cancel G61).
+        match &self.program.path_mode {
+            eid_core::ast::PathMode::ExactStop => self.line("G61"),
+            eid_core::ast::PathMode::ExactPath => {
+                self.line("G61");
+                warnings.push(HaasEmissionWarning::PathModeExactPath.text().to_string());
+            }
+            eid_core::ast::PathMode::Blend { t } => {
+                self.line("G64");
+                if t.is_some() {
+                    warnings.push(HaasEmissionWarning::PathModeBlendT.text().to_string());
+                }
+            }
+        }
+        // 3. frame_preset: выборка WCS (расширенные слоты — с warning), затем
+        //    G92 первым блоком (EQUIVALENCE §1.4); запекание в G10 запрещено.
+        //    G92.1 НЕ эмитится — кода сброса в словаре Haas нет; фиктивная
+        //    очистка запрещена (COVERAGE §5.2): сдвиг персистентен вне
+        //    программы (Setting 129 `?`) — см. модуль-док.
+        if let Some(pr) = &self.program.frame_preset {
+            self.wcs_line(pr.wcs, warnings);
+            self.line(format!(
+                "G92 X{} Y{} Z{}",
+                fmt_num(pr.values.x.value()),
+                fmt_num(pr.values.y.value()),
+                fmt_num(pr.values.z.value())
+            ));
+        }
+        // 4. Опы.
+        for op in &self.program.ops {
+            self.op(op, warnings)?;
+        }
+        Ok(())
+    }
+
+    /// Дельты снапшота состояния перед строкой опа (фиксированный порядок:
+    /// WCS → шпиндель → СОЖ; plane — только у дуг).
+    fn pre_state(
+        &mut self,
+        state: &eid_core::ast::State,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        if state.wcs != self.cur_wcs {
+            self.wcs_line(state.wcs, warnings);
+        }
+        if !spindle_eq(&state.spindle, &self.cur_spindle) {
+            let line = match &state.spindle {
+                Spindle::Off => "M5".to_string(),
+                Spindle::Cw(rpm) => format!("M3 S{}", fmt_num(rpm.value())),
+                Spindle::Ccw(rpm) => format!("M4 S{}", fmt_num(rpm.value())),
+            };
+            self.line(line);
+            self.cur_spindle = state.spindle.clone();
+        }
+        if state.coolant != self.cur_coolant {
+            // mist отсечён валидатором (fail-fast) — защита полноты.
+            if state.coolant.mist {
+                return Err(vec![diag(
+                    HaasEmissionCondition::CoolantMistUnrepresentable.code(),
+                    "coolant.mist: writer-ветка недостижима (валидатор отсекает)",
+                )]);
+            }
+            // Выключения (M9 гасит) — до включений; flood → M8.
+            if self.cur_coolant.flood && !state.coolant.flood {
+                self.line("M9");
+            }
+            if state.coolant.flood {
+                self.line("M8");
+            }
+            self.cur_coolant = state.coolant;
+        }
+        Ok(())
+    }
+
+    fn op(
+        &mut self,
+        op: &Op,
+        warnings: &mut Vec<String>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        match op {
+            Op::Rapid {
+                end, state, sub, ..
+            }
+            | Op::Linear {
+                end, state, sub, ..
+            } => {
+                self.pre_state(state, warnings)?;
+                self.check_tool_jump(state, warnings);
+                let f = self.feed_word(state, *sub, warnings)?;
+                let g = match (op, state.frame) {
+                    (_, Frame::Machine) => {
+                        if matches!(op, Op::Rapid { .. }) {
+                            "G53 G0"
+                        } else {
+                            "G53 G1"
+                        }
+                    }
+                    (Op::Rapid { .. }, _) => "G0",
+                    (_, _) => "G1",
+                };
+                self.line(format!(
+                    "{g} X{} Y{} Z{}{f}",
+                    fmt_num(end.x.value()),
+                    fmt_num(end.y.value()),
+                    fmt_num(end.z.value())
+                ));
+                Ok(())
+            }
+            Op::Arc {
+                start: StartPoint::Known(start),
+                end,
+                center,
+                normal,
+                dir,
+                sweep_deg,
+                pitch,
+                state,
+                sub,
+                ..
+            } => {
+                self.pre_state(state, warnings)?;
+                self.check_tool_jump(state, warnings);
+                // Плоскость из канонической нормали (валидатор отсёк не-ось).
+                let (plane, a0, a1, _naxis) =
+                    plane_of(&[normal.x.clone(), normal.y.clone(), normal.z.clone()])
+                        .map_err(|m| vec![diag(ErrorCode::InvalidInput, m)])?;
+                if plane != self.cur_plane {
+                    self.line(plane_word(plane));
+                    self.cur_plane = plane;
+                }
+                // Центр: ТОЛЬКО in-plane пара, инкремент от старта (группы 04
+                // нет — дефолт контроллера); normal-компонента не эмитится
+                // (warning при отличии от старта — канон-форма требует
+                // ⟂-компоненту = старта).
+                let sv = to_f64(start);
+                let cv = to_f64(center);
+                let mut offs = [0.0f64; 3];
+                offs[a0] = cv[a0] - sv[a0];
+                offs[a1] = cv[a1] - sv[a1];
+                let dn = cv[[0, 1, 2][_naxis]] - sv[[0, 1, 2][_naxis]];
+                if dn.abs() > 0.001 {
+                    warnings.push(format!(
+                        "arc: normal-компонента центра {dn:+.4} не эмитится (каноническая форма требует center ⟂-компоненту = старта); геометрия дуги не меняется"
+                    ));
+                }
+                let f = self.feed_word(state, *sub, warnings)?;
+                let g = if *dir == Dir::Cw { "G2" } else { "G3" };
+                // Слова смещений в порядке осей X→I, Y→J, Z→K (конвенция
+                // grbl/linuxcnc/fanuc; I/J/K literal X/Y/Z): ровно две
+                // in-plane оси, G18 → I+K, G19 → J+K, G17 → I+J.
+                let letter = ["I", "J", "K"];
+                let mut arc_words = String::new();
+                for ax in 0..3 {
+                    if ax == a0 || ax == a1 {
+                        arc_words.push_str(&format!("{}{} ", letter[ax], fmt_num(offs[ax])));
+                    }
+                }
+                let arc_words = arc_words.trim_end().to_string();
+                // Полный круг (sweep=360°, pitch=0) — БЕЗ end-слов (`G2 I_ J_`
+                // — легальный Haas-формат, официальный ман; слова end==start
+                // перепарсер квантует в zero-length drop). Винтовой полный
+                // оборот (pitch≠0) — ТОЛЬКО end-слово вне-плоскостной оси
+                // (in-plane наследуют старт). Частичная дуга — все три оси.
+                let full_turn = (sweep_deg.value() - 360.0).abs() <= 1e-6;
+                let helical_turn = full_turn && pitch.value().abs() > 1e-9;
+                let axis_letter = ["X", "Y", "Z"][_naxis];
+                let axes_part = if full_turn && !helical_turn {
+                    String::new()
+                } else if helical_turn {
+                    let ev = to_f64(end);
+                    format!("{}{} ", axis_letter, fmt_num(ev[_naxis]))
+                } else {
+                    format!(
+                        "X{} Y{} Z{} ",
+                        fmt_num(end.x.value()),
+                        fmt_num(end.y.value()),
+                        fmt_num(end.z.value())
+                    )
+                };
+                self.line(format!("{g} {axes_part}{arc_words}{f}"));
+                Ok(())
+            }
+            Op::Arc {
+                start: StartPoint::Unknown,
+                ..
+            } => {
+                // validate() отсекает такие программы ранее; защита.
+                Err(vec![diag(
+                    ErrorCode::RuntimeState,
+                    "arc с start=unknown не эмитится (SPEC §2 Q11)",
+                )])
+            }
+            Op::Dwell { seconds, state, .. } => {
+                self.pre_state(state, warnings)?;
+                self.check_tool_jump(state, warnings);
+                if !seconds.value.is_finite() {
+                    return Err(vec![diag(
+                        ErrorCode::InvalidInput,
+                        "dwell seconds: non-finite",
+                    )]);
+                }
+                // P-DOT-RULE ОБРАТНЫЙ (уникальное Haas-правило):
+                // seconds·1000 целое (в допуске) → bare P = МИЛЛИСЕКУНДЫ
+                // (decimal point ОТСУТСТВУЕТ НАМЕРЕННО — bare P читается в
+                // мс); sub-ms остаток → dotted P = СЕКУНДЫ (точка = сек).
+                // X/U-fallback недоступен (X/U dwell-форм в словаре нет).
+                let ms = seconds.value * 1000.0;
+                if (ms - ms.round()).abs() < 1e-6 {
+                    self.line(format!("G4 P{}", ms.round() as i64));
+                } else {
+                    self.line(format!("G4 P{}", fmt_num(seconds.value)));
+                }
+                Ok(())
+            }
+            Op::ToolChange { tool, state, .. } => {
+                self.pre_state(state, warnings)?;
+                // Haas-идиома: T## M06 в одном блоке (1:1, COVERAGE §5.2;
+                // M16-альтернатива — профиль, этап 8).
+                self.line(format!("T{tool} M06"));
+                self.cur_tool = Some(*tool);
+                Ok(())
+            }
+            Op::ProgramStop {
+                optional, state, ..
+            } => {
+                self.pre_state(state, warnings)?;
+                self.check_tool_jump(state, warnings);
+                self.line(if *optional { "M1" } else { "M0" });
+                Ok(())
+            }
+            Op::ProgramEnd { .. } => {
+                // Хвост M5/M9 НЕ эмитится (ruling COVERAGE §5; Haas M30 сам
+                // глушит + Setting 129 `?`). Дефолт M30 (Haas-конвенция);
+                // профиль M02 — этап 8.
+                self.line("M30");
+                Ok(())
+            }
+            Op::WcsDefine {
+                p, origin, state, ..
+            } => {
+                self.pre_state(state, warnings)?;
+                self.check_tool_jump(state, warnings);
+                // L2-домен Haas P1..P6 (валидатор отсёк p>6 / p0).
+                self.line(format!(
+                    "G10 L2 P{p} X{} Y{} Z{}",
+                    fmt_num(origin.x.value()),
+                    fmt_num(origin.y.value()),
+                    fmt_num(origin.z.value())
+                ));
+                Ok(())
+            }
+            Op::WcsSetHere { .. } => {
+                // Валидатор отсекает ранее (ловушка №2b); защита полноты.
+                Err(vec![diag(
+                    ErrorCode::UnsupportedSemantics,
+                    "wcs_set_here не эмитится в Haas: L20 = запись origin G110–G129/G154 Pn, НЕ «set here» (COVERAGE §5.2)",
+                )])
+            }
+            Op::Raw { payload_hex, .. } => self.raw(payload_hex),
+        }
+    }
+
+    /// F-слово при отличии модального feed от текущего выведенного; иначе "".
+    /// F на rapid-кадре воспроизводится (меняет модальный feed — traverse
+    /// развёртки §7.7-1 несёт feed кадра). Число — 4dp с точкой ВСЕГДА
+    /// (dotted-F → verbatim; bare-F при перепарсе масштабировался бы ×0.0001
+    /// Setting 77 — DPI-ловушка).
+    fn feed_word(
+        &mut self,
+        state: &eid_core::ast::State,
+        sub: Option<u32>,
+        warnings: &mut Vec<String>,
+    ) -> Result<String, Vec<Diagnostic>> {
+        match &state.feed {
+            Some(f) => {
+                if !f.value.is_finite() {
+                    return Err(vec![diag(ErrorCode::InvalidInput, "feed: non-finite")]);
+                }
+                let changed = match &self.cur_feed {
+                    None => true,
+                    Some(c) => c.value != f.value,
+                };
+                // F-кадр развёртки (SPEC §7.7-1 v0.18, зеркало D feed_word):
+                // F также на ПЕРВОМ производном опе каждого цикла (sub ==
+                // Some(1)) — иначе повторный F-кадр с тем же значением теряет
+                // маркер кадра при reparse.
+                let first_derived = sub == Some(1);
+                if changed || first_derived {
+                    self.cur_feed = Some(f.clone());
+                    Ok(format!(" F{}", fmt_num(f.value)))
+                } else {
+                    Ok(String::new())
+                }
+            }
+            None => {
+                if self.cur_feed.is_some() {
+                    // Несвязный снапшот: modal feed не может «исчезнуть».
+                    warnings.push(
+                        "state.feed = none при известном модальном feed — скачок снапшота не воспроизводим (F остаётся модальным)".into(),
+                    );
+                }
+                Ok(String::new())
+            }
+        }
+    }
+
+    /// state.tool без ToolChange-опа — несвязный снапшот: воспроизвести
+    /// нечем, warning.
+    fn check_tool_jump(&mut self, state: &eid_core::ast::State, warnings: &mut Vec<String>) {
+        if state.tool != self.cur_tool {
+            warnings.push(format!(
+                "state.tool = {:?} без ToolChange-опа — скачок снапшота не воспроизводим (выведенный tool = {:?})",
+                state.tool, self.cur_tool
+            ));
+            // cur_tool не обновляем: в выводе инструмент = последний M06.
+        }
+    }
+
+    /// RAW same-dialect fidelity: payload-hex → исходные байты строки ВКЛЮЧАЯ
+    /// терминатор (grammar D9 v0.3) → дословно; внешний '\n' только если
+    /// декод не кончается им.
+    fn raw(&mut self, payload_hex: &str) -> Result<(), Vec<Diagnostic>> {
+        if payload_hex.len() % 2 != 0 {
+            return Err(vec![diag(
+                ErrorCode::InvalidInput,
+                "raw payload: bad hex length",
+            )]);
+        }
+        let mut bytes = Vec::with_capacity(payload_hex.len() / 2);
+        for i in (0..payload_hex.len()).step_by(2) {
+            match u8::from_str_radix(&payload_hex[i..i + 2], 16) {
+                Ok(b) => bytes.push(b),
+                Err(_) => {
+                    return Err(vec![diag(
+                        ErrorCode::InvalidInput,
+                        "raw payload: bad hex pair",
+                    )])
+                }
+            }
+        }
+        let s = String::from_utf8_lossy(&bytes).into_owned();
+        if s.ends_with('\n') {
+            self.text.push_str(&s);
+        } else {
+            self.text.push_str(&s);
+            self.text.push('\n');
+        }
+        Ok(())
+    }
+}
+
+/// Человеческое имя расширенного слота для текста warning (уточнение «p7..9»).
+fn slot_text(w: Wcs) -> &'static str {
+    match w {
+        Wcs::G59_1 => "p7 (#7)",
+        Wcs::G59_2 => "p8 (#8)",
+        Wcs::G59_3 => "p9 (#9)",
+        _ => "p7..9",
+    }
+}
+
+fn spindle_eq(a: &Spindle, b: &Spindle) -> bool {
+    match (a, b) {
+        (Spindle::Off, Spindle::Off) => true,
+        (Spindle::Cw(x), Spindle::Cw(y)) | (Spindle::Ccw(x), Spindle::Ccw(y)) => {
+            x.value() == y.value()
+        }
+        _ => false,
+    }
+}
+
+fn plane_word(p: GCode) -> &'static str {
+    match p {
+        GCode::PlaneXY => "G17",
+        GCode::PlaneZX => "G18",
+        GCode::PlaneYZ => "G19",
+        _ => "G17",
+    }
+}

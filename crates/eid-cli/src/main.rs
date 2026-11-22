@@ -22,6 +22,8 @@
 //! Регистрация fanuc (Агент E): live-адаптер eid-fanuc в registry —
 //! translate --from/--to fanuc обрабатывается реально; grbl-hal/fluidnc
 //! остаются pending.
+//! Регистрация haas (Агент C, этап 3): live-адаптер eid-haas в registry —
+//! translate --from/--to haas обрабатывается реально (по образцу ff090bd).
 
 use eid_cli::run;
 use std::process::ExitCode;

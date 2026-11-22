@@ -74,16 +74,16 @@ fn cli_unknown_command_usage() {
 
 #[test]
 fn cli_unknown_dialect_usage() {
-    // "haas" вне словаря CLI → usage (2). fanuc — имя валидно и LIVE
-    // (см. cli_dir_grbl_to_fanuc_live); pending остались только
-    // grbl-hal/fluidnc → exit 1 (cli_adapter_pending_grbl_hal).
+    // "okuma" вне словаря CLI → usage (2). fanuc/haas — имена валидны и LIVE
+    // (см. cli_dir_grbl_to_fanuc_live / cli_dir_grbl_to_haas_live); pending
+    // остались только grbl-hal/fluidnc → exit 1 (cli_adapter_pending_grbl_hal).
     let prof = grbl_profile();
     let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
     let output = tmp().join("ud.out");
     let code = code_of(&[
         "translate",
         "--from",
-        "haas",
+        "okuma",
         "--to",
         "linuxcnc",
         "--profile",
@@ -178,6 +178,99 @@ fn cli_dir_fanuc_same_dialect_live() {
     assert_eq!(code, 0, "same-dialect RAW легален");
     let emitted = std::fs::read_to_string(&output).unwrap();
     assert!(emitted.contains("WHILE["), "Macro B payload verbatim: {emitted:?}");
+}
+
+#[test]
+fn cli_dir_grbl_to_haas_live() {
+    // Регистрация "haas" (этап 3, agent C): haas-цель LIVE (адаптер eid-haas
+    // в registry) — Raw-free grbl-источник переводится, выход — легальная
+    // haas-программа (по образцу cli_dir_grbl_to_fanuc_live #25). Полная
+    // semantic-эквивалентность — eid-integration tests/e2e.rs; здесь —
+    // живость пути CLI + Haas-специфика заголовка (G91.1 НЕТ в словаре).
+    let prof = grbl_profile();
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    let output = tmp().join("haas_live.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "grbl",
+        "--to",
+        "haas",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 0, "haas-цель live: translate должен завершиться 0");
+    let meta = std::fs::metadata(&output).expect("output файл создан");
+    assert!(meta.len() > 0, "output пуст");
+    let emitted = std::fs::read_to_string(&output).unwrap();
+    assert!(emitted.contains("M30"), "program_end haas — M30: {emitted:?}");
+    assert!(
+        !emitted.contains("G91.1"),
+        "G91.1 в словаре Haas отсутствует — заголовок без него: {emitted:?}"
+    );
+    // выход разбирается haas-адаптером (registry-имя "haas")
+    parse_with("haas", &emitted, "out.haas.ngc").expect("выход парсится haas");
+}
+
+#[test]
+fn cli_haas_raw_cross_refuses() {
+    // RAW-правило (SPEC §8.2): Macro B — живой диалект Haas тоже (строки с
+    // `#`-переменными парсятся как line-level Raw) — кросс-диалект честно
+    // E_RAW_UNTRANSLATABLE, exit 1; same-dialect verbatim — отдельный тест.
+    // Источник — fanuc tier_b файл с Macro B: Haas Macro B Fanuc-совместим
+    // (анализ §4.3), лексер Haas даёт те же Raw-опы.
+    let prof = repo_root().join("crates/eid-integration/profiles/haas_default.toml");
+    let input = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let output = tmp().join("haas_raw.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "haas",
+        "--to",
+        "grbl",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 1, "кросс-диалект с Raw — отказ трансляции");
+    assert!(!output.exists(), "отказ не пишет output");
+}
+
+#[test]
+fn cli_dir_haas_same_dialect_live() {
+    // same-dialect haas→haas: RAW вербатимен (SPEC §8.1) — live путь exit 0.
+    let prof = repo_root().join("crates/eid-integration/profiles/haas_default.toml");
+    let input = repo_root().join("corpus/tier_b/inbox/mpe_while_clear_variables.nc");
+    let output = tmp().join("haas_same.out");
+    let _ = std::fs::remove_file(&output);
+    let code = code_of(&[
+        "translate",
+        "--from",
+        "haas",
+        "--to",
+        "haas",
+        "--profile",
+        p(&prof),
+        "--input",
+        p(&input),
+        "--output",
+        p(&output),
+    ]);
+    assert_eq!(code, 0, "same-dialect RAW легален");
+    let emitted = std::fs::read_to_string(&output).unwrap();
+    assert!(
+        emitted.contains("WHILE"),
+        "Macro B payload verbatim: {emitted:?}"
+    );
 }
 
 #[test]
@@ -719,7 +812,7 @@ fn cli_exit_codes_repeatable_matrix() {
             &[
                 "translate",
                 "--from",
-                "haas",
+                "okuma",
                 "--to",
                 "linuxcnc",
                 "--profile",
@@ -998,11 +1091,25 @@ fn cli_verify_profile_and_dialect_conflict_usage() {
 
 #[test]
 fn cli_verify_unknown_dialect_flag_usage() {
+    // "okuma" — вне словаря CLI → usage. "haas" — ВАЛИДНО и LIVE с этапа 3
+    // (agent C): verify --dialect haas реально работает (см. тест ниже).
+    let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
+    assert_eq!(
+        code_of(&["verify", "--input", p(&input), "--dialect", "okuma"]),
+        2,
+        "неизвестный диалект в --dialect → usage"
+    );
+}
+
+#[test]
+fn cli_verify_haas_dialect_live() {
+    // Регистрация "haas" (этап 3): verify --dialect haas — живой parse-path
+    // (дефолт-профиль haas_default подхватывается по --dialect).
     let input = corpus_pilot("01_linear_box", "linear_box.grbl.ngc");
     assert_eq!(
         code_of(&["verify", "--input", p(&input), "--dialect", "haas"]),
-        2,
-        "неизвестный диалект в --dialect → usage"
+        0,
+        "verify --dialect haas — live (exit 0)"
     );
 }
 

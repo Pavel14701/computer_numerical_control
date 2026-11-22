@@ -40,6 +40,11 @@ pub const LINUXCNC_DEFAULT_PROFILE: &str = include_str!("../profiles/linuxcnc_de
 /// Диалект live (адаптер eid-fanuc в registry — `translate::AnyAdapter`).
 pub const FANUC_DEFAULT_PROFILE: &str = include_str!("../profiles/fanuc_default.toml");
 
+/// Встроенный дефолтный профиль Haas (`profiles/haas_default.toml`; этап 3
+/// agent C — регистрация "haas" по образцу fanuc #25/ff090bd). Диалект live
+/// (адаптер eid-haas в registry — `translate::AnyAdapter`).
+pub const HAAS_DEFAULT_PROFILE: &str = include_str!("../profiles/haas_default.toml");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DialectKind {
@@ -55,6 +60,12 @@ pub enum DialectKind {
     /// обёртка `FanucNamedAdapter`, канон крейта — "fanuc-mill").
     #[serde(rename = "fanuc")]
     Fanuc,
+    /// Этап 3 (agent C, регистрация "haas" по образцу #25/ff090bd): Haas —
+    /// имя валидно в профилях и CLI-словаре; адаптер eid-haas LIVE в registry
+    /// (`translate::AnyAdapter::for_name("haas")` → обёртка
+    /// `HaasNamedAdapter`, канон крейта — "haas-mill").
+    #[serde(rename = "haas")]
+    Haas,
 }
 
 impl DialectKind {
@@ -67,6 +78,7 @@ impl DialectKind {
             DialectKind::FluidNc => "fluidnc",
             DialectKind::LinuxCnc => "linuxcnc",
             DialectKind::Fanuc => "fanuc",
+            DialectKind::Haas => "haas",
         }
     }
 
@@ -78,6 +90,7 @@ impl DialectKind {
             "fluidnc" => Some(DialectKind::FluidNc),
             "linuxcnc" => Some(DialectKind::LinuxCnc),
             "fanuc" => Some(DialectKind::Fanuc),
+            "haas" => Some(DialectKind::Haas),
             _ => None,
         }
     }
@@ -300,14 +313,30 @@ impl MachineProfile {
         }
     }
 
+    /// Дефолтный профиль Haas (этап 3 agent C; лимиты COVERAGE §1.2).
+    /// Диалект валиден для профилей и CLI; адаптер — live (см.
+    /// `DialectKind::Haas`). Сверяется с `HAAS_DEFAULT_PROFILE` тестом.
+    pub fn haas_default() -> Self {
+        Self {
+            name: "Haas default".to_string(),
+            dialect: DialectKind::Haas,
+            limits: Limits::default(),
+            emit_r_arcs: false,
+            emit_preamble: false,
+            axis_limits: None,
+            axis_limits_units: Units::Mm,
+        }
+    }
+
     /// Дефолтный профиль по каноническому имени диалекта (CLI #10: --profile
     /// не задан): семейство GRBL → grbl_default, fanuc → fanuc_default,
-    /// остальные (linuxcnc; eid-l1 не DialectKind — лимиты те же) →
-    /// linuxcnc_default.
+    /// haas → haas_default, остальные (linuxcnc; eid-l1 не DialectKind —
+    /// лимиты те же) → linuxcnc_default.
     pub fn default_for_name(name: &str) -> Self {
         match DialectKind::from_name(name) {
             Some(DialectKind::LinuxCnc) => Self::linuxcnc_default(),
             Some(DialectKind::Fanuc) => Self::fanuc_default(),
+            Some(DialectKind::Haas) => Self::haas_default(),
             Some(_) => Self::grbl_default(),
             None => Self::linuxcnc_default(),
         }
@@ -332,6 +361,8 @@ mod tests {
             (DialectKind::FluidNc, "fluidnc"),
             (DialectKind::LinuxCnc, "linuxcnc"),
             (DialectKind::Fanuc, "fanuc"),
+            // Этап 3 (agent C): регистрация "haas" — валидное имя.
+            (DialectKind::Haas, "haas"),
         ];
         for (kind, name) in all {
             assert_eq!(kind.as_name(), name);
@@ -342,6 +373,6 @@ mod tests {
             assert_eq!(back.d, kind);
         }
         assert_eq!(DialectKind::from_name("grbl"), None);
-        assert_eq!(DialectKind::from_name("haas"), None);
+        assert_eq!(DialectKind::from_name("okuma"), None);
     }
 }

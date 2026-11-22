@@ -12,3 +12,4 @@ toml = "0.8"
 eid-grbl = { path = "../eid-grbl" }
 eid-linuxcnc = { path = "../eid-linuxcnc" }
 eid-fanuc = { path = "../eid-fanuc" }
+eid-haas = { path = "../eid-haas" }
