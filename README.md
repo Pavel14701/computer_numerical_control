@@ -14,14 +14,16 @@ grblHAL, FluidNC (COVERAGE-колонки готовы, адаптеров не�
 отказ. Это не недоделка, а скоуп: не-планарных дуг в самом G-коде не
 существует (они появляются только через RTCP-интерполяцию контроллера).
 
-**Named evidence (3-осевая, дикие файлы корпуса 157):**
-`mit_tball_tball.gcode` (61KB, 2680 опов) — полный кросс
-grbl→linuxcnc→grbl, обратный файл байт-идентичен первому раунду
-(fixed-point); `vis_SmilinJack_*.tap` (3.5MB, 118 562 опов) — файл
-**4-осевой** (флип-рез с A-осями): parse + same-dialect fixed-point,
-3 Raw на ротационных словах → кросс-отказ честен; `ncm_g434_rtcp_5x`
-(44 618 опов) — 5-осевая семантика: 44 609 Raw (99.98%), same-dialect
-verbatim, any-to-any не применим BY DESIGN.
+**Корпус-аудит (157 файлов):** 131 чисто 3-осевых (83.4%), 26 с
+именованными скрытыми классами (ротационные 11, RTCP 1, трансформации 5,
+полярные 2, NURBS 15 — все Raw с диспозицией, ноль silent holes).
+**Named evidence (пробы CLI):** `mit_tball_tball.gcode` и
+`mit_shpk_MIT_EC_Logo.nc` — кросс grbl→linuxcnc→grbl, back
+байт-идентичен; `olle_bricka_short_wall.tap` (49 Z-градаций) и
+`gcb_TEST_MillHolesGrid` (54KB, 24 Z) — same-dialect fixed-point
+(Z-рельеф-класс). `vis_SmilinJack` — пойман аудитом как фактически
+4-осевой (A-слова → Raw, кросс-отказ честен); `ncm_g434_rtcp_5x` —
+99.98% Raw by design.
 
 **Статус:** MVP-цикл закрыт (итерации 0–10; интерфейс v0.2.0 —
 `INTERFACE-V0.2-DESIGN.md` реализован). Workspace: **1115 тестов / 0
