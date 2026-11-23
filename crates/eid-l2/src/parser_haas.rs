@@ -36,7 +36,9 @@
 
 use crate::ast::{L2Program, SysVar, VarRef};
 use crate::eval::L2Error;
-use crate::parser_macro_common::{map_common_system, parse_macro_b, DialectCfg};
+use crate::parser_macro_common::{
+    map_common_system, parse_macro_b, DialectCfg, DwellSemantics,
+};
 
 /// Haas-карта номера макро-переменной → [`VarRef`] (§2.2 + рулинг
 /// «#500–#699/#109xxx → VendorSpecific»).
@@ -62,6 +64,11 @@ pub fn haas_cfg() -> DialectCfg {
         allow_bare_if: true,
         allow_m97: true,
         mirror_g101: true,
+        // BUG-D2 (амендрмент v0.1.2): Haas P-dot-rule — P с точкой =
+        // секунды (`P1.` = 1 s), без точки = МИЛЛИсекунды (`P500` =
+        // 0.5 s); X/U = секунды (форма не документирована у Haas —
+        // симметрия с Fanuc).
+        dwell: DwellSemantics::Haas,
         map_var: haas_map_var,
     }
 }
@@ -965,16 +972,67 @@ mod tests {
     }
 
     #[test]
-    fn haas_g04_p_dwell_milliseconds_verbatim() {
-        // rensh-цепочка: G04 P250 — значение verbatim (семантика P —
-        // диалектная, но Op::Dwell несёт число).
-        let prog = p("G04 P250\n");
+    fn haas_g04_p_dot_rule_bare_ms_dotted_sec() {
+        // Амендмент v0.1.2 (BUG-D2, P-dot-rule haas_dialect_analysis §1.2):
+        // bare P = МИЛЛИсекунды (`G04 P250` = 0.25 s — rensh-цепочка),
+        // P с точкой = секунды (`G04 P1.` = 1 s); X = секунды verbatim.
+        // Канон Op::Dwell.seconds — секунды.
+        let prog = p("G04 P250\nG04 P1.\nG4 X2.\n");
+        let secs: Vec<f64> = prog
+            .stmts
+            .iter()
+            .map(|s| match s {
+                L2Stmt::L1Op(Op::Dwell { seconds, .. }) => seconds.value(),
+                _ => panic!("dwell expected: {s:?}"),
+            })
+            .collect();
+        assert_eq!(secs, vec![0.25, 1.0, 2.0]);
+        // Текст: сконвертированное bare-P — текст значения (инвариант Num);
+        // P с точкой и X — verbatim-срезы.
         match &prog.stmts[0] {
-            L2Stmt::L1Op(Op::Dwell { seconds, .. }) => {
-                assert_eq!(seconds.text, "250");
-            }
+            L2Stmt::L1Op(Op::Dwell { seconds, .. }) => assert_eq!(seconds.text, "0.25"),
             _ => panic!("dwell expected"),
         }
+        match &prog.stmts[1] {
+            L2Stmt::L1Op(Op::Dwell { seconds, .. }) => assert_eq!(seconds.text, "1."),
+            _ => panic!("dwell expected"),
+        }
+        match &prog.stmts[2] {
+            L2Stmt::L1Op(Op::Dwell { seconds, .. }) => assert_eq!(seconds.text, "2."),
+            _ => panic!("dwell expected"),
+        }
+    }
+
+    #[test]
+    fn haas_g65_args_fanuc_table_binding_pin() {
+        // Пин таблицы букв (амендрмент v0.1.2, BUG-D1): Haas Macro B
+        // совместим с Fanuc — deep-drill паттерн `G65 P7981 Z-7.88 D-.4
+        // S6000 F60.` привязывает D→#7 (НЕ #4) и F→#9 (НЕ #6); Z→#26,
+        // S→#19 (совпадают с линейной — пин против «починили сломав»).
+        // Тело O7981 копит локали в глобальные #500+ (наблюдаемо вне кадра).
+        let mut driver = p("G65 P7981 Z-7.88 D-.4 S6000 F60.\n");
+        let gassign = |n: u32, e: Expr| L2Stmt::Assign {
+            target: VarRef::Direct(n),
+            value: e,
+            src: crate::ast::placeholder_span(),
+        };
+        let sub = crate::ast::L2Sub {
+            target: SubTarget::ONumber(7981),
+            body: vec![
+                gassign(500, v(7)),
+                gassign(501, v(9)),
+                gassign(502, v(26)),
+                gassign(503, v(19)),
+            ],
+        };
+        let program = crate::ast::L2Program::new(std::mem::take(&mut driver.stmts), vec![sub]);
+        let mut ev = crate::interp::L2Evaluator::new(crate::interp::L2Config::default());
+        ev.run(&program).unwrap();
+        let env = ev.env();
+        assert_eq!(env.read_direct(500).unwrap(), crate::ast::Val::Num(-0.4), "D→#7");
+        assert_eq!(env.read_direct(501).unwrap(), crate::ast::Val::Num(60.0), "F→#9");
+        assert_eq!(env.read_direct(502).unwrap(), crate::ast::Val::Num(-7.88), "Z→#26");
+        assert_eq!(env.read_direct(503).unwrap(), crate::ast::Val::Num(6000.0), "S→#19");
     }
 
     #[test]

@@ -25,6 +25,14 @@
 //! v0.20.1 (12.2, агент A) — аддитивно: `L2Stmt::Label` (N-метка-узел),
 //! `L2Stmt::Return` (M99/endsub-выход), `L2Program::labels` (label-таблица,
 //! заполняет парсер — контракт для B2/D2).
+//!
+//! Амендмент дока v0.1.2 (BUG-D1/D2; trace-зеркало agent D, коммит
+//! 841ab2c → фикс B2): привязка букв-аргументов G65 — НЕлинейная
+//! Fanuc-таблица ([`call_arg_local_index`]; линейная «A→#1..Z→#26» дока
+//! §2.4 отвергнута), LinuxCNC `o call` — позиционная
+//! ([`positional_arg_local_index`]); dwell G4 — диалект-семантика
+//! (`parser_macro_common::DwellSemantics`: Fanuc bare-P = мс, Haas
+//! P-dot-rule, X/U = сек). AST-узлы НЕ менялись (аддитивно).
 
 use eid_core::ast::{Num, Op, SrcSpan};
 
@@ -332,7 +340,11 @@ pub enum L2Stmt {
         src: SrcSpan,
     },
     /// Вызов подпрограммы: target (O-номер | N-метка), repeat — L/K,
-    /// args — A→#1..Z→#26 (G65, буквы ASCII u8), modal — G66.
+    /// args — буквы-аргументы (ASCII u8): Macro B G65 — именованная
+    /// НЕлинейная Fanuc-таблица [`call_arg_local_index`] (амендмент
+    /// v0.1.2, BUG-D1: линейная «A→#1..Z→#26» дока §2.4 отвергнута);
+    /// LinuxCNC `o call [a][b]` — позиционная ([`positional_arg_local_index`],
+    /// выбор на binding-сайтах interp). modal — G66.
     CallSub {
         target: SubTarget,
         repeat: Option<Expr>,
@@ -385,10 +397,60 @@ impl L2Stmt {
     }
 }
 
-/// Индекс локальной переменной для буквы аргумента G65 (A→1 .. Z→26,
-/// регистронезависимо). Небуквенный/внедиапазонный байт → None
-/// (парсер отвергает). (args — Vec<(u8, Expr)> по §2.4.)
+/// Индекс локальной переменной для буквы аргумента G65/M98 (Macro B),
+/// регистронезависимо. Небуквенный/внедиапазонный байт → None.
+///
+/// АМЕНДМЕНТ v0.1.2 (BUG-D1, критично; trace-зеркало deep-drill — agent D,
+/// коммит 841ab2c → фикс B2): таблица НЕлинейная — стандарт Fanuc Custom
+/// Macro B (Haas Macro B идентична):
+/// `A→#1 B→#2 C→#3 D→#7 E→#8 F→#9 H→#11 I→#4 J→#5 K→#6 M→#13 Q→#17
+/// R→#18 S→#19 T→#20 U→#21 V→#22 W→#23 X→#24 Y→#25 Z→#26`.
+/// ЛИНЕЙНАЯ таблица «A→#1 .. Z→#26» из дока v0.1 §2.4 ОТВЕРГНУТА: на
+/// corpus/tier_b/inbox/mpe_g65_macro_deep_drill.nc она связывала D-.4→#4
+/// и F60.→#6 (Fanuc: #7/#9) → guard `IF[#7 EQ #0] GOTO943` срабатывал →
+/// alarm-путь `#3000=3` вместо рабочей программы (trace semantic_diff
+/// ≠ 0). Слоты #10/#12/#14/#15/#16 буквами G65 не адресуются. Буквы
+/// G/L/N/O/P аргументами НЕ являются (G — коды, L — повтор, P — номер
+/// программы/время, N/O — номера строк/программ) → None.
+///
+/// Для ПОЗИЦИОННОЙ привязки (LinuxCNC `o<…> call [a][b]…` — парсер
+/// LinuxCNC синтезирует буквы 'A'+i в порядке следования) — см.
+/// [`positional_arg_local_index`]; выбор таблицы на binding-сайтах
+/// `interp` (у узла [`L2Stmt::CallSub`] нет поля диалекта).
 pub fn call_arg_local_index(letter: u8) -> Option<u32> {
+    Some(match letter.to_ascii_uppercase() {
+        b'A' => 1,
+        b'B' => 2,
+        b'C' => 3,
+        b'I' => 4,
+        b'J' => 5,
+        b'K' => 6,
+        b'D' => 7,
+        b'E' => 8,
+        b'F' => 9,
+        b'H' => 11,
+        b'M' => 13,
+        b'Q' => 17,
+        b'R' => 18,
+        b'S' => 19,
+        b'T' => 20,
+        b'U' => 21,
+        b'V' => 22,
+        b'W' => 23,
+        b'X' => 24,
+        b'Y' => 25,
+        b'Z' => 26,
+        // G/L/N/O/P — мета-слова, аргументами не передаются (см. шапку).
+        _ => return None,
+    })
+}
+
+/// ПОЗИЦИОННАЯ привязка: k-я буква A..Z → локаль #(k+1), линейно,
+/// регистронезависимо. Это семантика LinuxCNC `o<…> call [arg1] [arg2] …`
+/// (первый `[arg]` → #1 и т.д.); парсер LinuxCNC кодирует позицию i
+/// буквой `'A'+i`. Macro B G65 НЕ использует (именованная таблица —
+/// [`call_arg_local_index`]).
+pub fn positional_arg_local_index(letter: u8) -> Option<u32> {
     let up = letter.to_ascii_uppercase();
     if up.is_ascii_uppercase() {
         Some((up - b'A') as u32 + 1)

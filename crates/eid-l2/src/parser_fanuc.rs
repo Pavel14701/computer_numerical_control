@@ -26,7 +26,9 @@
 
 use crate::ast::{L2Program, SysVar, VarRef};
 use crate::eval::L2Error;
-use crate::parser_macro_common::{map_common_system, parse_macro_b, DialectCfg};
+use crate::parser_macro_common::{
+    map_common_system, parse_macro_b, DialectCfg, DwellSemantics,
+};
 
 /// Fanuc-карта номера макро-переменной → [`VarRef`] (§2.2).
 pub fn fanuc_map_var(n: u32) -> VarRef {
@@ -45,6 +47,9 @@ pub fn fanuc_cfg() -> DialectCfg {
         allow_bare_if: false,
         allow_m97: false,
         mirror_g101: false,
+        // BUG-D2 (амендрмент v0.1.2): Fanuc G4 P = МИЛЛИсекунды всегда
+        // (P2000 = 2 s), X/U = секунды.
+        dwell: DwellSemantics::Fanuc,
         map_var: fanuc_map_var,
     }
 }

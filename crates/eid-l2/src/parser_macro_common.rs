@@ -18,7 +18,10 @@
 //!   IfGoto с всегда-истинным cond = 1, семантика идентична);
 //! * `WHILE [cond] DO m … END m` → [`L2Stmt::While`] (парность do_id 1..3 —
 //!   здесь; DO без WHILE — бесконечный цикл, cond = 1);
-//! * `G65/G66 P… (аргументы A..Z → #1..#26; G/L/N/O/P — не аргументы)` →
+//! * `G65/G66 P… (буквы-аргументы → локали по НЕлинейной Fanuc-таблице
+//!   `ast::call_arg_local_index` — D→#7, F→#9, I→#4 …; амендмент v0.1.2,
+//!   BUG-D1: линейная «A→#1..Z→#26» дока §2.4 отвергнута; G/L/N/O/P —
+//!   не аргументы; привязка — interp)` →
 //!   [`L2Stmt::CallSub`] (modal = G66); `M98 P…` (слип-формат
 //!   `P52000` = 5×O2000) → CallSub; Haas `M97 P<n> L<expr>` →
 //!   CallSub{SubTarget::NLabel} (правило 4);
@@ -34,7 +37,9 @@
 //! * `G43.4/G43.5/G49` → [`L2Stmt::RtcpMode`]; Haas `G101` →
 //!   [`L2Stmt::WithTransform`] (Mirror);
 //! * канонические L1-опы: `M30/M02` → ProgramEnd, `M0/M01` → ProgramStop,
-//!   `Tn M6` → ToolChange (T обязана быть константой), `G4 P/X/U` → Dwell;
+//!   `Tn M6` → ToolChange (T обязана быть константой), `G4 P/X/U` → Dwell
+//!   (единицы слова ДИАЛЕКТНЫЕ — [`DwellSemantics`]; амендмент v0.1.2,
+//!   BUG-D2: Fanuc P = мс, Haas P-dot-rule, X/U = сек; канон — секунды);
 //! * всё вне §2.4 (G31-пробинг, G154 P#, G10/G28/G53/G92, G103, циклы
 //!   G70–G89, vendor M-коды, state-only кадры, `,R`-comma-слова,
 //!   block-delete `/`) → **L1Op-носитель** ([`Op::Raw`] c lossless hex
@@ -81,6 +86,43 @@ use std::sync::Arc;
 // Конфигурация диалекта
 // ===========================================================================
 
+/// Диалект-семантика dwell-слов G4 (амендрмент v0.1.2, BUG-D2 —
+/// trace-зеркало agent D, коммит 841ab2c). Единое «P/X/U verbatim-секунды»
+/// v0.1 было неверно для ОБОИХ Macro B диалектов (×1000 в разные стороны).
+///
+/// Канон [`Op::Dwell`] всегда несёт СЕКУНДЫ (eid-core emitter:
+/// `DWELL seconds=…`); конверсия единиц — обязанность парсера:
+/// * **Fanuc**: bare P = МИЛЛИсекунды всегда (`G4 P2000` = 2 s; десятичная
+///   точка единицы P-слова не меняет), X/U = секунды (`G4 X2.` = 2 s);
+/// * **Haas** (P-dot-rule, haas_dialect_analysis §1.2): P с десятичной
+///   точкой = секунды (`P1.` = 1 s), без точки = МИЛЛИсекунды
+///   (`P500` = 0.5 s); X/U-формы dwell у Haas не документированы —
+///   читаются как секунды (симметрия с Fanuc; корпус renishaw-цепочки
+///   `G04 P250` bare → 0.25 s).
+///
+/// LinuxCNC (P = секунды всегда) — в своём парсере (parser_linuxcnc),
+/// сюда не входит.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DwellSemantics {
+    /// Fanuc Macro B: P = мс (всегда), X/U = сек.
+    Fanuc,
+    /// Haas NGC: P-dot-rule (с точкой = сек, без = мс), X/U = сек.
+    Haas,
+}
+
+impl DwellSemantics {
+    /// Значение dwell-слова `letter` (verbatim-текст `text`, число
+    /// `value`) в СЕКУНДАХ — единица канона [`Op::Dwell`].
+    pub fn seconds(self, letter: char, text: &str, value: f64) -> f64 {
+        match self {
+            Self::Fanuc if letter == 'P' => value / 1000.0,
+            Self::Haas if letter == 'P' && !text.contains('.') => value / 1000.0,
+            // X/U (оба диалекта) и Haas-P с точкой — секунды verbatim.
+            _ => value,
+        }
+    }
+}
+
 /// Диалект-надстройка над общим ядром (см. parser_fanuc/parser_haas).
 pub struct DialectCfg {
     /// Имя диалекта — тег SrcSpan.file всех операторов парса.
@@ -92,6 +134,9 @@ pub struct DialectCfg {
     pub allow_m97: bool,
     /// Haas G101 — зеркало → WithTransform{TransformKind::Mirror}.
     pub mirror_g101: bool,
+    /// Семантика dwell-слов G4 (амендрмент v0.1.2, BUG-D2): Fanuc —
+    /// bare-P = мс; Haas — P-dot-rule. X/U = сек у обоих.
+    pub dwell: DwellSemantics,
     /// Карта номера `#n` → [`VarRef`] (Direct / Sys(…)); #0 обрабатывается
     /// до карты (Expr::Null в значении, Direct(0) в цели присваивания).
     pub map_var: fn(u32) -> VarRef,
@@ -945,17 +990,27 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // --- 5. G4 → Dwell (канонический L1-оп) ---
+        // --- 5. G4 → Dwell (канонический L1-оп). Единицы слова
+        // ДИАЛЕКТНЫЕ (амендрмент v0.1.2, BUG-D2): канон Op::Dwell.seconds
+        // всегда в СЕКУНДАХ — см. DwellSemantics::seconds. ---
         if fr.gs.contains(&4.0) {
             let dwell = ['P', 'X', 'U'].iter().find_map(|&l| match fr.word(l) {
                 Some(FrameWord {
                     expr: Expr::Const(n),
                     verbatim,
                     ..
-                }) => Some(Num::new(
-                    verbatim.trim_start_matches('+').to_string(),
-                    n.value(),
-                )),
+                }) => {
+                    let secs = self.cfg.dwell.seconds(l, &verbatim, n.value());
+                    // Текст Num: слово, прочитанное verbatim (секунды), —
+                    // исходный срез; сконвертированное (мс → с) — текст
+                    // значения (инвариант Num: parse(text) == value).
+                    let text = if secs == n.value() {
+                        verbatim.trim_start_matches('+').to_string()
+                    } else {
+                        secs.to_string()
+                    };
+                    Some(Num::new(text, secs))
+                }
                 _ => None,
             });
             match dwell {
@@ -1114,7 +1169,10 @@ impl<'a> Builder<'a> {
     }
 
     /// G65/G66: P → ONumber (константа), L → repeat, прочие буквы
-    /// (включая M-слова!) кроме G/L/N/O/P → аргументы #1..#26.
+    /// (включая M-слова!) кроме G/L/N/O/P → аргументы CallSub (буква
+    /// хранится как есть; привязка к локали — Fanuc-таблица
+    /// `ast::call_arg_local_index` в interp, амендмент v0.1.2 BUG-D1 —
+    /// НЕлинейная: D→#7, F→#9, I→#4…).
     fn dispatch_call_sub(&mut self, fr: &Frame, modal: bool, text: &str) {
         let target = match fr.word('P').map(|w| &w.expr) {
             Some(Expr::Const(n)) => SubTarget::ONumber(n.value() as u32),
@@ -1638,6 +1696,7 @@ mod tests {
             allow_bare_if: false,
             allow_m97: false,
             mirror_g101: false,
+            dwell: DwellSemantics::Fanuc,
             map_var: fanuc_map,
         }
     }
@@ -2369,12 +2428,24 @@ mod tests {
 
     #[test]
     fn dwell_and_stop_and_end() {
+        // cfg() — Fanuc-семантика dwell (амендрмент v0.1.2, BUG-D2):
+        // P = МИЛЛИсекунды (и с точкой, и без), X/U = секунды; канон
+        // Op::Dwell.seconds — всегда секунды.
         let src = "G4 P5.\nG04 P1\nG4 X2.\nG4 U0.5\nM01\nM0\nM30\n";
         let p = parse_macro_b(&cfg(), src).unwrap();
         assert_eq!(p.stmts.len(), 7);
-        for s in &p.stmts[..4] {
-            assert!(matches!(s, L2Stmt::L1Op(Op::Dwell { .. })), "{s:?}");
-        }
+        let secs: Vec<f64> = p.stmts[..4]
+            .iter()
+            .map(|s| match s {
+                L2Stmt::L1Op(Op::Dwell { seconds, .. }) => seconds.value(),
+                _ => panic!("dwell expected: {s:?}"),
+            })
+            .collect();
+        assert_eq!(secs, vec![0.005, 0.001, 2.0, 0.5]);
+        // Текст сконвертированных (мс→с) слов — текст значения; X/U —
+        // verbatim-срез.
+        assert_eq!(match &p.stmts[0] { L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text, _ => panic!() }, "0.005");
+        assert_eq!(match &p.stmts[2] { L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text, _ => panic!() }, "2.");
         assert!(matches!(
             &p.stmts[4],
             L2Stmt::L1Op(Op::ProgramStop { optional: true, .. })

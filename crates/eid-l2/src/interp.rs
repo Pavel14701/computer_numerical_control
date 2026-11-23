@@ -1182,7 +1182,39 @@ impl L2Evaluator {
 
     // ----- CallSub (D1) -----------------------------------------------------
 
-    /// CallSub: стек кадров глубина 9, args A→#1..Z→#26 (Null пробрасывается),
+    /// Индекс локали для буквы args (BUG-D1 фикс, амендмент v0.1.2).
+    ///
+    /// Узел `CallSub` не несёт диалекта, а семантика букв различна:
+    ///  * Macro B G65/G66/M98 (fanuc/haas) — ИМЕНОВАННАЯ НЕлинейная
+    ///    Fanuc-таблица (`ast::call_arg_local_index`: D→#7, F→#9, I→#4…);
+    ///  * LinuxCNC `o<…> call [a][b]…` — ПОЗИЦИОННАЯ (парсер LinuxCNC
+    ///    синтезирует буквы 'A'+i в порядке следования; k-я → #(k+1),
+    ///    `ast::positional_arg_local_index`).
+    ///
+    /// Различитель: список букв args = ТОЧНЫЙ префикс 'A','B','C',… —
+    /// формат синтеза LinuxCNC → позиционная таблица; любой иной набор
+    /// букв → Fanuc-таблица. Буквы A/B/C совпадают в обеих таблицах.
+    /// ОГОВОРКА (документировано, док §2.4 амендмент v0.1.2): Fanuc-вызов
+    /// с буквами РОВНО A..N-префикса из ≥4 аргументов (напр. `G65 A1. B1.
+    /// C1. D1.`) свяжется позиционно (D→#4 вместо Fanuc-#7) — каноничный
+    /// фикс (поле диалекта в CallSub) требует амендмента AST вне зоны B2;
+    /// в корпусе таких вызовов нет (ценз G65-args: deep-drill Z/D/S/F/E,
+    /// probes X/Z/S, material-verify Z/M — префиксы не образуют).
+    fn call_arg_index(args: &[(u8, crate::ast::Expr)], letter: u8) -> Option<u32> {
+        let positional = args
+            .iter()
+            .enumerate()
+            .all(|(i, (l, _))| l.to_ascii_uppercase() == b'A' + i as u8);
+        if positional {
+            crate::ast::positional_arg_local_index(letter)
+        } else {
+            crate::ast::call_arg_local_index(letter)
+        }
+    }
+
+    /// CallSub: стек кадров глубина 9, args → локали по таблице диалекта
+    /// (BUG-D1 фикс: Macro B G65 — Fanuc-таблица, LinuxCNC o-call —
+    /// позиционная; см. [`Self::call_arg_index`]), Null пробрасывается,
     /// repeat L/K, modal G66 — каркас.
     fn exec_call_sub(&mut self, program: &L2Program, stmt: &L2Stmt) -> Result<Flow, L2ExecError> {
         let (target, repeat, args, modal) = match stmt {
@@ -1202,9 +1234,9 @@ impl L2Evaluator {
         if *modal {
             let mut bound = Vec::with_capacity(args.len());
             for (letter, value) in args {
-                let idx = crate::ast::call_arg_local_index(*letter).ok_or_else(|| {
+                let idx = Self::call_arg_index(args, *letter).ok_or_else(|| {
                     L2ExecError::Eval(L2Error::RuntimeError(format!(
-                        "CALL argument letter must be ASCII A..Z, got {letter:#x}"
+                        "CALL argument letter binds to no local slot (G65 Fanuc arg table / positional), got {letter:#x}"
                     )))
                 })?;
                 let v = self.eval_resolved(value)?;
@@ -1243,9 +1275,9 @@ impl L2Evaluator {
         // таблица 2.1: опциональный аргумент пробрасывается как Null).
         let mut bound = Vec::with_capacity(args.len());
         for (letter, value) in args {
-            let idx = crate::ast::call_arg_local_index(*letter).ok_or_else(|| {
+            let idx = Self::call_arg_index(args, *letter).ok_or_else(|| {
                 L2ExecError::Eval(L2Error::RuntimeError(format!(
-                    "CALL argument letter must be ASCII A..Z, got {letter:#x}"
+                    "CALL argument letter binds to no local slot (G65 Fanuc arg table / positional), got {letter:#x}"
                 )))
             })?;
             let v = self.eval_resolved(value)?;
@@ -3150,12 +3182,107 @@ mod tests {
 
     #[test]
     fn call_arg_local_index_mapping() {
-        // A→#1 .. Z→#26 (§2.4, G65), регистронезависимо; не-буква → None.
-        assert_eq!(crate::ast::call_arg_local_index(b'A'), Some(1));
-        assert_eq!(crate::ast::call_arg_local_index(b'X'), Some(24));
-        assert_eq!(crate::ast::call_arg_local_index(b'Z'), Some(26));
-        assert_eq!(crate::ast::call_arg_local_index(b'a'), Some(1));
-        assert_eq!(crate::ast::call_arg_local_index(b'1'), None);
+        // Амендмент v0.1.2 (BUG-D1): Fanuc Macro B G65-таблица (Haas
+        // идентична), регистронезависимо; не-аргумент/не-буква → None.
+        let fanuc: [(u8, u32); 21] = [
+            (b'A', 1),
+            (b'B', 2),
+            (b'C', 3),
+            (b'I', 4),
+            (b'J', 5),
+            (b'K', 6),
+            (b'D', 7),
+            (b'E', 8),
+            (b'F', 9),
+            (b'H', 11),
+            (b'M', 13),
+            (b'Q', 17),
+            (b'R', 18),
+            (b'S', 19),
+            (b'T', 20),
+            (b'U', 21),
+            (b'V', 22),
+            (b'W', 23),
+            (b'X', 24),
+            (b'Y', 25),
+            (b'Z', 26),
+        ];
+        for (l, slot) in fanuc {
+            assert_eq!(crate::ast::call_arg_local_index(l), Some(slot), "{l}");
+        }
+        // G/L/N/O/P — НЕ аргументы G65; небуква → None.
+        for l in [b'G', b'L', b'N', b'O', b'P', b'1', b'#'] {
+            assert_eq!(crate::ast::call_arg_local_index(l), None, "{l}");
+        }
+        // Регистронезависимость (lowercase D → Fanuc #7).
+        assert_eq!(crate::ast::call_arg_local_index(b'd'), Some(7));
+        // Позиционная таблица (LinuxCNC o-call) — линейна на всём A..Z
+        // (включая G/L/N/O/P), не-буква → None.
+        assert_eq!(crate::ast::positional_arg_local_index(b'D'), Some(4));
+        assert_eq!(crate::ast::positional_arg_local_index(b'G'), Some(7));
+        assert_eq!(crate::ast::positional_arg_local_index(b'P'), Some(16));
+        assert_eq!(crate::ast::positional_arg_local_index(b'Z'), Some(26));
+        assert_eq!(crate::ast::positional_arg_local_index(b'1'), None);
+    }
+
+    #[test]
+    fn d1_fanuc_table_binding_deep_drill_letters() {
+        // BUG-D1 пин (trace-зеркало deep-drill): драйвер
+        // `G65 P7981 Z-7.88 D-.4 S6000 F60.` — буквы НЕ образуют A..-префикс
+        // → Fanuc-таблица: D→#7, F→#9, Z→#26, S→#19 (линейная привязка
+        // давала #4/#6 → guard IF[#7 EQ #0] TRUE → alarm-путь).
+        let program = L2Program::new(
+            vec![call(
+                SubTarget::ONumber(7981),
+                vec![
+                    (b'Z', Expr::num(-7.88)),
+                    (b'D', Expr::num(-0.4)),
+                    (b'S', Expr::num(6000.0)),
+                    (b'F', Expr::num(60.0)),
+                ],
+            )],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(7981),
+                body: vec![
+                    assign(500, Expr::var(7)),
+                    assign(501, Expr::var(9)),
+                    assign(502, Expr::var(26)),
+                    assign(503, Expr::var(19)),
+                ],
+            }],
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(-0.4));
+        assert_eq!(e.env().read_direct(501).unwrap(), Val::Num(60.0));
+        assert_eq!(e.env().read_direct(502).unwrap(), Val::Num(-7.88));
+        assert_eq!(e.env().read_direct(503).unwrap(), Val::Num(6000.0));
+    }
+
+    #[test]
+    fn d1_positional_binding_linuxcnc_prefix_letters() {
+        // Различитель таблиц (см. call_arg_index): точный A..-префикс →
+        // ПОЗИЦИОННАЯ привязка (LinuxCNC o call: 4-й arg D → #4, НЕ
+        // Fanuc-#7; #7 остаётся несвязанной = Null).
+        let program = L2Program::new(
+            vec![call(
+                SubTarget::ONumber(1),
+                vec![
+                    (b'A', Expr::num(10.0)),
+                    (b'B', Expr::num(20.0)),
+                    (b'C', Expr::num(30.0)),
+                    (b'D', Expr::num(40.0)),
+                ],
+            )],
+            vec![crate::ast::L2Sub {
+                target: SubTarget::ONumber(1),
+                body: vec![assign(500, Expr::var(4)), assign(501, Expr::var(7))],
+            }],
+        );
+        let mut e = ev();
+        e.run(&program).unwrap();
+        assert_eq!(e.env().read_direct(500).unwrap(), Val::Num(40.0), "D→#4");
+        assert_eq!(e.env().read_direct(501).unwrap(), Val::Null, "#7 unbound");
     }
 
     #[test]

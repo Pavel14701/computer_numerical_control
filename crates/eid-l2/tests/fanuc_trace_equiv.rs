@@ -20,17 +20,19 @@
 //!  2. `mpe_while_clear_variables.nc` — WHILE[#1 LE 147] DO1 #[#1]=#0 END1 —
 //!     косвенная очистка 48 переменных.
 //!
-//! ЧЕСТНЫЕ ОГОВОРКИ (см. стоп-отчёт, все — TEST-side, крейты не тронуты):
-//!  * BUG-D1 (РЕАЛЬНОЕ РАСХОЖДЕНИЕ, СТОП-отчёт): G65-привязка args в
-//!    eid-l2 ЛИНЕЙНА A→#1..Z→#26 (ast.rs::call_arg_local_index, док §2.4
-//!    «A->#1 .. Z->#26»). РЕАЛЬНАЯ Fanuc-таблица НЕлинейна (I/J/K
-//!    интерливнуты в #4/#5/#6): D→#7, E→#8, F→#9, H→#11, I→#4, J→#5, K→#6.
-//!    На deep-drill это меняет поток: D-.4 уходит в #4 (Fanuc: #7) →
-//!    guard IF[#7 EQ #0] срабатывает → GOTO943 → #3000=3 → запись в Sys
-//!    запрещена → РАНТАЙМ-ОШИБКА L2. Пока фикс не внесён, trace-тесты 3/4
-//!    используют TEST-SIDE ребиндинг букв на линейные слоты, дающие
-//!    Fanuc-корректные локали (D→'G', E→'H', F→'I') — документированный
-//!    шим, НЕ тихий фикс; честный вариант — #[ignore]-тест bug_d1.
+//! ЧЕСТНЫЕ ОГОВОРКИ (см. стоп-отчёты; статус после фикса B2 v0.1.2):
+//!  * BUG-D1 — ИСПРАВЛЕН (амендрмент дока v0.1.2): G65-привязка args в
+//!    eid-l2 была ЛИНЕЙНОЙ A→#1..Z→#26 (ast.rs::call_arg_local_index, док
+//!    §2.4 «A->#1 .. Z->#26») вместо НЕлинейной Fanuc-таблицы (D→#7, E→#8,
+//!    F→#9, H→#11, I→#4, J→#5, K→#6). На deep-drill D-.4 уходила в #4 →
+//!    guard IF[#7 EQ #0] срабатывал → GOTO943 → #3000=3 → alarm-путь.
+//!    ФИКС: ast.rs Fanuc-таблица (Haas идентична, пин
+//!    haas_g65_args_fanuc_table_binding_pin); TEST-side шим
+//!    fanuc_letter_to_linear_slot_shim УДАЛЁН — тесты 3/4 и честный
+//!    bug_d1 гоняют букв Ка В ФАЙЛЕ (shim=false → убран вовсе).
+//!    LinuxCNC o-call — позиционная привязка сохранена (различитель
+//!    A..-префикса, interp::call_arg_index; пин
+//!    d1_positional_binding_linuxcnc_prefix_letters).
 //!  * #5003 (Z конца предыдущего кадра, WorkPos) — в L2 Sys-чтение =
 //!    E_RUNTIME_STATE-останов (§3, by design). В sim-home (0,0,0) G90
 //!    offsets=0 семантически #5003=0.000 — TEST-side патч узла Assign
@@ -39,10 +41,11 @@
 //!  * Fanuc-специфичные кадры тела (S#100 M4, M50, M5, M9) — Raw-носители
 //!    (§2.4, honest) → канон их не несёт ни на одной стороне (allow-list
 //!    «state-only»/«M50» пиннится).
-//!  * Dwell G4 X2.: Fanuc X-слово = СЕКУНДЫ → L2 verbatim 2.0 = верно.
-//!    BUG-D2 (кандидат): Fanuc G4 P-слово = МИЛЛИсекунды, L2 берёт P
-//!    verbatim как секунды (parser_macro_common.rs шаг 5) → расхождение
-//!    1000×; #[ignore]-тест bug_d2.
+//!  * Dwell G4 X2.: Fanuc X-слово = СЕКУНДЫ → L2 verbatim 2.0 = верно
+//!    (пин deep_drill_dwell_x_word_is_seconds). BUG-D2 — ИСПРАВЛЕН:
+//!    Fanuc bare P = МИЛЛИсекунды (P2000 = 2 s), L2 брал verbatim секунды
+//!    (parser_macro_common шаг 5) → ×1000; теперь DwellSemantics (Fanuc /
+//!    Haas P-dot-rule), #[ignore]-тест bug_d2 развёрнут и зелёный.
 //!  * O-номер O7981: файл = ОДНО O-тело (парсер: main-stmts, subs пусты) →
 //!    тест оборачивает parsed-stmts в L2Sub{ONumber(7981)} — зеркало
 //!    Fanuc-семантики «программа 7981 вызывается по номеру»; вызов-драйвер
@@ -406,40 +409,12 @@ fn trace_equivalence(
 }
 
 // ===========================================================================
-// BUG-D1 шим: Fanuc-таблица G65-arg → линейные слоты eid-l2 (TEST-side only)
+// BUG-D1 шим УДАЛЁН (фикс v0.1.2 в крейте): fanuc_letter_to_linear_slot_shim
+// (D→'G', E→'H', F→'I', H→'K', I→'D', J→'E', K→'F' — TEST-side ребиндинг
+// букв на линейные слоты) больше не нужен — ast::call_arg_local_index
+// несёт Fanuc-таблицу (D→#7, E→#8, F→#9, H→#11, I→#4, J→#5, K→#6),
+// Haas идентична (пин parser_haas::haas_g65_args_fanuc_table_binding_pin).
 // ===========================================================================
-
-/// РЕАЛЬНАЯ Fanuc-таблица G65 (Custom Macro B): A=#1 B=#2 C=#3 D=#7 E=#8
-/// F=#9 H=#11 I=#4 J=#5 K=#6 M=#13 Q=#17 R=#18 S=#19 T=#20 U=#21 V=#22
-/// W=#23 X=#24 Y=#25 Z=#26 (L/P — мета-слова повтора/номера программы).
-/// eid-l2 привязывает ЛИНЕЙНО (A→#1..Z→#26 — док §2.4) → расхождение для
-/// D/E/F/H/I/J/K (BUG-D1, стоп-отчёт). Шим переписывает букву AST-args на
-/// букву, чей ЛИНЕЙНЫЙ индекс равен Fanuc-локали (D→'G', E→'H', F→'I',
-/// H→'K', I→'D', J→'E', K→'F'), чтобы CallSub привязал значение в
-/// Fanuc-корректную локаль. УДАЛИТЬ вместе с #[ignore]-тестами после фикса
-/// call_arg_local_index.
-fn fanuc_letter_to_linear_slot_shim(letter: u8) -> u8 {
-    match letter.to_ascii_uppercase() {
-        b'D' => b'G',   // Fanuc #7
-        b'E' => b'H',   // Fanuc #8
-        b'F' => b'I',   // Fanuc #9
-        b'H' => b'K',   // Fanuc #11
-        b'I' => b'D',   // Fanuc #4
-        b'J' => b'E',   // Fanuc #5
-        b'K' => b'F',   // Fanuc #6
-        other => other, // A/B/C/M/Q/R/S/T/U/V/W/X/Y/Z — линейно совпадают
-    }
-}
-
-fn rebind_driver_args_fanuc_shim(stmts: &mut [L2Stmt]) {
-    for s in stmts.iter_mut() {
-        if let L2Stmt::CallSub { args, .. } = s {
-            for (letter, _) in args.iter_mut() {
-                *letter = fanuc_letter_to_linear_slot_shim(*letter);
-            }
-        }
-    }
-}
 
 /// Патч `#18=#5003` → `#18=0`: Sys-чтение в L2 — E_RUNTIME_STATE-останов
 /// (§3 by design); sim-home (0,0,0)/G90/offsets=0 даёт #5003 = 0.000 — то же
@@ -473,8 +448,9 @@ fn patch_5003_sim_home(stmts: &mut [L2Stmt], name: &str) {
 }
 
 /// Собрать O7981 как sub: файл = одно O-тело (парсер: main, subs пусты) →
-/// зеркало Fanuc «программа 7981» + драйвер G65 P7981 …
-fn assemble_deep_drill(driver_src: &str, shim: bool, name: &str) -> L2Program {
+/// зеркало Fanuc «программа 7981» + драйвер G65 P7981 … Аргументы драйвера
+/// — буквы КАК В ФАЙЛЕ (шим BUG-D1 удалён: привязка Fanuc-таблицей в крейте).
+fn assemble_deep_drill(driver_src: &str, name: &str) -> L2Program {
     let mut macro_prog = parse_program(&corpus("inbox/mpe_g65_macro_deep_drill.nc"))
         .unwrap_or_else(|e| panic!("{name}: fanuc parse failed: {e:?}"));
     assert!(
@@ -487,9 +463,6 @@ fn assemble_deep_drill(driver_src: &str, shim: bool, name: &str) -> L2Program {
     let mut driver =
         parse_program(driver_src).unwrap_or_else(|e| panic!("{name}: driver parse failed: {e:?}"));
     assert_eq!(driver.stmts.len(), 1, "{name}: driver = one G65 call");
-    if shim {
-        rebind_driver_args_fanuc_shim(&mut driver.stmts);
-    }
     L2Program::new(
         driver.stmts,
         vec![L2Sub {
@@ -589,8 +562,9 @@ fn deep_drill_trace_g65_no_e() {
         eprintln!("SKIP (no docker): rs274 trace-equivalence unavailable");
         return;
     }
-    // Шим BUG-D1: D→'G'(#7), F→'I'(#9); Z/S линейно совпадают (#26/#19).
-    let program = assemble_deep_drill("G65 P7981 Z-7.88 D-.4 S6000 F60.\n", true, "dd_no_e");
+    // Честные буквы КАК В ФАЙЛЕ: D→#7, F→#9 (Fanuc-таблица, фикс BUG-D1);
+    // Z/S совпадают с линейной (#26/#19).
+    let program = assemble_deep_drill("G65 P7981 Z-7.88 D-.4 S6000 F60.\n", "dd_no_e");
     let ops = run_l2("dd_no_e", &program);
     // Семантический пин ДО rs274 (вне passthrough-Raw): pilot -0.4 @F20 →
     // dwell 2 → -7.88 @F60 → retract Z0 (rapid).
@@ -672,10 +646,10 @@ fn deep_drill_trace_g65_with_e() {
         eprintln!("SKIP (no docker): rs274 trace-equivalence unavailable");
         return;
     }
-    // Шим BUG-D1: E→'H'(#8), D→'G'(#7), F→'I'(#9).
+    // Честные буквы КАК В ФАЙЛЕ: E→#8, D→#7, F→#9 (Fanuc-таблица, фикс
+    // BUG-D1).
     let program = assemble_deep_drill(
         "G65 P7981 Z-7.88 E-7.75 D-.4 S6000 F60.\n",
-        true,
         "dd_with_e",
     );
     let ops = run_l2("dd_with_e", &program);
@@ -870,25 +844,22 @@ G1 X148.0000 Y5.0000 Z3.0000 F30.0000
 }
 
 // ===========================================================================
-// 6. #[ignore] BUG-D1: честные буквы D/F/E драйвера (без шима)
+// 6. BUG-D1 (рас-unignore после фикса v0.1.2): честные буквы D/F/E драйвера
 // ===========================================================================
 
-/// ЧЕСТНЫЙ вариант deep-drill no-E с буквами КАК В КОРПУСЕ (D/F). После
-/// фикса BUG-D1 (call_arg_local_index → Fanuc-таблица) тест разворачивают:
-/// убрать #[ignore] и шим из assemble_deep_drill-вызова (shim=false).
-/// СЕГОДНЯ: D-.4 → #4 (Fanuc #7) → guard IF[#7 EQ #0] TRUE → GOTO943 →
-/// #3000=3 → запись в Sys запрещена → L2 run error (см. стоп-отчёт).
+/// ЧЕСТНЫЙ вариант deep-drill no-E с буквами КАК В КОРПУСЕ (D/F), БЕЗ
+/// шима. ДО фикса (v0.1.2): D-.4 → #4 (линейно), Fanuc кладёт в #7 →
+/// guard IF[#7 EQ #0] TRUE → GOTO943 → #3000=3 → запись в Sys запрещена →
+/// L2 run error (стоп-отчёт agent D). ПОСЛЕ фикса
+/// (ast::call_arg_local_index → Fanuc-таблица): D→#7, F→#9 — guards
+/// проходят, trace semantic_diff == 0.
 #[test]
-#[ignore = "BUG-D1: linear G65 arg binding (D/E/F/H/I/J/K) vs Fanuc table — включить после фикса call_arg_local_index"]
 fn deep_drill_trace_honest_letters_bug_d1() {
     if !docker_available() {
         eprintln!("SKIP (no docker)");
         return;
     }
-    // Честный trace ПЕРВЫМ: сегодня паника здесь и есть доказательство —
-    // D-.4 уходит в #4 (линейно), Fanuc кладёт в #7 → guard IF[#7 EQ #0]
-    // TRUE → GOTO943 → #3000=3 → запись в Sys запрещена → L2 run error.
-    let program = assemble_deep_drill("G65 P7981 Z-7.88 D-.4 S6000 F60.\n", false, "dd_honest");
+    let program = assemble_deep_drill("G65 P7981 Z-7.88 D-.4 S6000 F60.\n", "dd_honest");
     let ops = run_l2("dd_honest", &program);
     let flat = emit_ops(&ops);
     let (div, n) = trace_equivalence("fanuc_dd_honest", &flat, ORACLE_NO_E, 1e-3)
@@ -908,15 +879,15 @@ fn deep_drill_trace_honest_letters_bug_d1() {
 }
 
 // ===========================================================================
-// 7. #[ignore] BUG-D2: Fanuc G4 P = миллисекунды
+// 7. BUG-D2 (рас-unignore после фикса v0.1.2): Fanuc G4 P = миллисекунды
 // ===========================================================================
 
 /// Fanuc Custom Macro B: G04 P-слово = МИЛЛИсекунды (X/U = секунды).
-/// L2-парсер берёт P verbatim как секунды (parser_macro_common шаг 5,
-/// единый для fanuc/haas). После фикса (диалектная конверсия P/1000 в
-/// fanuc-конфиге) тест разворачивают.
+/// ДО фикса L2-парсер брал P verbatim как секунды (parser_macro_common
+/// шаг 5, единый для fanuc/haas) → ×1000. ПОСЛЕ фикса — диалект-семантика
+/// parser_macro_common::DwellSemantics::Fanuc (bare P /1000; Haas —
+/// P-dot-rule, пин parser_haas::haas_g04_p_dot_rule_bare_ms_dotted_sec).
 #[test]
-#[ignore = "BUG-D2: Fanuc G4 P-слово = ms, L2 берёт verbatim как секунды (×1000) — включить после диалектной конверсии dwell"]
 fn dwell_p_word_fanuc_ms_bug_d2() {
     let prog = parse_program("G4 P2000\n").unwrap();
     let mut ev = L2Evaluator::new(trace_cfg());
@@ -926,7 +897,7 @@ fn dwell_p_word_fanuc_ms_bug_d2() {
             assert_eq!(
                 seconds.value(),
                 2.0,
-                "Fanuc G4 P2000 = 2000 ms = 2 s (BUG-D2: сейчас verbatim 2000)"
+                "Fanuc G4 P2000 = 2000 ms = 2 s (BUG-D2 фикс: P/1000)"
             );
         }
         other => panic!("dwell op expected, got {other:?}"),
