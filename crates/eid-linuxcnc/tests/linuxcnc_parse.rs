@@ -4131,6 +4131,67 @@ fn v020_probe2_g92_twice_replace_from_current_reading() {
     );
 }
 
+// ===========================================================================
+// v0.21 per-axis (SPEC §5.3 ревизия 0566db5/c76ed9a, fresa-класс
+// mit_cws_fresa.gcode:5 `G92 z50 x-10`): частичная стартовая G92 легальна —
+// указанные оси = присвоенные значения, неуказанные = текущее чтение
+// (на старте = 0) → header vec3 partial. Стартовый путь = header-поле для
+// ПЕРВОЙ G92 до ходов (full ИЛИ partial — axes_from_words base 0.0),
+// семантика per-axis идентична mid-пути (зонды 1–3 выше); chaining обычный.
+// ===========================================================================
+
+#[test]
+fn v021_g92_startup_partial_fresa() {
+    // fresa-паттерн дословно: G92 z50 x-10 до ходов → vec3 (X-10, Y0, Z50)
+    // — ПОРЯДОК X,Y,Z; rs274-док: «axis word not used for a given axis —
+    // offset zero» == стартовое чтение 0. Chaining: G0 z10 стартует от
+    // пресетки (−10,0,50), G1 z40 — ход в новой системе (10 → 40).
+    let out = parse_out("G17\nG21\nG90\nG40\nG92 z50 x-10\nG0 z10.000\nG1 z40. F100\nM2\n");
+    let p = out.program;
+    let fp = p
+        .frame_preset
+        .as_ref()
+        .expect("частичная стартовая G92 → header Program.frame_preset");
+    assert_eq!(to_f64(&fp.values), [-10.0, 0.0, 50.0]);
+    assert_eq!(fp.wcs, eid_core::ast::Wcs::G54);
+    assert_eq!(p.ops.len(), 3); // Rapid + Linear + PEND
+    assert!(
+        matches!(&p.ops[0], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [-10.0, 0.0, 50.0] && to_f64(end) == [-10.0, 0.0, 10.0]),
+        "старт первого хода = частичная пресетка (Y чтение 0): {:?}",
+        p.ops[0]
+    );
+    assert!(
+        matches!(&p.ops[1], Op::Linear { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [-10.0, 0.0, 10.0] && to_f64(end) == [-10.0, 0.0, 40.0]),
+        "G1 z40 — ход в новой системе: {:?}",
+        p.ops[1]
+    );
+    assert!(matches!(&p.ops[2], Op::ProgramEnd { .. }));
+    assert!(
+        !out.diagnostics
+            .iter()
+            .any(|d| d.message.contains("G92 mid-program")),
+        "стартовая G92 — НЕ mid-носитель (header-путь): {:?}",
+        out.diagnostics
+    );
+}
+
+#[test]
+fn v021_g92_startup_partial_single_axis() {
+    // Одиночная ось: G92 X2.0 — Y/Z чтение 0; ход G0 Y3.0 от (2,0,0).
+    let out = parse_out("G21\nG90\nG92 X2.0\nG0 Y3.0\nM2\n");
+    let p = out.program;
+    let fp = p.frame_preset.as_ref().expect("header preset");
+    assert_eq!(to_f64(&fp.values), [2.0, 0.0, 0.0]);
+    assert!(
+        matches!(&p.ops[0], Op::Rapid { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [2.0, 0.0, 0.0] && to_f64(end) == [2.0, 3.0, 0.0]),
+        "{:?}",
+        p.ops[0]
+    );
+}
+
 #[test]
 fn v020_probe7_g92_after_g53_reads_machine() {
     // Зонд 7/7b: G92 после machine-хода — rebase от машинного чтения:

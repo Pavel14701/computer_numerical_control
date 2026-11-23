@@ -8,6 +8,9 @@
 //! chaining + Raw-носитель (грамматика v0.3 не имеет mid-preset опа);
 //! G92.1 → Raw{E_REQUIRES_MACHINE_TABLE}; блоки после M2/M30 → Raw-хвост
 //! + notice диалект-расхождения (grbl исполняет — protocol.c:74-105).
+//! v0.21 per-axis (§5.3 ревизия, fresa-класс mit_cws_fresa): стартовая G92
+//! с подмножеством осей легальна — неуказанные оси = стартовое чтение 0.0
+//! (header vec3); голый G92 без XYZ-слов — RUNTIME (grbl gcode.c:561 FAIL).
 #![allow(dead_code)]
 
 use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};

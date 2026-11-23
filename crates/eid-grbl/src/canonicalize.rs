@@ -1717,9 +1717,15 @@ enum G92Where {
 /// различие только в построении опа (legal строит на Mid, raw — нет).
 /// Диспозиции:
 /// * стартовая зона (до первого motion-опа), ПЕРВАЯ G92 — СТАРТОВАЯ
-///   пресетка: full-triple обязателен — частичный → RUNTIME (незаданные
-///   оси — неизвестное стартовое чтение; header-поле Program.frame_preset —
-///   полный triple, back-compat goldens не изменяются);
+///   пресетка: **per-axis (ревизия §5.3 v0.21, fresa-класс
+///   mit_cws_fresa.gcode:5 `G92 z50 x-10`)** — указанные оси = присвоенные
+///   значения, неуказанные = **текущее чтение** (на старте = 0: offset-регистр
+///   grbl пуст → чтение стартовой позиции 0 по всем осям; 0 инвариантен к
+///   единицам, поэтому дефолт 0.0 безопасен и для inch). Полный triple —
+///   прежний путь (back-compat goldens не изменяются); header-поле
+///   Program.frame_preset получает vec3 с 0.0-заполнением. Голый G92 без
+///   XYZ-слов — по-прежнему RUNTIME: у источника пустое подмножество —
+///   отказ (grbl gcode.c:561 `if (!axis_words) FAIL`);
 /// * стартовая зона, ПОВТОРНАЯ G92 — per-axis слияние в ту же пресетку
 ///   (машина ещё не двигалась → пересчёт вырождается в merge; зонд 3:
 ///   неуказанные оси сохраняют прежнее чтение);
@@ -1747,15 +1753,29 @@ fn apply_g92(ctx: &mut Ctx, b: &Block) -> Result<G92Where, Vec<Diagnostic>> {
     if ctx.prev_end.is_none() {
         // СТАРТОВАЯ зона.
         if ctx.g92_def_count == 0 {
+            // v0.21 per-axis (SPEC §5.3 ревизия 0566db5/c76ed9a; fresa-класс):
+            // частичная стартовая G92 легальна — неуказанные оси наследуют
+            // текущее чтение, на старте = 0.0 (указанные — verbatim слова
+            // кадра в текущей системе).
             let (x, y, z) = match (b.word('X'), b.word('Y'), b.word('Z')) {
-                (Some(x), Some(y), Some(z)) => (verbatim(x), verbatim(y), verbatim(z)),
-                _ => {
+                (None, None, None) => {
                     return Err(vec![err(
                         ErrorCode::RuntimeState,
-                        "partial G92: unspecified axes keep unknown startup position reading (SPEC §5.3)",
+                        "G92 without axis words: empty axis subset — source refuses (grbl gcode.c:561 `if (!axis_words) FAIL`; SPEC §5.3 per-axis: at least one axis)",
                         &ctx.file, line, blen,
                     )]);
                 }
+                _ => (
+                    b.word('X')
+                        .map(|n| verbatim(n))
+                        .unwrap_or_else(|| num_f64(0.0)),
+                    b.word('Y')
+                        .map(|n| verbatim(n))
+                        .unwrap_or_else(|| num_f64(0.0)),
+                    b.word('Z')
+                        .map(|n| verbatim(n))
+                        .unwrap_or_else(|| num_f64(0.0)),
+                ),
             };
             let values = Point3 { x, y, z };
             ctx.g92_values = Some((values.clone(), ctx.wcs));
@@ -2059,8 +2079,9 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
     }
 }
 
-/// G92 → frame_preset (SPEC §3 v0.20, Q4-частично/Q5-закрыт):
-/// стартовая зона — header-поле Program.frame_preset (первая G92 full-triple,
+/// G92 → frame_preset (SPEC §3 v0.20, Q4-частично/Q5-закрыт; v0.21 per-axis):
+/// стартовая зона — header-поле Program.frame_preset (первая G92 — per-axis
+/// vec3: указанные оси = значения, неуказанные = стартовое чтение 0.0;
 /// повторные — per-axis merge; back-compat goldens не изменяются);
 /// mid-program — chaining чтения (apply_g92) + Raw-оп как lossless-носитель
 /// блока. Носитель Raw, а не узел frame_preset: grammar/AST v0.3 НЕ имеют

@@ -23,7 +23,8 @@
 //!   нет; эмиссионное зеркало — F-кадр sub=1 в grbl_emit).
 //! FRAME/WCS §5.3: G10L2/L20→g10_l20_and_l2+pilot_36, L20-mid→n15,
 //!   double-preset→n17 (v0.20: Ok, per-axis merge), G92-mid→v020_g92_mid_*
-//!   (v0.20: Ok + chaining, Raw-носитель), G92-partial→spec_cov_frame_g92_partial,
+//!   (v0.20: Ok + chaining, Raw-носитель), G92-partial→v021_g92_startup_*
+//!   (v0.21 per-axis: Ok, vec3 partial; голый G92 → RUNTIME),
 //!   G92.1→spec_cov_frame_g92_1_raw (v0.20: Raw{TABLE}), G53-conditions→#37+n1+n16,
 //!   G53-without-motion→spec_cov_frame_g53_no_motion, wcs-solo→spec_cov_frame_wcs_solo.
 //! v0.20 SPEC §5.2 (зонд-сверка target/probe/g92): bare-T ABSORB→
@@ -80,6 +81,23 @@ fn known(op: &Op) -> [f64; 3] {
         } => pt3(s),
         other => panic!("start Unknown у {other:?}"),
     }
+}
+
+/// start + end motion-опа: проверка пары (допуск EPS) — v021 per-axis пресетка.
+fn assert_pt_known(op: &Op, sx: f64, sy: f64, sz: f64, ex: f64, ey: f64, ez: f64) {
+    let s = known(op);
+    assert!(
+        (s[0] - sx).abs() <= EPS && (s[1] - sy).abs() <= EPS && (s[2] - sz).abs() <= EPS,
+        "start {s:?} vs ({sx},{sy},{sz})"
+    );
+    let e = match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } | Op::Arc { end, .. } => pt3(end),
+        other => panic!("не motion-оп: {other:?}"),
+    };
+    assert!(
+        (e[0] - ex).abs() <= EPS && (e[1] - ey).abs() <= EPS && (e[2] - ez).abs() <= EPS,
+        "end {e:?} vs ({ex},{ey},{ez})"
+    );
 }
 
 fn feed_of(op: &Op) -> Option<f64> {
@@ -1663,9 +1681,13 @@ fn spec_cov_cycles_raw_classes() {
 
 #[test]
 fn spec_cov_frame_g92_partial_and_g92_1() {
-    // Частичный G92 → RUNTIME (незаданные оси — неизвестное чтение, §5.3).
+    // v0.21 per-axis (§5.3 ревизия, fresa-класс): частичная стартовая G92
+    // легальна — неуказанные оси = стартовое чтение 0.0 (см.
+    // v021_g92_startup_partial_fresa). Голый G92 без XYZ-слов — по-прежнему
+    // RUNTIME: пустое подмножество источник отказывает (grbl gcode.c:561
+    // `if (!axis_words) FAIL`).
     assert_eq!(
-        err_code(parse("G21 G90 G94 G17\nG92 X0.0 Y0.0\nG0 X1 Y1 Z1\nM2\n")),
+        err_code(parse("G21 G90 G94 G17\nG92\nG0 X1 Y1 Z1\nM2\n")),
         ErrorCode::RuntimeState
     );
     // G92.1 → Raw{E_REQUIRES_MACHINE_TABLE} (SPEC §3 v0.20 / Q4-частично:
@@ -1680,6 +1702,57 @@ fn spec_cov_frame_g92_partial_and_g92_1() {
             ..
         }
     ));
+}
+
+#[test]
+fn v021_g92_startup_partial_fresa() {
+    // SPEC §5.3 per-axis ревизия (0566db5/c76ed9a) — реализация v0.21.
+    // fresa-паттерн mit_cws_fresa.gcode:5: `G92 z50 x-10` до ходов —
+    // указанные оси = присвоенные значения, неуказанные (Y) = текущее
+    // чтение, на старте = 0 → header frame_preset vec3 (X-10, Y0, Z50)
+    // — ПОРЯДОК X,Y,Z. Реальный grbl: offset-регистр при старте пуст,
+    // чтение = 0 по всем осям; частичная пресетка легальна (probe
+    // rs274-док: «axis word not used → offset zero»; grbl gcode.c —
+    // per-axis assignment от текущего чтения).
+    let src = "G17\nG21\nG90\nG40\nG92 z50 x-10\nG0 z10.000\nG1 z40. F100\nM2\n";
+    let p = parse(src).expect("частичная стартовая G92 — Ok (v0.21 per-axis)");
+    let fp = p
+        .frame_preset
+        .as_ref()
+        .expect("стартовая G92 → header Program.frame_preset");
+    assert_pt(&fp.values, -10.0, 0.0, 50.0);
+    assert_eq!(fp.wcs, Wcs::G54, "wcs момента G92 (дефолт)");
+    // Chaining обычный: G0 z10 — чтение старта = пресетка (−10, 0, 50).
+    assert_eq!(p.ops.len(), 3, "Rapid + Linear + PEND");
+    assert_pt_known(&p.ops[0], -10.0, 0.0, 50.0, -10.0, 0.0, 10.0);
+    // G1 z40 — ход в новой системе: 10 → 40.
+    assert_pt_known(&p.ops[1], -10.0, 0.0, 10.0, -10.0, 0.0, 40.0);
+    assert!(matches!(p.ops[2], Op::ProgramEnd { .. }));
+}
+
+#[test]
+fn v021_g92_startup_partial_single_axis_and_inch() {
+    // Одиночная ось + единицы: `G20`-файл, G92 X2.0 — Y/Z чтение 0 (inch).
+    // 0 инвариантен к конверсии — дефолт 0.0 безопасен.
+    let p = parse("G20\nG90\nG92 X2.0\nG0 Y3.0\nM2\n").expect("частичная G92 в inch — Ok");
+    let fp = p.frame_preset.as_ref().expect("header preset");
+    assert_pt(&fp.values, 2.0, 0.0, 0.0);
+    assert_eq!(p.units, Units::In);
+    // Чтение старта хода = пресетка: (2, 0, 0) → (2, 3, 0).
+    assert_pt_known(&p.ops[0], 2.0, 0.0, 0.0, 2.0, 3.0, 0.0);
+}
+
+#[test]
+fn v021_g92_startup_partial_then_repeat_merges() {
+    // Повторная G92 до ходов после частичной — per-axis merge в ту же
+    // пресетку (v0.20 Q5, зонд 3): неуказанные оси сохраняют прежнее
+    // чтение (частичные дефолты 0 не перетираются).
+    let src = "G21\nG90\nG92 z50 x-10\nG92 y5.0\nG0 z10.0\nM2\n";
+    let p = parse(src).expect("две стартовые G92 — Ok (merge)");
+    let fp = p.frame_preset.as_ref().expect("merged header preset");
+    assert_pt(&fp.values, -10.0, 5.0, 50.0);
+    // Чтение старта = merged пресетка.
+    assert_pt_known(&p.ops[0], -10.0, 5.0, 50.0, -10.0, 5.0, 10.0);
 }
 
 #[test]
