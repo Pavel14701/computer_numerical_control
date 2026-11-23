@@ -210,12 +210,38 @@ fn parse_canonical(text: &str) -> Vec<CanonLine> {
     out
 }
 
+/// Ожидание процесса с таймаутом (std::process не имеет wait_timeout).
+/// Возврат Some(status) если процесс завершился вовремя, None — по таймауту
+/// (процесс убивается). Защита от вечного зависания CLI docker при мёртвом
+/// демоне (инцидент 2026-11-23: com.docker.backend умер → `docker --version`
+/// висел на pipe-подключении 109 минут).
+fn wait_with_timeout(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> Option<std::process::ExitStatus> {
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 fn docker_available() -> bool {
-    std::process::Command::new("docker")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    let mut child = match std::process::Command::new("docker").arg("--version").spawn() {
+        Ok(c) => c,
+        Err(_) => return false, // docker не установлен
+    };
+    wait_with_timeout(&mut child, std::time::Duration::from_secs(10)).is_some()
 }
 
 fn unique_out_name(stem: &str) -> String {
@@ -242,7 +268,9 @@ fn run_rs274(ngc_path: &Path) -> Result<String, String> {
     let mount = format!("{dir_str}:/work");
     let in_vm = format!("/work/{file_name}");
     let out_vm = format!("/work/{out_name}");
-    let output = std::process::Command::new("docker")
+    // Таймаут 300 с на rs274-прогон: при смерти демона docker run виснет
+    // вечно (инцидент 2026-11-23 — 109-минутное зависание сьюта).
+    let mut child = std::process::Command::new("docker")
         .args([
             "run",
             "--rm",
@@ -254,14 +282,31 @@ fn run_rs274(ngc_path: &Path) -> Result<String, String> {
             &in_vm,
             &out_vm,
         ])
-        .output()
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("docker run failed: {e}"))?;
-    if !output.status.success() {
+    let status = match wait_with_timeout(&mut child, std::time::Duration::from_secs(300)) {
+        Some(s) => s,
+        None => {
+            let _ = std::fs::remove_file(dir.join(&out_name));
+            return Err("docker run: таймаут 300с (демон мёртв или wedged)".to_string());
+        }
+    };
+    let stderr = child
+        .stderr
+        .take()
+        .map(|mut s| {
+            use std::io::Read;
+            let mut buf = String::new();
+            let _ = s.read_to_string(&mut buf);
+            buf
+        })
+        .unwrap_or_default();
+    if !status.success() {
         return Err(format!(
-            "rs274 failed ({}): {} {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
+            "rs274 failed ({}): {}",
+            status,
+            stderr.trim()
         ));
     }
     std::fs::read_to_string(dir.join(&out_name)).map_err(|e| format!("canon read: {e}"))
