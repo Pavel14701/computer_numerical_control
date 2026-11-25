@@ -19,6 +19,15 @@
 //!     retract G0 Z#18 (#18=#5003). Два документированных вызова (no-E / with-E).
 //!  2. `mpe_while_clear_variables.nc` — WHILE[#1 LE 147] DO1 #[#1]=#0 END1 —
 //!     косвенная очистка 48 переменных.
+//!  3. `mpe_g65_macro_centerline_probe.nc` — Renishaw centerline O7998:
+//!     G65-цепочка P9832/P9810/P9812/P9833. TRACE-зеркало — ВНЕ ручного
+//!     развёртывания (итерация 14, решение): тела Renishaw-макросов НЕ в
+//!     корпусе (9810 = protected move с G31-семантикой; G38.x/G31 = RAW(SEM)
+//!     по CONSTRUCT-REGISTRY #10; result-регистры #135..#148 — vendor),
+//!     дословная развёртка потребовала бы изобретения проприетарных
+//!     внутренностей, непроверяемых на rs274. Пинуется СТРУКТУРА:
+//!     centerline_renishaw_call_chain_census (B2-parse Ok + цепочка вызовов
+//!     + guard/alarm-каркас).
 //!
 //! ЧЕСТНЫЕ ОГОВОРКИ (см. стоп-отчёты; статус после фикса B2 v0.1.2):
 //!  * BUG-D1 — ИСПРАВЛЕН (амендрмент дока v0.1.2): G65-привязка args в
@@ -51,11 +60,20 @@
 //!    Fanuc-семантики «программа 7981 вызывается по номеру»; вызов-драйвер
 //!    синтезирован из документированной шапки файла (сам вызов в
 //!    корпус-файле — комментарий).
-//!  * while_clear: LinuxCNC не имеет Null → оракул-развёртка опускает
-//!    Y-слово очищенной переменной ВРУЧНУЮ (divergence-by-convention,
-//!    таблица 2.1 «Null-слово игнорируется»); L2-сторона обязана drop'нуть
-//!    слово САМА (D0 pose_resolve) — это и проверяется probe-хвостом
-//!    (g0 y5 заранее уводит Y из 0, чтобы drop был канон-наблюдаем).
+//!  * while_clear — БЕЗ шима (итерация 14, зонд-верифицировано на rs274,
+//!    файлы target/probe/fanuctrace/varprobe/): косвенное присваивание
+//!    `#[1]=0` rs274 исполняет НАТИВНО (зонд ip1: X#[1] → X=0) → оракул =
+//!    ЛИТЕРАЛЬНОЕ зеркало (очищенная переменная в слове, на НЕсмещённой
+//!    оси: z#[100]) — semantic_diff==0 без ручного опускания слов.
+//!    Единственная транслитерация: `#[#1]=#0` → `#[#1]=0` — LinuxCNC НЕ
+//!    имеет #0/Null (зонд ip2: «Parameter number out of range», exit 1),
+//!    т.е. корпусная Fanuc-форма непереносима дословно. РЕАЛЬНАЯ
+//!    дивергенция диалектов зафиксирована зондом ip3: слово очищенной
+//!    переменной на СМЕЩЁННОЙ оси (g0 y5 → g1 x148 y#[100]) — rs274
+//!    ДВИГАЕТ Y в 0 (STRAIGHT_FEED(148,0,0)), L2/Fanuc опускает Null-слово
+//!    и держит модальную 5 → на смещённой оси зеркало невозможно физически.
+//!    Пины: indirect_assign_rs274_native_probe (натура rs274: a-d) +
+//!    while_clear_null_drop_l2_pin (L2 Null-drop со смещением, чистый L2).
 //!  * docker-гвард: без docker тест сообщает о пропуске и проходит.
 //!  * semantic_diff (eid-harness, frozen) — локальный дубликат логики
 //!    rs274_compare (тот же паттерн, что trace_equiv.rs 12.2).
@@ -505,7 +523,7 @@ fn assemble_deep_drill(driver_src: &str, name: &str) -> L2Program {
     patch_5003_sim_home(&mut macro_prog.stmts, name);
     let body = macro_prog.stmts;
 
-    let mut driver =
+    let driver =
         parse_program(driver_src).unwrap_or_else(|e| panic!("{name}: driver parse failed: {e:?}"));
     assert_eq!(driver.stmts.len(), 1, "{name}: driver = one G65 call");
     L2Program::new(
@@ -756,13 +774,21 @@ G0 X0.0000 Y0.0000 Z0.0000
 // 5. trace: while_clear_variables — WHILE + косвенная очистка + probe-хвост
 // ===========================================================================
 
+/// Оракул = ЛИТЕРАЛЬНОЕ зеркало L2-текста (rs274-диалект: o1 while/...),
+/// единственная транслитерация — `#[#1]=#0` → `#[#1]=0` (LinuxCNC НЕ имеет
+/// #0/Null: зонд ip2, indirect_assign_rs274_native_probe (c)). Очищенная
+/// переменная несётся В СЛОВЕ на НЕсмещённой оси (z#[100]): rs274 нативно
+/// двигает Z в 0, L2 опускает Null-слово (модальный Z=0) — канон совпадает.
+/// На СМЕЩЁННОЙ оси диалекты расходятся физически (rs274 двигает в 0 vs
+/// Fanuc-модал) — зонд ip3 (d) + while_clear_null_drop_l2_pin.
 const ORACLE_WHILE_CLEAR: &str = "\
 %
-;ORACLE-a hand-expansion mirror: corpus/tier_b/inbox/mpe_while_clear_variables.nc
+;ORACLE-a literal mirror (shimless, iter-14): corpus/tier_b/inbox/mpe_while_clear_variables.nc
 ;WHILE #1 LE 147 DO1 / #[#1]=#0 / END1 -> o1 while/endwhile, 48 iterations
-;probe tail identical on both sides: #100=777 pre-set (loop CLEARS it),
-;g0 y5 makes the dropped Y word canon-observable; g1 x#1 -> X148
-;Fanuc: Y#[100]=Null -> word dropped (table 2.1); oracle omits Y by hand
+;only transliteration: #[#1]=#0 -> #[#1]=0 (LinuxCNC has no #0/Null; probe ip2
+;says: Parameter number out of range) - see indirect_assign_rs274_native_probe
+;cleared variable IN the word on the undisplaced axis: z#[100] - rs274 moves
+;Z to 0 natively, L2 drops the Null word (modal Z=0) - canon equal
 ;#200 outside 100..147 -> NOT cleared -> z#[200]=3
 #100 = 777
 #200 = 3
@@ -772,8 +798,8 @@ o1 while [#1 LE 147]
 #[#1] = 0
 #1 = [#1 + 1]
 o1 endwhile
-g1 x#1 f60
-g1 z#200 f30
+g1 x#1 z#[100] f60
+g1 z#[200] f30
 %
 ";
 
@@ -788,9 +814,8 @@ fn while_clear_variables_trace() {
     assert_eq!(main_prog.stmts.len(), 2, "#1=100 + WHILE");
     assert!(main_prog.subs.is_empty());
 
-    // Probe-хвост (ОДИНАКОВАЯ семантика на оракуле, см. ORACLE_WHILE_CLEAR):
-    // пре-сет #100=777 (цикл обязан его очистить), g0 y5, then
-    // G1 X#1 Y#[100] F60 / G1 Z#[200] F30.
+    // Probe-хвост: очищенная переменная В СЛОВЕ на НЕсмещённой оси (z#[100] —
+    // Z в этот момент модальный 0), потом z#[200] (вне диапазона очистки).
     let mut stmts = vec![
         L2Stmt::Assign {
             target: VarRef::Direct(100),
@@ -822,8 +847,8 @@ fn while_clear_variables_trace() {
         kind: MoveKind::Linear,
         target: ExprPose {
             x: Some(var(1)),
-            y: Some(Expr::Var(VarRef::Indirect(Box::new(num(100.0))))),
-            z: None,
+            y: None,
+            z: Some(Expr::Var(VarRef::Indirect(Box::new(num(100.0))))),
             a: None,
             b: None,
             c: None,
@@ -851,12 +876,15 @@ fn while_clear_variables_trace() {
     let motion = non_raw(&ops);
     assert_eq!(motion.len(), 3, "traverse + 2 linear probe");
 
-    // НУЛЕВОЙ pin Null-drop: очищенный #100 (Null) → Y-слово ОПУЩЕНО:
-    // ход = X148, Y наследует 5 (не 777 — цикл очистил; не 0 — слово drop).
+    // Конвергентная точка зеркала: z#[100] на несмещённой оси — обе семантики
+    // численно равны (L2 Null-drop → модальный 0; rs274 native assign → 0).
+    // НАБЛЮДАЕМЫЙ Null-drop со смещением — отдельные пины:
+    // while_clear_null_drop_l2_pin (L2) + ip3 в indirect_assign_rs274_native_probe.
     match motion[1] {
         Op::Linear { end, .. } => {
             assert_eq!(end.x.value(), 148.0, "48 итераций: #1 = 148");
-            assert_eq!(end.y.value(), 5.0, "Y-слово Null опущено, Y модальный 5");
+            assert_eq!(end.y.value(), 5.0, "Y модальный 5 (g0 y5, Y-слов в хвосте нет)");
+            assert_eq!(end.z.value(), 0.0, "z#[100]: cleared — drop→модал 0 / rs274→0");
         }
         other => panic!("probe linear expected, got {other:?}"),
     }
@@ -886,6 +914,187 @@ G1 X148.0000 Y5.0000 Z3.0000 F30.0000
         div.is_empty(),
         "while_clear trace FAILED (semantic_diff != 0): {div:?}"
     );
+}
+
+// ===========================================================================
+// 5a. Зонд rs274: косвенное присваивание — НАТИВНО; #0 — ошибка; очищенная
+//     переменная в слове на смещённой оси = ДВИЖЕНИЕ в 0 (дивергенция)
+// ===========================================================================
+
+/// Прогнать текст программы через реальный rs274 (temp-файл) → канон.
+fn run_rs274_text(name: &str, text: &str) -> Result<Vec<CanonLine>, String> {
+    let dir = std::env::temp_dir().join(format!("eid_l2_probe_{name}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let f = dir.join(format!("{name}.ngc"));
+    std::fs::write(&f, text).map_err(|e| format!("write: {e}"))?;
+    let res = run_rs274(&f).map(|out| parse_canonical(&out));
+    let _ = std::fs::remove_dir_all(&dir);
+    res
+}
+
+/// Числовой аргумент канон-строки (паника с дампом — только из тестов).
+fn feed_arg(line: &CanonLine, k: usize) -> f64 {
+    match line.args.get(k) {
+        Some(ArgVal::Num(v)) => *v,
+        other => panic!("feed arg[{k}] not a number: {other:?}"),
+    }
+}
+
+/// Итерация 14, зонд-пины (доказательная база безшимного while_clear-зеркала;
+/// файлы-оригиналы target/probe/fanuctrace/varprobe/ip*.ngc, docker eid-linuxcnc-sim):
+///  (a) `#[1]=0` — косвенное присваивание rs274 исполняет НАТИВНО: G1 X#[1]
+///      → X=0.0;
+///  (b) ненулевое `#[1]=12` → X=12.0 — arg[0] канона = X-координата (не
+///      provenance-номер: g1 стоит в 4-й строке файла, канон несёт 12);
+///  (c) корпусная Fanuc-форма `#[1]=#0` — НЕПЕРЕНОСИМА: LinuxCNC не имеет
+///      #0/Null → жёсткая ошибка «Parameter number out of range», exit 1
+///      (оправдывает транслитерацию `#0`→`0` в ORACLE_WHILE_CLEAR);
+///  (d) слово очищенной переменной на СМЕЩЁННОЙ оси: g0 y5 → цикл →
+///      g1 x#1 y#[100] — rs274 ДВИГАЕТ Y в 0 (STRAIGHT_FEED(148,0,0));
+///      L2/Fanuc опускает Null-слово → модальная 5 (см.
+///      while_clear_null_drop_l2_pin). Дивергенция диалектов реальна →
+///      зеркало с очищенной переменной в слове возможно ТОЛЬКО на
+///      несмещённой оси (как в ORACLE_WHILE_CLEAR).
+#[test]
+fn indirect_assign_rs274_native_probe() {
+    if !docker_available() {
+        eprintln!("SKIP (no docker)");
+        return;
+    }
+    // (a) косвенное присваивание нативно
+    let canon = run_rs274_text("ip1_indirect_assign", "%\n#1 = 5\n#[1] = 0\ng1 x#[1] f10\n%\n")
+        .unwrap_or_else(|e| panic!("ip1: rs274 failed: {e}"));
+    let feeds: Vec<&CanonLine> = canon.iter().filter(|l| l.op == "STRAIGHT_FEED").collect();
+    assert_eq!(feeds.len(), 1, "ip1: ровно один G1-канон: {canon:?}");
+    assert_eq!(
+        feed_arg(feeds[0], 0),
+        0.0,
+        "ip1: #[1]=0 нативно → X#[1] = 0 (косвенное присваивание исполняется)"
+    );
+    // (b) ненулевое значение + доказательство что arg[0] = X
+    let canon = run_rs274_text(
+        "ip1b_indirect_assign_nz",
+        "%\n#1 = 5\n#[1] = 12\ng1 x#[1] f10\n%\n",
+    )
+    .unwrap_or_else(|e| panic!("ip1b: rs274 failed: {e}"));
+    let feeds: Vec<&CanonLine> = canon.iter().filter(|l| l.op == "STRAIGHT_FEED").collect();
+    assert_eq!(feeds.len(), 1, "ip1b: ровно один G1-канон: {canon:?}");
+    assert_eq!(
+        feed_arg(feeds[0], 0),
+        12.0,
+        "ip1b: X#[1] = 12 — arg[0] канона = X (g1 — 4-я строка исходника, не 12)"
+    );
+    // (c) #0 как значение — ошибка (нет Null в LinuxCNC)
+    let err = run_rs274_text("ip2_hash0", "%\n#1 = 5\n#[1] = #0\ng1 x#[1] f10\n%\n")
+        .expect_err("ip2: #[1]=#0 обязан падать на rs274 (нет #0/Null)");
+    assert!(
+        err.contains("Parameter number out of range"),
+        "ip2: ждём «Parameter number out of range», got: {err}"
+    );
+    // (d) очищенная переменная в слове на СМЕЩЁННОЙ оси — rs274 двигает в 0
+    let canon = run_rs274_text(
+        "ip3_cleared_y_word",
+        "%\n#100 = 777\ng0 y5\n#1 = 100\no1 while [#1 LE 147]\n#[#1] = 0\n#1 = [#1 + 1]\no1 endwhile\ng1 x#1 y#[100] f60\n%\n",
+    )
+    .unwrap_or_else(|e| panic!("ip3: rs274 failed: {e}"));
+    let feeds: Vec<&CanonLine> = canon.iter().filter(|l| l.op == "STRAIGHT_FEED").collect();
+    assert_eq!(feeds.len(), 1, "ip3: ровно один G1-канон: {canon:?}");
+    assert_eq!(feed_arg(feeds[0], 0), 148.0, "ip3: X#1 = 148 (48 итераций)");
+    assert_eq!(
+        feed_arg(feeds[0], 1),
+        0.0,
+        "ip3: rs274 ДВИГАЕТ Y в 0 (y#[100], #100=0 после цикла) — vs L2/Fanuc: Null-drop → модальная 5"
+    );
+}
+
+/// Чистый L2-пин (без docker): Fanuc Null-drop со СМЕЩЕНИЕМ — та точка,
+/// где зеркало физически невозможно (зонд ip3 (d)): слово очищенной
+/// переменной опускается (D0 pose_resolve), модальная координата
+/// удерживается: X148 при Y-модале 5 (не 777 — цикл очистил; не 0 — drop).
+#[test]
+fn while_clear_null_drop_l2_pin() {
+    let mut main_prog = parse_program(&corpus("inbox/mpe_while_clear_variables.nc"))
+        .unwrap_or_else(|e| panic!("while_clear: fanuc parse failed: {e:?}"));
+    assert_eq!(main_prog.stmts.len(), 2, "#1=100 + WHILE");
+    let mut stmts = vec![
+        L2Stmt::Assign {
+            target: VarRef::Direct(100),
+            value: num(777.0),
+            src: eid_l2::ast::placeholder_span(),
+        },
+        L2Stmt::Assign {
+            target: VarRef::Direct(200),
+            value: num(3.0),
+            src: eid_l2::ast::placeholder_span(),
+        },
+        L2Stmt::Move {
+            kind: MoveKind::Rapid,
+            target: ExprPose {
+                x: None,
+                y: Some(num(5.0)),
+                z: None,
+                a: None,
+                b: None,
+                c: None,
+            },
+            feed: None,
+            spindle: None,
+            src: eid_l2::ast::placeholder_span(),
+        },
+    ];
+    stmts.append(&mut main_prog.stmts);
+    // Смещённая ось + слово очищенной переменной: Y#[100] (Null → drop).
+    stmts.push(L2Stmt::Move {
+        kind: MoveKind::Linear,
+        target: ExprPose {
+            x: Some(var(1)),
+            y: Some(Expr::Var(VarRef::Indirect(Box::new(num(100.0))))),
+            z: None,
+            a: None,
+            b: None,
+            c: None,
+        },
+        feed: Some(num(60.0)),
+        spindle: None,
+        src: eid_l2::ast::placeholder_span(),
+    });
+    // #200 вне диапазона очистки — слово живое (значение 3).
+    stmts.push(L2Stmt::Move {
+        kind: MoveKind::Linear,
+        target: ExprPose {
+            x: None,
+            y: None,
+            z: Some(Expr::Var(VarRef::Indirect(Box::new(num(200.0))))),
+            a: None,
+            b: None,
+            c: None,
+        },
+        feed: Some(num(30.0)),
+        spindle: None,
+        src: eid_l2::ast::placeholder_span(),
+    });
+    let program = L2Program::new(stmts, vec![]);
+    let ops = run_l2("while_clear_drop", &program);
+    let motion = non_raw(&ops);
+    assert_eq!(motion.len(), 3, "traverse + 2 linear");
+    match motion[1] {
+        Op::Linear { end, .. } => {
+            assert_eq!(end.x.value(), 148.0, "48 итераций: #1 = 148");
+            assert_eq!(
+                end.y.value(),
+                5.0,
+                "Null-drop: Y-слово #[100] опущено, Y модальный 5 (не 777, не 0)"
+            );
+        }
+        other => panic!("probe linear expected, got {other:?}"),
+    }
+    match motion[2] {
+        Op::Linear { end, state, .. } => {
+            assert_eq!(end.z.value(), 3.0, "#200 не очищена → 3");
+            assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(30.0));
+        }
+        other => panic!("z probe expected, got {other:?}"),
+    }
 }
 
 // ===========================================================================

@@ -1633,3 +1633,266 @@ fn mround_linking_eps_pos_axis_crosses_zero() {
         "{ds:?}"
     );
 }
+
+// ===========================================================================
+// v0.3.x — is_finite-гейт resid-сравнений (EQUIVALENCE §4 note, решение
+// ревью «известное ограничение → дешёвая страховка на полке» — применена).
+// IEEE-754: `NaN > ε` = false → без гейта resid-проверка вырождается в
+// молчаливый pass. Кейсы — hand-built AST (на легальном пути NaN/inf
+// недостижимы: is_finite-гейт лексеров + 4dp-квантование).
+// ===========================================================================
+
+/// §6(3) уравнение позиции: промежуточное переполнение арифметики на
+/// вырожденном угле. start z = 1.5e308 (finite), sweep = 180° (|cos| +
+/// |1−cos| = 3 — максимальный рост z-компоненты при повороте): Rodrigues
+/// n-член nv·(1−cos(π)) = 1.5e308·2 = 3e308 > f64::MAX ≈ 1.798e308 → inf.
+/// expected.z = inf → resid.z = inf. ρ (планиметрика, проекция ⟂ normal) и
+/// chord·n остаются finite — срабатывает РОВНО гейт позиции, без ложных
+/// соседних диагностик и без вводящего в заблуждение «|Δ| = inf».
+#[test]
+fn v03_gate_arc_position_residual_nan_refusal() {
+    let ops = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(0.0, 0.0, 1.5e308),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(0.0, 0.0, 1.5e308)),
+            p3(0.0, 0.0, 1.4e308),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            180.0,
+            -1e307, // chord·n = 1.4e308 − 1.5e308 ≈ −1e307 (≈ pitch, §6.2 pass)
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops.clone()));
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput
+            && x.message.contains("arc position residual non-finite")
+            && x.message.contains("is_finite gate v0.3.x")),
+        "гейт §6(3) обязан отказать громко: {d:?}"
+    );
+    // Гейт перехватывает до мёртвого/вводящего в заблуждение сравнения и не
+    // подменяет соседние проверки (ρ и chord·n finite — молчат).
+    assert!(
+        !d.iter().any(|x| x.message.contains("endpoint inconsistent")),
+        "{d:?}"
+    );
+    assert!(!d.iter().any(|x| x.message.contains("radius mismatch")), "{d:?}");
+    assert!(!d.iter().any(|x| x.message.contains("radius residual")), "{d:?}");
+    assert!(
+        !d.iter().any(|x| x.message.contains("chord·normal")),
+        "{d:?}"
+    );
+    // Тот же гейт в режиме канонизации (единая точка правила).
+    let r = verify::validate_with_notices(&program(ops.clone()));
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|x| x.message.contains("arc position residual non-finite")),
+        "{:?}", r.diagnostics
+    );
+}
+
+/// Канонический NaN-swallow: hand-built NaN в end.y дуги. До гейта v0.3.x
+/// программа верифицировалась ЧИСТО (0 диагностик): ρ_start ≈ 10 vs
+/// ρ_end = NaN → `NaN > tol` = false; chord·n = NaN → false; §6(3) resid =
+/// (≈0, NaN, 0) → `NaN > ε_pos` = false — все три проверки молча pass.
+/// Гейт: честный refusal по всем трём resid-сравнениям.
+#[test]
+fn v03_gate_arc_nan_end_silent_pass_now_refused() {
+    let ops = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(10.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(10.0, 0.0, 0.0)),
+            p3(0.0, f64::NAN, 0.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            90.0,
+            0.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops.clone()));
+    for phrase in [
+        "arc radius residual non-finite",
+        "arc chord·normal residual non-finite",
+        "arc position residual non-finite",
+    ] {
+        assert!(
+            d.iter().any(|x| x.code == ErrorCode::InvalidInput
+                && x.message.contains(phrase)
+                && x.message.contains("is_finite gate v0.3.x")),
+            "гейт обязан отказать («{phrase}»): {d:?}"
+        );
+    }
+    // Тот же гейт в режиме канонизации.
+    let r = verify::validate_with_notices(&program(ops));
+    assert!(
+        r.diagnostics
+            .iter()
+            .any(|x| x.message.contains("arc position residual non-finite")),
+        "{:?}", r.diagnostics
+    );
+}
+
+/// §6.2: chord·normal = NaN при finite ρ: e.x − s.x = −1.5e308 − 1.5e308 →
+/// −inf; (−inf)·0 (нулевые компоненты единичной оси +Z) → NaN. До гейта:
+/// `NaN > ε` = false → молчаливый pass (класс мутантов `*`→`/` из
+/// EQUIVALENCE §4). Дополнительно: bbox-диагональ 3e308 → ε_pos = inf →
+/// program-level гейт шкалы допуска. ρ_s = ρ_e = 1.5e308 — радиус молчит;
+/// resid §6(3) finite (гейт позиции молчит).
+#[test]
+fn v03_gate_arc_chord_residual_nan_refused() {
+    let ops = vec![
+        Op::WcsSetHere {
+            p: 1,
+            delta: p3(1.5e308, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        arc(
+            StartPoint::Known(p3(1.5e308, 0.0, 0.0)),
+            p3(-1.5e308, 0.0, 0.0),
+            p3(0.0, 0.0, 0.0),
+            p3(0.0, 0.0, 1.0),
+            Dir::Ccw,
+            180.0,
+            0.0,
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops));
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput
+            && x.message.contains("arc chord·normal residual non-finite")),
+        "{d:?}"
+    );
+    assert!(
+        d.iter()
+            .any(|x| x.message.contains("geometry tolerance scale non-finite")),
+        "ε_pos = inf (переполнение bbox-диагонали) → program-level refusal: {d:?}"
+    );
+    // Конструкция точная: радиус и позиция не со-срабатывают.
+    assert!(!d.iter().any(|x| x.message.contains("radius")), "{d:?}");
+    assert!(
+        !d.iter().any(|x| x.message.contains("position residual")),
+        "{d:?}"
+    );
+    assert!(
+        !d.iter().any(|x| x.message.contains("endpoint inconsistent")),
+        "{d:?}"
+    );
+}
+
+/// §2 связывание Tol-ветка (смена wcs с вычислимой разностью origin):
+/// start с hand-built NaN → |Δ| = NaN. До гейта: `NaN > ε_pos` = false →
+/// молчаливый pass (start не связан с предыдущим end — незамечено).
+/// Гейт: честный refusal.
+#[test]
+fn v03_gate_linking_start_residual_nan_refused() {
+    let ops = vec![
+        Op::WcsDefine {
+            p: 1,
+            origin: p3(100000.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        Op::WcsDefine {
+            p: 2,
+            origin: p3(0.0, 0.0, 0.0),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+        },
+        rapid(
+            StartPoint::Unknown,
+            p3(100000.0, 0.0, 0.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        rapid(
+            StartPoint::Known(p3(f64::NAN, 0.0, 0.0)),
+            p3(200001.0, 0.0, 0.0),
+            st(Some(100.0), Wcs::G55, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(ops));
+    assert!(
+        d.iter().any(|x| x.code == ErrorCode::InvalidInput
+            && x.message.contains("start position residual non-finite")
+            && x.message.contains("is_finite gate v0.3.x")),
+        "{d:?}"
+    );
+    // Гейт перехватывает до мёртвого сравнения — прежний mismatch-текст не
+    // дублируется.
+    assert!(
+        !d.iter()
+            .any(|x| x.message.contains("frame-adjusted previous end")),
+        "{d:?}"
+    );
+}
+
+/// ε_pos = inf: bbox-диагональ координат (±1.5e308 → span 3e308) переполняет
+/// f64 → шкала допусков мертва для ВСЕХ resid-сравнений (`x > inf` = false).
+/// До гейта: программа из двух rapid'ов верифицировалась чисто. Гейт:
+/// program-level refusal. Позитив-контроль: те же ходы в разумных координатах
+/// — чисто (гейт не срабатывает на легальном пути).
+#[test]
+fn v03_gate_eps_pos_nonfinite_refused() {
+    let overflow = vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(1.5e308, 0.0, 0.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        rapid(
+            StartPoint::Known(p3(1.5e308, 0.0, 0.0)),
+            p3(-1.5e308, 0.0, 0.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d = verify::validate(&program(overflow));
+    assert_eq!(
+        d.len(),
+        1,
+        "ровно program-level гейт шкалы допуска: {d:?}"
+    );
+    assert!(
+        d[0].code == ErrorCode::InvalidInput
+            && d[0]
+                .message
+                .contains("geometry tolerance scale non-finite")
+            && d[0].message.contains("is_finite gate v0.3.x"),
+        "{d:?}"
+    );
+
+    let moderate = vec![
+        rapid(
+            StartPoint::Unknown,
+            p3(150000.0, 0.0, 0.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        rapid(
+            StartPoint::Known(p3(150000.0, 0.0, 0.0)),
+            p3(-150000.0, 0.0, 0.0),
+            st(Some(100.0), Wcs::G54, Frame::Wcs),
+        ),
+        pend(),
+    ];
+    let d2 = verify::validate(&program(moderate));
+    assert!(d2.is_empty(), "легальный путь не затронут: {d2:?}");
+}

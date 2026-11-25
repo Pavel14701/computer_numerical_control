@@ -105,6 +105,24 @@
 //! допуски — EQUIVALENCE §4. Все диагностики pass'а помечены
 //! [`Stage::Verify`] (interface v0.1.2).
 //!
+//! ===========================================================================
+//! v0.3.x — is_finite-гейт resid-сравнений (решение ревью заметки EQUIVALENCE
+//! §4: «известное ограничение → дешёвая страховка на полке» — ПРИМЕНЕНА;
+//! EQUIVALENCE §4 note обновляется оркестратором). IEEE-754: все сравнения с
+//! NaN ложны (`NaN > ε_pos` = false) → resid-проверка вырождается в
+//! «молчаливый pass» — не срабатывает и не диагностирует. Гейты (единая точка
+//! для всех источников AST; адаптеры не дублируют):
+//!   * §6.1 радиус, §6.2 chord·normal, §6(3) уравнение позиции — не-конечный
+//!     остаток (NaN/inf) → refusal E_INVALID_INPUT громко, не pass;
+//!   * §2 связывание Tol-ветка — не-конечный |Δ| → refusal;
+//!   * ε_pos не-конечен (переполнение bbox-диагонали координат) →
+//!     program-level refusal (все `resid > ε` сравнения мертвы при ε=inf).
+//! На валидные входы не влияет: NaN/inf недостижимы на легальном пути
+//! (is_finite-гейт лексеров + 4dp-квантование SPEC §10.6). Кейсы — только
+//! hand-built AST / регрессия лексера / промежуточное переполнение
+//! арифметики. Тесты: spec_obligations.rs v03_gate_*.
+//! ===========================================================================
+//!
 //! Два режима:
 //!  * [`validate_with_notices`] — путь канонизации EID-текста: zero-length
 //!    опы отбрасываются с notice (SPEC §3; CORPUS §4 — notice-файлы только
@@ -674,6 +692,17 @@ fn run(program: &Program, reject_zero_length: bool) -> (Vec<Op>, Vec<Notice>, Ve
 
     // --- Kept-pass: инварианты итогового AST + §6-геометрия -----------------
     let eps_pos = eps_for(&kept);
+    // v0.3.x is_finite-гейт (EQUIVALENCE §4 note): ε_pos = inf — переполнение
+    // bbox-диагонали координат (> f64-диапазона). Все `resid > ε_pos`
+    // сравнения при ε=inf мертвы (`x > inf` = false) → громкий program-level
+    // refusal вместо молчаливой деградации системы допусков.
+    if !eps_pos.is_finite() {
+        errors.push(diag(
+            ErrorCode::InvalidInput,
+            "geometry tolerance scale non-finite (bbox diagonal overflows f64) — IEEE-754 residual comparisons would be dead (EQUIVALENCE §4 note; is_finite gate v0.3.x)",
+            None,
+        ));
+    }
     for o in kept.iter() {
         verify_kept_op(o, eps_pos, &mut errors);
     }
@@ -798,20 +827,39 @@ fn check_arc_geometry(
     let planar = |d: &V3| -> V3 { vsub(d, &vscale(&n, vdot(&n, d))) };
     let rho_s = vlen(&planar(&vsub(&s, &c)));
     let rho_e = vlen(&planar(&vsub(&e, &c)));
-    let tol_r = eps_pos.max(1e-6 * rho_s);
-    if (rho_s - rho_e).abs() > tol_r {
+    // v0.3.x is_finite-гейт (EQUIVALENCE §4 note): `NaN > tol_r` = false —
+    // без гейта проверка радиуса вырождается в молчаливый pass.
+    if !rho_s.is_finite() || !rho_e.is_finite() {
         errors.push(diag(
             ErrorCode::InvalidInput,
-            format!(
-                "arc radius mismatch: |start| = {rho_s:.6}, |end| = {rho_e:.6}, tol = {tol_r:.6} (SPEC §6.1)"
-            ),
+            "arc radius residual non-finite (NaN/inf) — intermediate arithmetic overflow or degenerate geometry (EQUIVALENCE §4 note; is_finite gate v0.3.x)",
             src.clone(),
         ));
+    } else {
+        let tol_r = eps_pos.max(1e-6 * rho_s);
+        if (rho_s - rho_e).abs() > tol_r {
+            errors.push(diag(
+                ErrorCode::InvalidInput,
+                format!(
+                    "arc radius mismatch: |start| = {rho_s:.6}, |end| = {rho_e:.6}, tol = {tol_r:.6} (SPEC §6.1)"
+                ),
+                src.clone(),
+            ));
+        }
     }
 
     // 2. Нормальная компонента хорды ≈ pitch.
     let chord_n = vdot(&vsub(&e, &s), &n);
-    if (chord_n - pitch).abs() > eps_pos {
+    // v0.3.x is_finite-гейт (EQUIVALENCE §4 note): `NaN > eps_pos` = false —
+    // без гейта проверка вырождается в молчаливый pass (x/0 → ±inf при
+    // нулевых компонентах; 0·inf → NaN).
+    if !chord_n.is_finite() || !pitch.is_finite() {
+        errors.push(diag(
+            ErrorCode::InvalidInput,
+            "arc chord·normal residual non-finite (NaN/inf) — intermediate arithmetic overflow or degenerate geometry (EQUIVALENCE §4 note; is_finite gate v0.3.x)",
+            src.clone(),
+        ));
+    } else if (chord_n - pitch).abs() > eps_pos {
         errors.push(diag(
             ErrorCode::InvalidInput,
             format!(
@@ -825,15 +873,29 @@ fn check_arc_geometry(
     let theta = sweep.to_radians() * if dir == Dir::Cw { -1.0 } else { 1.0 };
     let rotated = rotate(&vsub(&s, &c), &n, theta);
     let expected = vadd(&vadd(&c, &rotated), &vscale(&n, pitch));
-    let d = vdist(&expected, &e);
-    if d > eps_pos {
+    // v0.3.x is_finite-гейт (EQUIVALENCE §4 note, уравнение позиции §6(3)):
+    // resid с NaN/inf делает `d > eps_pos` ложью → молчаливый pass; гейт
+    // переводит класс в громкий refusal (промежуточное переполнение
+    // арифметики — напр. |cos|+|1−cos| = 3-кратный рост компоненты на 180° —
+    // или вырожденная геометрия).
+    let resid = vsub(&expected, &e);
+    if !(resid.0.is_finite() && resid.1.is_finite() && resid.2.is_finite()) {
         errors.push(diag(
             ErrorCode::InvalidInput,
-            format!(
-                "arc endpoint inconsistent with (center, normal, dir, sweep, pitch): |Δ| = {d:.6} > {eps_pos:.6} (SPEC §6.3)"
-            ),
+            "arc position residual non-finite (NaN/inf) — intermediate arithmetic overflow or degenerate geometry (EQUIVALENCE §4 note; is_finite gate v0.3.x)",
             src,
         ));
+    } else {
+        let d = vlen(&resid);
+        if d > eps_pos {
+            errors.push(diag(
+                ErrorCode::InvalidInput,
+                format!(
+                    "arc endpoint inconsistent with (center, normal, dir, sweep, pitch): |Δ| = {d:.6} > {eps_pos:.6} (SPEC §6.3)"
+                ),
+                src,
+            ));
+        }
     }
 }
 
@@ -1007,7 +1069,17 @@ fn check_linking(program: &Program, kept: &[Op], eps_pos: f64, errors: &mut Vec<
                     }
                     (StartPoint::Known(v), StartExpect::Tol(exp)) => {
                         let d = vdist(&p3_vals(v), &p3_vals(&exp));
-                        if d > eps_pos {
+                        // v0.3.x is_finite-гейт (EQUIVALENCE §4 note): не-конечный
+                        // остаток сравнения (NaN/inf — переполнение origin-
+                        // арифметики / не-конечный вход) делает `d > eps_pos`
+                        // ложью → молчаливый pass; громкий refusal.
+                        if !d.is_finite() {
+                            errors.push(diag(
+                                ErrorCode::InvalidInput,
+                                "start position residual non-finite (NaN/inf) — intermediate arithmetic overflow or degenerate geometry (EQUIVALENCE §4 note; is_finite gate v0.3.x)",
+                                op_src(o),
+                            ));
+                        } else if d > eps_pos {
                             // ε_pos из EQUIVALENCE §4: max(0.001, 1e-7·L) — тот же
                             // допуск, что и §6-геометрия (аудит #4: раньше был
                             // захардкожен floor 0.001; поведение на L < 10000
