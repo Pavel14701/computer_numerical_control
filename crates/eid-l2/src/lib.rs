@@ -20,6 +20,11 @@
 //! L2-конструкций по тексту; false → чистый L1-конвейер без L2-фаз.
 
 pub mod ast;
+// Фаза 12.4 (агент D3): L2-to-L2 диалектная эмиссия — ядро + Macro-B
+// (Fanuc ↔ Haas) в `emit_l2`, O-word LinuxCNC (реструктуризация GOTO →
+// o-if/do-while) в `emit_linuxcnc`. Точка входа: [`emit_l2::emit`].
+pub mod emit_l2;
+pub mod emit_linuxcnc;
 pub mod eval;
 pub mod interp;
 pub mod lowering;
