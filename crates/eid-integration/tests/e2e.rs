@@ -446,6 +446,8 @@ fn profile_with_ops_limit(limit: usize) -> MachineProfile {
         wcs_extended_map: None,
         axis_limits: None,
         axis_limits_units: eid_core::ast::Units::Mm,
+        // 12.5.3: кинематика не задана — Triv (дефолт, прежнее поведение).
+        kinematics: eid_integration::profile::MachineKinematics::Triv,
     }
 }
 

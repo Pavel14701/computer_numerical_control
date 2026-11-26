@@ -51,6 +51,25 @@
 //! делается). Неприменимые диалектам значения (M02 / wcs-мапа / emit_r_arcs
 //! = true на grbl/linuxcnc) отвергаются `validate()` — тихое игнорирование
 //! запрещено.
+//!
+//! Фаза 12.5 (12.5.3, амендменты v0.1.3/v0.1.5 дизайн-дока EID-L2-DESIGN §12.5):
+//! секция TOML `[kinematics]` — кинематика станка
+//! ([`MachineKinematics`]: Triv-дефолт | XyzacTrt | XyzbcTrt, enum топологий
+//! — принятое архитектурное решение §5.1, НЕ generic-DH). Маппинг в
+//! lowering: [`MachineKinematics::to_rtcp_mode`] → `eid_l2::interp::RtcpMode`
+//! (XyzacTrt/XyzbcTrt с геометрией [`TrtKinematics`] — оракул trtfuncs,
+//! ядро `eid_l2::kinematics` @94cbe11, круговой инвариант 3136 кейсов);
+//! `Triv` → Off (прежнее поведение — старые TOML без секции валидны,
+//! serde-default). Потребитель — L2-конвейер (`eid_l2::lowering::lower`):
+//! ротационные кадры опускаются в L1-опы machine-осей (TCP→joints).
+//! ГРАНИЦА (честно): L1↔L1-конвейер `translate_*_with_profile`
+//! (translate.rs) секцию НЕ потребляет — маршрутизация L2-программ в
+//! CLI-конвейер — отдельная фаза (12.4 не роутит L2); kinematics-проход
+//! доступен библиотечным вызовом lower() с
+//! `MachineProfile::l2_lowering_config()` — см. e2e
+//! `tests/kinematics_lowering_e2e.rs`. Перспективные топологии (head-head
+//! и др.) НЕ добавляются без оракула формул (§5.1.5 — брак детали
+//! пост-фактум).
 
 use eid_core::ast::Units;
 use std::path::Path;
@@ -148,6 +167,141 @@ impl ProgramEndStyle {
             ProgramEndStyle::M30 => "M30",
             ProgramEndStyle::M02 => "M02",
         }
+    }
+}
+
+// ===========================================================================
+// MachineKinematics (12.5.3): кинематика ротационных осей станка
+// ===========================================================================
+
+/// Разумный диапазон геометрии кинематики: |значение| ≤ 1e6 (мм — станочная
+/// шкала; больше — конфигурационная ошибка, не станок).
+pub const KINEMATICS_RANGE_CAP: f64 = 1.0e6;
+
+/// Геометрия table-rotary-tilting (оракул LinuxCNC trtfuncs.c — пины
+/// HAL-модуля `xyzac-trt-kins`/`xyzbc-trt-kins`; serde kebab-case,
+/// все поля serde-default — частичная секция валидна).
+///
+/// В оракуле `dz = z-offset + tool-offset` (компенсация длины инструмента
+/// входит в dz ДО формул) — профиль хранит слагаемые раздельно
+/// ([`TrtKinematics::z_offset`] + [`TrtKinematics::z_offset_tool`]), сумму
+/// в `TrtParams::z_offset` кладёт [`MachineKinematics::to_rtcp_mode`]
+/// («вызывающая сторона складывает сама» — контракт ядра `eid_l2::kinematics`).
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct TrtKinematics {
+    /// Пивот вращения стола `[x, y, z]` (HAL-пины `x-/y-/z-rot-point`).
+    pub rot_point: [f64; 3],
+    /// `dy` — смещение пивота оси A вдоль Y (XYZAC; HAL `y-offset`).
+    pub y_offset: f64,
+    /// `dx` — смещение пивота оси B вдоль X (XYZBC; HAL `x-offset`).
+    pub x_offset: f64,
+    /// `dz` — геометрия стола по Z (HAL `z-offset`).
+    pub z_offset: f64,
+    /// Вылет инструмента по Z (HAL `z-offset-tool`): в оракул-формулы входит
+    /// суммой с [`TrtKinematics::z_offset`].
+    pub z_offset_tool: f64,
+    /// Направления ротаций конвенциональные? ДЕФОЛТ false — конвенция
+    /// LinuxCNC «rotational axes are the opposite of the conventional»
+    /// (заголовок trtfuncs.c; `false` ⇒ множитель con = −1 в формулах).
+    pub conventional_directions: bool,
+}
+
+/// Кинематика станка (12.5.3): топология ротационных осей — enum
+/// (§5.1-амендрмент: НЕ generic-DH; «формула на топологию»). TOML:
+///
+/// ```toml
+/// [kinematics]
+/// type = "xyzac-trt"                 # "triv" | "xyzac-trt" | "xyzbc-trt"
+/// rot-point = [0.0, 0.0, -345.0]     # пивот вращения стола
+/// y-offset = 0.0                     # XYZAC: смещение пивота A по Y
+/// # x-offset = 0.0                   # XYZBC: смещение пивота B по X
+/// z-offset = 25.0                    # геометрия стола по Z
+/// z-offset-tool = 0.0                # вылет инструмента (сумма с z-offset)
+/// conventional-directions = false    # дефолт LinuxCNC «opposite» (con = −1)
+/// ```
+///
+/// Отсутствие секции (serde-default) = [`MachineKinematics::Triv`] —
+/// прежнее поведение (старые TOML валидны).
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum MachineKinematics {
+    /// Тривиальная 3-осевая XYZ: ротационные оси не заданы — ротационные
+    /// кадры в lowering остаются Raw-носителями (поведение 12.2/12.5.2).
+    #[default]
+    Triv,
+    /// XYZAC table-rotary-tilting (наклоняемый стол A + ротор C на столе);
+    /// TCP→joints через `eid_l2::kinematics::xyzac_inverse`.
+    XyzacTrt(TrtKinematics),
+    /// XYZBC table-rotary-tilting (стол B + ротор C); та же формула-семья
+    /// оракула (`xyzbc_inverse`). Расширяемо (head-head и др. — только при
+    /// оракуле формул, §5.1).
+    XyzbcTrt(TrtKinematics),
+}
+
+impl MachineKinematics {
+    /// Пост-валидация семантики (TOML-парс ловит только форму): конечность
+    /// всех значений и разумный диапазон `±`[`KINEMATICS_RANGE_CAP`].
+    /// [`MachineKinematics::Triv`] — валиден всегда (данных не несёт).
+    pub fn validate(&self) -> Result<(), String> {
+        let k = match self {
+            MachineKinematics::Triv => return Ok(()),
+            MachineKinematics::XyzacTrt(k) | MachineKinematics::XyzbcTrt(k) => k,
+        };
+        let check = |name: &str, v: f64| -> Result<(), String> {
+            if !v.is_finite() {
+                return Err(format!(
+                    "kinematics.{name} = {v} — не конечное число (is_finite)"
+                ));
+            }
+            if v.abs() > KINEMATICS_RANGE_CAP {
+                return Err(format!(
+                    "kinematics.{name} = {v} вне разумного диапазона ±{KINEMATICS_RANGE_CAP} (мм-шкала станка)"
+                ));
+            }
+            Ok(())
+        };
+        for (i, v) in k.rot_point.iter().enumerate() {
+            check(&format!("rot-point[{i}]"), *v)?;
+        }
+        check("y-offset", k.y_offset)?;
+        check("x-offset", k.x_offset)?;
+        check("z-offset", k.z_offset)?;
+        check("z-offset-tool", k.z_offset_tool)?;
+        Ok(())
+    }
+
+    /// Маппинг в RTCP-режим L2-lowering (проброс профиля →
+    /// `L2Config.rtcp_mode`; «b7d28bb-аналог» для kinematics):
+    /// * [`MachineKinematics::Triv`] → `RtcpMode::Off` (Raw-носители — как
+    ///   прежде);
+    /// * XyzacTrt/XyzbcTrt → одноимённый режим с `TrtParams`; сумма
+    ///   `z-offset + z-offset-tool` кладётся в `TrtParams::z_offset`
+    ///   (контракт оракула: dz = z-offset + tool-offset ДО формул).
+    pub fn to_rtcp_mode(&self) -> eid_l2::interp::RtcpMode {
+        match self {
+            MachineKinematics::Triv => eid_l2::interp::RtcpMode::Off,
+            MachineKinematics::XyzacTrt(k) => eid_l2::interp::RtcpMode::XyzacTrt {
+                params: k.to_trt_params(),
+            },
+            MachineKinematics::XyzbcTrt(k) => eid_l2::interp::RtcpMode::XyzbcTrt {
+                params: k.to_trt_params(),
+            },
+        }
+    }
+}
+
+impl TrtKinematics {
+    /// Проекция в параметры ядра [`eid_l2::kinematics::TrtParams`]
+    /// (z-offset-tool складывается в z_offset — контракт оракула).
+    pub fn to_trt_params(&self) -> eid_l2::kinematics::TrtParams {
+        eid_l2::kinematics::TrtParams::new(
+            self.rot_point,
+            self.y_offset,
+            self.x_offset,
+            self.z_offset + self.z_offset_tool,
+            self.conventional_directions,
+        )
     }
 }
 
@@ -300,6 +454,14 @@ pub struct MachineProfile {
     /// программа может быть в inch).
     #[serde(default = "default_axis_limits_units", with = "units_serde")]
     pub axis_limits_units: Units,
+    /// 12.5.3: кинематика ротационных осей — секция TOML `[kinematics]`
+    /// ([`MachineKinematics`]). serde-default = [`MachineKinematics::Triv`]:
+    /// старые TOML без секции валидны (поведение 12.2 — ротационные кадры
+    /// lowering = Raw-носители). Потребитель — L2-lowering
+    /// ([`MachineProfile::l2_lowering_config`]); L1↔L1 translate-конвейер
+    /// секцию не потребляет (граница — см. документацию модуля).
+    #[serde(default)]
+    pub kinematics: MachineKinematics,
 }
 
 impl MachineProfile {
@@ -319,6 +481,19 @@ impl MachineProfile {
             .validate()
             .map_err(|e| format!("профиль {}: {e}", path.display()))?;
         Ok(profile)
+    }
+
+    /// 12.5.3: конфиг L2-lowering из профиля —
+    /// `L2Config.rtcp_mode = kinematics.to_rtcp_mode()`
+    /// (Triv → Off; XyzacTrt/XyzbcTrt → trt-режим с геометрией станка).
+    /// Прочие поля L2Config — дефолт интерпретатора (бюджеты lowering'а —
+    /// НЕ MachineProfile-лимиты: разные семантики порогов). Потребитель —
+    /// `eid_l2::lowering::lower(&program, cfg)` (TCP→joints, doc §12.5).
+    pub fn l2_lowering_config(&self) -> eid_l2::interp::L2Config {
+        eid_l2::interp::L2Config {
+            rtcp_mode: self.kinematics.to_rtcp_mode(),
+            ..eid_l2::interp::L2Config::default()
+        }
     }
 
     /// Пост-валидация семантики (#26; TOML-парс ловит только форму):
@@ -361,6 +536,9 @@ impl MachineProfile {
                 }
             }
         }
+        // 12.5.3: кинематика — конечность значений + разумный диапазон
+        // (±KINEMATICS_RANGE_CAP); Triv валиден всегда.
+        self.kinematics.validate()?;
         self.validate_emission_flags()
     }
 
@@ -450,6 +628,7 @@ impl MachineProfile {
             wcs_extended_map: None,
             axis_limits: None,
             axis_limits_units: Units::Mm,
+            kinematics: MachineKinematics::Triv,
         }
     }
 
@@ -466,6 +645,7 @@ impl MachineProfile {
             wcs_extended_map: None,
             axis_limits: None,
             axis_limits_units: Units::Mm,
+            kinematics: MachineKinematics::Triv,
         }
     }
 
@@ -483,6 +663,7 @@ impl MachineProfile {
             wcs_extended_map: None,
             axis_limits: None,
             axis_limits_units: Units::Mm,
+            kinematics: MachineKinematics::Triv,
         }
     }
 
@@ -500,6 +681,7 @@ impl MachineProfile {
             wcs_extended_map: None,
             axis_limits: None,
             axis_limits_units: Units::Mm,
+            kinematics: MachineKinematics::Triv,
         }
     }
 
@@ -646,5 +828,202 @@ mod tests {
             o.wcs_extended_map.get("G59.1").map(String::as_str),
             Some("G54.1 P1")
         );
+    }
+
+    // ===========================================================================
+    // 12.5.3: MachineKinematics — TOML [kinematics], validate, маппинг RtcpMode
+    // ===========================================================================
+
+    /// Минимальный TOML-каркас профиля (name/dialect/emit-r-arcs/limits
+    /// обязательны — emit_r_arcs без serde-default, замороженная схема).
+    fn profile_toml(extra: &str) -> String {
+        format!(
+            "name = \"test\"\ndialect = \"linuxcnc\"\nemit-r-arcs = false\n\
+             [limits]\nmax-ops-per-program = 200000\n\
+             max-unroll-iterations = 10000\nmax-source-lines = 1000000\n\
+             max-word-chars = 32\n{extra}"
+        )
+    }
+
+    /// Полная секция [kinematics] type="xyzac-trt": поля читаются, z-offset-tool
+    /// суммируется в TrtParams::z_offset (контракт оракула dz = z-offset +
+    /// tool-offset), validate проходит, to_rtcp_mode даёт XyzacTrt.
+    #[test]
+    fn kinematics_toml_full_xyzac_section() {
+        let toml_text = profile_toml(
+            "\n[kinematics]\ntype = \"xyzac-trt\"\nrot-point = [0.0, 0.0, -345.0]\n\
+             y-offset = 20.0\nz-offset = 25.0\nz-offset-tool = 110.0\n\
+             conventional-directions = true\n",
+        );
+        let p: MachineProfile = toml::from_str(&toml_text).unwrap();
+        assert_eq!(
+            p.kinematics,
+            MachineKinematics::XyzacTrt(TrtKinematics {
+                rot_point: [0.0, 0.0, -345.0],
+                y_offset: 20.0,
+                x_offset: 0.0,
+                z_offset: 25.0,
+                z_offset_tool: 110.0,
+                conventional_directions: true,
+            })
+        );
+        p.validate().unwrap();
+        let eid_l2::interp::RtcpMode::XyzacTrt { params } = p.kinematics.to_rtcp_mode() else {
+            panic!("expected XyzacTrt mode");
+        };
+        assert_eq!(params.rot_point, [0.0, 0.0, -345.0]);
+        assert_eq!(params.y_offset, 20.0);
+        assert_eq!(params.z_offset, 135.0); // 25 + 110 (tool-offset в dz)
+        assert!(params.conventional);
+        // Маппинг в конфиг lowering: тот же режим.
+        let cfg = p.l2_lowering_config();
+        assert_eq!(cfg.rtcp_mode, p.kinematics.to_rtcp_mode());
+    }
+
+    /// Частичная секция (serde-default полей): type + один офсет — остальное
+    /// дефолты (нули / conventional-directions = false — LinuxCNC «opposite»).
+    #[test]
+    fn kinematics_toml_partial_section_defaults() {
+        let toml_text = profile_toml("\n[kinematics]\ntype = \"xyzbc-trt\"\nz-offset = 50.0\n");
+        let p: MachineProfile = toml::from_str(&toml_text).unwrap();
+        assert_eq!(
+            p.kinematics,
+            MachineKinematics::XyzbcTrt(TrtKinematics {
+                rot_point: [0.0; 3],
+                y_offset: 0.0,
+                x_offset: 0.0,
+                z_offset: 50.0,
+                z_offset_tool: 0.0,
+                conventional_directions: false,
+            })
+        );
+        p.validate().unwrap();
+        assert!(matches!(
+            p.kinematics.to_rtcp_mode(),
+            eid_l2::interp::RtcpMode::XyzbcTrt { .. }
+        ));
+    }
+
+    /// Старые TOML без секции = Triv (serde-default — прежнее поведение,
+    /// RtcpMode::Off); явный type = "triv" тоже валиден.
+    #[test]
+    fn kinematics_absent_or_triv_maps_off() {
+        // absent (старый TOML).
+        let p: MachineProfile = toml::from_str(&profile_toml("")).unwrap();
+        assert_eq!(p.kinematics, MachineKinematics::Triv);
+        p.validate().unwrap();
+        assert_eq!(p.kinematics.to_rtcp_mode(), eid_l2::interp::RtcpMode::Off);
+        assert_eq!(
+            p.l2_lowering_config().rtcp_mode,
+            eid_l2::interp::RtcpMode::Off
+        );
+        // явный triv.
+        let p2: MachineProfile =
+            toml::from_str(&profile_toml("\n[kinematics]\ntype = \"triv\"\n")).unwrap();
+        assert_eq!(p2.kinematics, MachineKinematics::Triv);
+        // все дефолтные профили — Triv.
+        for def in [
+            MachineProfile::grbl_default(),
+            MachineProfile::linuxcnc_default(),
+            MachineProfile::fanuc_default(),
+            MachineProfile::haas_default(),
+        ] {
+            assert_eq!(def.kinematics, MachineKinematics::Triv);
+        }
+    }
+
+    /// Неизвестный type — отказ загрузки (тихое игнорирование запрещено);
+    /// [kinematics] вне таблицы (число) — отказ TOML-парса.
+    #[test]
+    fn kinematics_toml_rejects_unknown_type() {
+        let bad = profile_toml("\n[kinematics]\ntype = \"head-head\"\n");
+        assert!(toml::from_str::<MachineProfile>(&bad).is_err());
+        let bad2 = profile_toml("\n[kinematics]\ntype = \"XYZAC-TRT\"\n");
+        assert!(toml::from_str::<MachineProfile>(&bad2).is_err());
+    }
+
+    /// validate(): NaN/inf/вне диапазона ±KINEMATICS_RANGE_CAP — отказ с
+    /// именем поля; Triv — всегда валиден.
+    #[test]
+    fn kinematics_validate_rejects_nonfinite_and_out_of_range() {
+        for (k, field) in [
+            (
+                MachineKinematics::XyzacTrt(TrtKinematics {
+                    rot_point: [0.0, f64::NAN, 0.0],
+                    ..TrtKinematics::default()
+                }),
+                "rot-point[1]",
+            ),
+            (
+                MachineKinematics::XyzacTrt(TrtKinematics {
+                    y_offset: f64::INFINITY,
+                    ..TrtKinematics::default()
+                }),
+                "y-offset",
+            ),
+            (
+                MachineKinematics::XyzbcTrt(TrtKinematics {
+                    z_offset_tool: f64::NEG_INFINITY,
+                    ..TrtKinematics::default()
+                }),
+                "z-offset-tool",
+            ),
+            (
+                MachineKinematics::XyzacTrt(TrtKinematics {
+                    x_offset: KINEMATICS_RANGE_CAP * 10.0,
+                    ..TrtKinematics::default()
+                }),
+                "x-offset",
+            ),
+        ] {
+            let err = k.validate().unwrap_err();
+            assert!(err.contains(field), "{field}: {err}");
+            // Через полный профиль тоже отказ.
+            let mut p = MachineProfile::linuxcnc_default();
+            p.kinematics = k;
+            assert!(p.validate().is_err());
+        }
+        assert!(MachineKinematics::Triv.validate().is_ok());
+        // Граница диапазона: ровно CAP валидно.
+        assert!(MachineKinematics::XyzacTrt(TrtKinematics {
+            z_offset: KINEMATICS_RANGE_CAP,
+            ..TrtKinematics::default()
+        })
+        .validate()
+        .is_ok());
+    }
+
+    /// Оракул-круг через маппинг профиля: TOML [kinematics] → to_rtcp_mode →
+    /// TrtParams → forward∘inverse ≡ identity (инструмент-офсет в dz входит
+    /// суммой ДО формул — контракт оракула).
+    #[test]
+    fn kinematics_profile_mapping_circle_invariant() {
+        use eid_l2::kinematics::{xyzac_forward, xyzac_inverse, Joints5};
+        let toml_text = profile_toml(
+            "\n[kinematics]\ntype = \"xyzac-trt\"\nrot-point = [5.0, 10.0, -5.0]\n\
+             y-offset = 10.0\nz-offset = 25.0\nz-offset-tool = 110.0\n",
+        );
+        let p: MachineProfile = toml::from_str(&toml_text).unwrap();
+        p.validate().unwrap();
+        let eid_l2::interp::RtcpMode::XyzacTrt { params } = p.l2_lowering_config().rtcp_mode else {
+            panic!("expected XyzacTrt");
+        };
+        let mut cases = 0usize;
+        for &a in &[0.0f64, 30.0, -90.0, 180.0, 359.0] {
+            for &c in &[0.0f64, 45.0, -90.0, 359.0] {
+                let j0 = Joints5::new(120.0, -80.0, 250.0, a, c);
+                let pose = xyzac_forward(&params, &j0);
+                let j1 = xyzac_inverse(&params, &pose);
+                for (v0, v1) in [(j0.x, j1.x), (j0.y, j1.y), (j0.z, j1.z)] {
+                    assert!(
+                        (v1 - v0).abs() < 1e-9,
+                        "con={:?} a={a} c={c}: {v0} -> {v1}",
+                        p.kinematics
+                    );
+                }
+                cases += 1;
+            }
+        }
+        assert!(cases >= 20);
     }
 }

@@ -27,17 +27,25 @@
 //!
 //! Точка входа конвейера: [`lower`] (сигнатура из заготовки 12.1).
 //!
-//! ГРАНИЦА 12.5.2 / 12.5.3 (RTCP, фаза 12.5): 12.5.2 — RTCP-режим
-//! ([`crate::interp::RtcpMode::XyzacTrt`] в [`L2Config::rtcp_mode`])
-//! разрешает переменные ротационных слов (A/B/C) в T4-носитель так же,
-//! как линейные, и ПОМЕЧАЕТ lowering (флаг
-//! [`crate::interp::LoweringResult::rtcp_active`] + диагностика) — сам
-//! носитель НЕ опускается (ход X/Y/Z+A/C без пересчёта joints изменил бы
-//! TCP-геометрию). Полный TCP→joints trt-пересчёт — 12.5.3 при
-//! MachineKinematics-профиле (оракул trtfuncs — ядро
-//! [`crate::kinematics`] готово: [`crate::kinematics::xyzac_inverse`]
-//! из TCP-позы → joints; тогда ротационные носители заменяются
-//! пересчитанными L1-ходами).
+//! ГРАНИЦА 12.5.2 / 12.5.3 (RTCP, фаза 12.5 — 12.5.3 РЕАЛИЗОВАН): 12.5.2 —
+//! RTCP-режим ([`crate::interp::RtcpMode::XyzacTrt`] в
+//! [`L2Config::rtcp_mode`]) разрешает переменные ротационных слов (A/B/C)
+//! в T4-носитель так же, как линейные, и ПОМЕЧАЕТ lowering (флаг
+//! [`crate::interp::LoweringResult::rtcp_active`] + диагностика).
+//! 12.5.3 — MachineKinematics-профиль: ходы с ПОЛНОЙ TCP-позой опускаются
+//! в L1-опы machine-осей (TCP→joints: X/Y/Z-компонента вычисляется
+//! inverse-кинематикой [`crate::kinematics::xyzac_inverse`] /
+//! [`crate::kinematics::xyzbc_inverse`], ротационные A/C — B/C = joints
+//! pass-through; механика — [`crate::interp::L2Evaluator::exec_trt_move`]).
+//! ГРАНИЦЫ (честно): [`RtcpMode::Off`] (MachineKinematics::Triv) —
+//! ротационные кадры = Raw-носители (прежде); неполная TCP-поза / чужое
+//! ротационное слово (B под XYZAC, A под XYZBC) / дуги под trt-профилем
+//! (TCP-дуга не аффинна в machine-осях; NURBS-RTCP-комбинаторика — вне
+//! скоупа) — честные носители; head-head и прочие топологии — при
+//! добавлении формул в ядро (док §12.5-амендмент v0.1.5). L1-опы под
+//! trt-профилем несут machine-координаты осей (НЕ TCP) — заголовок
+//! эмиттера не понижается, спец-семантика потока документирована
+//! rtcp_active + per-op диагностикой («не молча»).
 //!
 //! ЦЕНЗ-B (честно): в корпусе `WithTransform ×0` (G68/G51 нет в живых
 //! файлах) — трансформации покрыты СИНТЕТИЧЕСКИМИ golden-тестами с ручным
@@ -778,5 +786,80 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.message.contains("XyzacTrt")));
+    }
+
+    // ---------- 12.5.3: TCP→joints через точку входа lower() -----------------
+
+    #[test]
+    fn t1253_lower_entry_tcp_to_joints_golden() {
+        // Граница 12.5.3 реализована: точки входа `lower()` с trt-профилем
+        // (MachineKinematics XyzacTrt → L2Config.rtcp_mode) опускают ход с
+        // полной TCP-позой в L1-оп machine-осей. Бриф- golden: pose
+        // (15,10,5) A90 C0, офсетов нет → xyzac_inverse → joints (15,−5,10);
+        // круговой инвариант kinematics.rs: forward(joints) == pose.
+        use crate::ast::{placeholder_span, Expr, ExprPose, MoveKind, VarRef};
+        use crate::interp::RtcpMode;
+        use crate::kinematics::{xyzac_forward, Joints5, TrtParams};
+        let program = L2Program::new(
+            vec![
+                L2Stmt::Assign {
+                    target: VarRef::Direct(100),
+                    value: Expr::num(90.0),
+                    src: placeholder_span(),
+                },
+                L2Stmt::Move {
+                    kind: MoveKind::Rapid,
+                    target: ExprPose {
+                        x: Some(Expr::num(15.0)),
+                        y: Some(Expr::num(10.0)),
+                        z: Some(Expr::num(5.0)),
+                        a: Some(Expr::var(100)), // параметрическое A разрешается
+                        b: None,
+                        c: Some(Expr::num(0.0)),
+                    },
+                    feed: None,
+                    spindle: None,
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let cfg = L2Config {
+            rtcp_mode: RtcpMode::XyzacTrt {
+                params: TrtParams::default(),
+            },
+            ..L2Config::default()
+        };
+        let res = lower(&program, cfg).unwrap();
+        assert!(res.rtcp_active);
+        assert!(res.raw_tail.is_empty());
+        assert_eq!(res.l1_ops.len(), 1);
+        let Op::Rapid { end, .. } = &res.l1_ops[0] else {
+            panic!("expected Rapid op");
+        };
+        let approx = |p: f64, q: f64| (p - q).abs() < 5e-5; // 4dp-канон
+        assert!(approx(end.x.value(), 15.0));
+        assert!(approx(end.y.value(), -5.0), "jy = {}", end.y.value());
+        assert!(approx(end.z.value(), 10.0), "jz = {}", end.z.value());
+        // Оракул-круг: forward(joints, A90, C0) == TCP-поза (15,10,5).
+        let fwd = xyzac_forward(
+            &TrtParams::default(),
+            &Joints5::new(end.x.value(), end.y.value(), end.z.value(), 90.0, 0.0),
+        );
+        assert!((fwd.x - 15.0).abs() < 1e-3);
+        assert!((fwd.y - 10.0).abs() < 1e-3);
+        assert!((fwd.z - 5.0).abs() < 1e-3);
+        // Off-режим с той же программой: носитель T4 «как прежде» (Triv).
+        let off = lower(&program, L2Config::default()).unwrap();
+        assert!(!off.rtcp_active);
+        assert_eq!(off.l1_ops.len(), 0);
+        assert_eq!(off.raw_tail.len(), 1);
+        assert!(matches!(
+            &off.raw_tail[0].op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        ));
     }
 }

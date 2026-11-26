@@ -1,0 +1,44 @@
+# MachineProfile — 5-осевой станок класса table-rotary-tilting XYZAC
+# (фаза 12.5.3, амендменты v0.1.3/v0.1.5 дизайн-дока EID-L2-DESIGN §12.5).
+#
+# Секция [kinematics] — кинематика ротационных осей (enum топологий, §5.1 —
+# НЕ generic-DH): тип + геометрия пивотов/офсетов оракула LinuxCNC
+# trtfuncs.c (HAL-пины x-/y-/z-rot-point, y-/z-offset, z-offset-tool,
+# conventional-directions). Формулы forward/inverse — ядро eid-l2/kinematics
+# (@94cbe11, круговой инвариант forward∘inverse ≡ identity, 3136 кейсов).
+#
+# ПОТРЕБИТЕЛЬ: L2-lowering (eid_l2::lowering::lower с
+# MachineProfile::l2_lowering_config()) — ротационные кадры опускаются в
+# L1-опы machine-осей (TCP→joints). L1↔L1 translate-конвейер секцию не
+# потребляет (L2-маршрутизация CLI — отдельная фаза). Отсутствие секции =
+# Triv (3-осевая, прежнее поведение — старые TOML валидны).
+#
+# Топологии: type = "triv" | "xyzac-trt" | "xyzbc-trt"; head-head и прочие —
+# при добавлении формул в ядро (без оракула не добавляются, §5.1.5).
+name = "XYZAC table-rotary-tilting example"
+dialect = "linuxcnc"
+emit-r-arcs = false
+emit-preamble = false
+axis-limits-units = "mm"
+
+[kinematics]
+type = "xyzac-trt"
+# Пивот вращения стола (HAL: x-rot-point / y-rot-point / z-rot-point).
+rot-point = [0.0, 0.0, -345.0]
+# Смещение пивота оси A вдоль Y (HAL: y-offset; XYZAC). Для XYZBC вместо
+# него — x-offset (смещение пивота оси B вдоль X).
+y-offset = 0.0
+# Геометрия стола по Z (HAL: z-offset) — в формулы оракула входит суммой
+# dz = z-offset + z-offset-tool ДО forward/inverse.
+z-offset = 25.0
+# Вылет инструмента по Z (HAL: z-offset-tool).
+z-offset-tool = 0.0
+# false (дефолт LinuxCNC) — «rotational axes are the opposite of the
+# conventional» (con = −1 в формулах); true — конвенциональные (con = +1).
+conventional-directions = false
+
+[limits]
+max-ops-per-program = 200000
+max-unroll-iterations = 10000
+max-source-lines = 1000000
+max-word-chars = 32

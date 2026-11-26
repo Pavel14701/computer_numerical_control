@@ -10,6 +10,10 @@ eid-linuxcnc = { path = "../eid-linuxcnc" }
 eid-fanuc = { path = "../eid-fanuc" }
 eid-haas = { path = "../eid-haas" }
 eid-harness = { path = "../eid-harness" }
+# 12.5.3: маппинг MachineKinematics профиля → RtcpMode/L2Config lowering'а
+# (проброс профиля в kinematic-проход фазы 12.5; eid-l2 std-only, зависит
+# только от eid-core — циклов нет).
+eid-l2 = { path = "../eid-l2" }
 serde = { version = "1", features = ["derive"] }
 # toml (не serde_yaml): serde_yaml в maintenance mode + unsafe-libyaml
 # транзитивно в CLI-бинарь (IMPLEMENTATION-PLAN §6, R-1).
