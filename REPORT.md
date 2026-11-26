@@ -230,7 +230,9 @@ Term-IR Formula/NumExpr/ValTerm + Encoder по таблице §3.2 дослов
 
 T1 L1-passthrough 1:1 · T2 std-only (+фича только для будущего solver) · T3 #0-семантика 22 теста · T4 частичный lowering дословно · T5 бесконечный WHILE → E_LIMIT_EXCEEDED (3 конфигурации) · T6 Mirror дефолт-отказ / allow_mirror_bake→инверсия+Notice.
 
-### 13.5 Фаза 12.5 — Kinematic Axis Lowering — 12.5.1 + 12.5.2 ЗАВЕРШЕНЫ
+### 13.5 Фаза 12.5 — Kinematic Axis Lowering — 12.5.1 + 12.5.2 + 12.5.3 ЗАВЕРШЕНЫ — **2 ТОПОЛОГИИ ИЗ ≥6**
+
+**Честная граница**: кинематический lowering покрывает **XYZAC-trt и XYZBC-trt** (2 топологии 5-осей из ≥6 по классификации: head-head, table-table, head-table, table-head, trunnion, gantry; XYZAC/XYZBC-trt — трюннон/AC-стол класс). Остальные — формулы без исполняемого кода (She 2007 nutating head, Greenwich 2025 closed-form — академические источники); добавление — при добавлении формул в ядро (без оракула не добавляются — правило G73).
 
 Разморожена после находки оракула (амендмент v0.1.5): LinuxCNC `trtfuncs.c` — полные forward/inverse формулы XYZAC/XYZBC table-rotary-tilting (A-наклон + C-поворот на столе) с офсетами rot-point/Dy/Dz/tool-offset и флагом con=±1 («rotational axes opposite of conventional»).
 - **12.5.1 kinematics.rs ядро** (agent A, 94cbe11): Rust-порт формул как математических фактов (C-код не копировался — источник Rudy du Preez 2016 GPL-2.0+); **круговой инвариант 3136 кейсов max err 2.27e-13** (машинный эпсилон), независимая матричная сверка 784 кейса; находка: web-транскрипция trtfuncs искажена (выронила con-множители XYZBC-inverse) — добыто curl вербатим + подтверждено алгебраическим выводом. 320 тестов.
@@ -238,7 +240,9 @@ T1 L1-passthrough 1:1 · T2 std-only (+фича только для будуще
 
 ### 13.5.1 Фаза 12.5.3 — MachineKinematics профиль + TCP→joints — ЗАВЕРШЕНА (agent B2, 032b486)
 
-MachineKinematics {Triv, XyzacTrt, XyzbcTrt} в MachineProfile (TOML `[kinematics]` serde-default absent=Triv; validate is_finite ±1e6 cap), to_rtcp_mode() + l2_lowering_config() проброс (зависимость eid-integration → eid-l2 additive). **Полный-TCP скоуп**: все Rapid/Linear под trt пересчитываются через xyzac_inverse/xyzbc_inverse в machine-оси (иначе после A90 L1-поток смешивал joints/TCP — неинтерпретируемо; решение задокументировано). **E2E-оракул: 242 121 trt-оп замкнулся кинематикой-кругом** на ncm_g434 (44 607), ncm_g43_g69 (78 529), ncm_g41_d (419), SmilinJack (118 566); gce_full (IfGoto) — структурная сверка. Живой golden: TCP (0,0,0) при rot (−43.657, −8.247) → joints (0, 220.9087, −88.4847) — пивот −345 мм виден. Trt-носители дуг обновляют TCP pos_prog (поймано круг-оракулом). CLI-маршрутизация L2 = отдельная фаза (факт кодовой базы). 432/0 l2+int.
+MachineKinematics {Triv, XyzacTrt, XyzbcTrt} в MachineProfile (TOML `[kinematics]` serde-default absent=Triv; validate is_finite ±1e6 cap), to_rtcp_mode() + l2_lowering_config() проброс (зависимость eid-integration → eid-l2 additive). **Полный-TCP скоуп**: все Rapid/Linear под trt пересчитываются через xyzac_inverse/xyzbc_inverse в machine-оси (иначе после A90 L1-поток смешивал joints/TCP — неинтерпретируемо; решение задокументировано). **E2E-само-согласованность: 242 121 trt-оп замкнулся кинематикой-кругом** (pose → inverse → forward → pose) на ncm_g434 (44 607), ncm_g43_g69 (78 529), ncm_g41_d (419), SmilinJack (118 566); gce_full (IfGoto) — структурная сверка. Живой golden: TCP (0,0,0) при rot (−43.657, −8.247) → joints (0, 220.9087, −88.4847) — пивот −345 мм виден. Trt-носители дуг обновляют TCP pos_prog (поймано круг-оракулом). CLI-маршрутизация L2 = отдельная фаза (факт кодовой базы). 432/0 l2+int.
+
+**Честная оговорка об оракуле**: круговой инвариант (pose → inverse → forward → pose) проверяет **само-согласованность формул**, но **не** эквивалентность реальному контроллеру (rs274-оракул 5-осей не существует — RTCP исполняется реалтайм-слоем LinuxCNC, не interp). Настоящая верификация 12.5.3 — постпроцессорный дифф (Autodesk/PowerMill post конкретной машины) или физический станок — **перспектива при доступе**. Круговой инвариант — необходимое условие, не достаточное.
 
 ### 13.6 Остатки этапа 12 (честно)
 
