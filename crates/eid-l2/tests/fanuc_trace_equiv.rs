@@ -80,7 +80,7 @@
 
 use eid_core::ast::{Num, Op};
 use eid_l2::ast::{Expr, ExprPose, L2Program, L2Stmt, L2Sub, MoveKind, SubTarget, SysVar, VarRef};
-use eid_l2::interp::{L2Config, L2Evaluator};
+use eid_l2::interp::{L2Config, L2Evaluator, RtcpMode};
 use eid_l2::parser_fanuc::parse_program;
 use std::path::Path;
 
@@ -95,6 +95,7 @@ fn trace_cfg() -> L2Config {
         max_call_depth: 9,
         allow_mirror_bake: false,
         initial_pos: Some([0.0, 0.0, 0.0]), // rs274-sim: home (0,0,0)
+        rtcp_mode: RtcpMode::Off,           // 12.5.2: дефолт — RTCP-профиль не задан
     }
 }
 

@@ -27,6 +27,18 @@
 //!
 //! Точка входа конвейера: [`lower`] (сигнатура из заготовки 12.1).
 //!
+//! ГРАНИЦА 12.5.2 / 12.5.3 (RTCP, фаза 12.5): 12.5.2 — RTCP-режим
+//! ([`crate::interp::RtcpMode::XyzacTrt`] в [`L2Config::rtcp_mode`])
+//! разрешает переменные ротационных слов (A/B/C) в T4-носитель так же,
+//! как линейные, и ПОМЕЧАЕТ lowering (флаг
+//! [`crate::interp::LoweringResult::rtcp_active`] + диагностика) — сам
+//! носитель НЕ опускается (ход X/Y/Z+A/C без пересчёта joints изменил бы
+//! TCP-геометрию). Полный TCP→joints trt-пересчёт — 12.5.3 при
+//! MachineKinematics-профиле (оракул trtfuncs — ядро
+//! [`crate::kinematics`] готово: [`crate::kinematics::xyzac_inverse`]
+//! из TCP-позы → joints; тогда ротационные носители заменяются
+//! пересчитанными L1-ходами).
+//!
 //! ЦЕНЗ-B (честно): в корпусе `WithTransform ×0` (G68/G51 нет в живых
 //! файлах) — трансформации покрыты СИНТЕТИЧЕСКИМИ golden-тестами с ручным
 //! расчётом (поворот 90° вокруг (10,10): (15,10) → (10,15) и т.п.);
@@ -50,6 +62,10 @@ use std::collections::BTreeMap;
 /// Pass-1: символьно-конкретное исполнение L2-программы с лимитом шагов
 /// ([`L2Config`]) → [`LoweringResult`] (L1-опы + хвост носителей RAW +
 /// диагностики). Ошибки исполнения/классы — [`L2ExecError`].
+///
+/// 12.5.2: RTCP-профиль передаётся в конфиге ([`L2Config::rtcp_mode`]) —
+/// см. «ГРАНИЦА 12.5.2 / 12.5.3» в шапке модуля (носители ротационных
+/// слов не опускаются; [`LoweringResult::rtcp_active`] — путь 12.5.3).
 pub fn lower(program: &L2Program, cfg: L2Config) -> Result<LoweringResult, L2ExecError> {
     L2Evaluator::new(cfg).run(program)
 }
@@ -692,5 +708,75 @@ mod tests {
         program.labels = labels;
         assert_eq!(resolve_labels(&program).get(&99), Some(&5));
         let _ = Expr::num(0.0);
+    }
+
+    // ---------- T8 (12.5.2): RTCP-профиль через точку входа lower() ---------
+
+    #[test]
+    fn t8_lower_entry_rtcp_off_vs_xyzac_trt_boundary() {
+        use crate::ast::{placeholder_span, Expr, ExprPose, MoveKind, VarRef};
+        use crate::interp::{L2Config, RtcpMode};
+        use crate::kinematics::TrtParams;
+        // #100 = 15; G0 X#100 A#100 — ротационный кадр (§3 строка 5, T4/T8).
+        let program = L2Program::new(
+            vec![
+                L2Stmt::Assign {
+                    target: VarRef::Direct(100),
+                    value: Expr::num(15.0),
+                    src: placeholder_span(),
+                },
+                L2Stmt::Move {
+                    kind: MoveKind::Rapid,
+                    target: ExprPose {
+                        x: Some(Expr::var(100)),
+                        y: None,
+                        z: None,
+                        a: Some(Expr::var(100)),
+                        b: None,
+                        c: None,
+                    },
+                    feed: None,
+                    spindle: None,
+                    src: placeholder_span(),
+                },
+            ],
+            Vec::new(),
+        );
+        let mk_cfg = |rtcp_mode| L2Config {
+            rtcp_mode,
+            ..L2Config::default()
+        };
+        let off = lower(&program, mk_cfg(RtcpMode::Off)).unwrap();
+        let trt = lower(
+            &program,
+            mk_cfg(RtcpMode::XyzacTrt {
+                params: TrtParams::default(),
+            }),
+        )
+        .unwrap();
+        // Граница 12.5.2: НОСИТЕЛЬ одинаков (T4 дословно: переменные
+        // ротационных слов разрешены в Op::Raw с подставленными значениями),
+        // различие режимов — ТОЛЬКО маркировка rtcp_active; полный
+        // TCP→joints trt-пересчёт — 12.5.3 при MachineKinematics-профиле
+        // (оракул trtfuncs — crate::kinematics готов).
+        let payload = |r: &crate::interp::LoweringResult| match &r.raw_tail[0].op {
+            Op::Raw { payload_hex, .. } => payload_hex.clone(),
+            _ => panic!("carrier must be Raw"),
+        };
+        assert_eq!(payload(&off), payload(&trt));
+        let decoded: Vec<u8> = (0..payload(&trt).len() / 2)
+            .map(|i| u8::from_str_radix(&payload(&trt)[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        assert_eq!(
+            String::from_utf8(decoded).unwrap(),
+            "G0 X15.0000 A15.0000\n"
+        );
+        assert!(!off.rtcp_active);
+        assert!(trt.rtcp_active);
+        // Диагностика носителя под XyzacTrt называет профиль («не молча»).
+        assert!(trt
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("XyzacTrt")));
     }
 }

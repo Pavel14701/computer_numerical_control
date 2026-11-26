@@ -33,7 +33,12 @@
 //!   +axis плоскости, pitch = внеплоскостная компонента хода);
 //! * ротационные оси (A/B/C) → [`Op::Raw`] с payload-кадром
 //!   `G0 X15.0000 A15.0000\n` (T4 ДОСЛОВНО, hex с терминатором), код
-//!   E_UNSUPPORTED_SEMANTICS (§3 строка 5);
+//!   E_UNSUPPORTED_SEMANTICS (§3 строка 5); 12.5.2: при RTCP-профиле
+//!   [`RtcpMode::XyzacTrt`] тот же носитель помечается — флаг
+//!   [`LoweringResult::rtcp_active`] + диагностика профиля (переменные
+//!   ротационных слов разрешены; полный TCP→joints trt-пересчёт —
+//!   12.5.3, MachineKinematics-профиль, оракул trtfuncs —
+//!   [`crate::kinematics`] готов);
 //! * G43.4/G49 RTCP, G68.2 TWP → Raw с подставленными переменными
 //!   (§3 строка 6; TWP-тело подавлено);
 //! * G31 / чтение SkipPos/AbsMachinePos/WorkPos → останов
@@ -69,6 +74,7 @@ use crate::ast::{
     Val, VarRef,
 };
 use crate::eval::{eval_expr, write_var, L2Env, L2Error};
+use crate::kinematics::TrtParams;
 use crate::lowering::{
     arc_from_ijk, arc_from_r, format_frame, plane_linear, raw_frame_op, resolve_labels,
     sub_target_name, Affine3, ArcGeomError,
@@ -81,7 +87,46 @@ use std::collections::{BTreeMap, HashMap};
 // Конфиг и ошибки
 // ===========================================================================
 
-/// Конфигурация интерпретатора/Pass-1 lowering (этап 12.2).
+/// RTCP-профиль Pass-1 lowering (12.5.2, фаза 12.5): как интерпретатор
+/// обращается с ротационными словами (A/B/C) в ходах.
+///
+/// ГРАНИЦА 12.5.2 / 12.5.3 (честно): в ОБЕИХ режимах кадр с ротационными
+/// словами НЕ опускается в L1-опы — ход по X/Y/Z+A/C без пересчёта
+/// joints изменил бы TCP-геометрию (поворот стола двигает TCP), поэтому
+/// ротационный кадр остаётся [`Op::Raw`]-носителем T4 с ПОДСТАВЛЕННЫМИ
+/// значениями (переменные A/C-слов разрешаются так же, как линейные —
+/// [`ResolvedPose`]). Режим меняет ТОЛЬКО маркировку результата:
+/// [`LoweringResult::rtcp_active`] + сообщение диагностики носителя
+/// называет активный профиль и границу 12.5.3 («не молча»).
+///
+/// 12.5.3: полный TCP→joints trt-пересчёт при MachineKinematics-профиле
+/// — инверсная кинематика [`crate::kinematics::xyzac_inverse`] (оракул
+/// trtfuncs.c, ядро готово) пересчитывает joints из TCP-позы; тогда
+/// X/Y/Z-компонента хода впервые опустится в L1-опы.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RtcpMode {
+    /// Дефолт: RTCP-кинематика НЕ задана — поведение 12.2: ротационный
+    /// кадр → [`Op::Raw`]-носитель с подставленными значениями (T4);
+    /// [`LoweringResult::rtcp_active`] остаётся `false`.
+    Off,
+    /// XYZAC table-rotary-tilting профиль (геометрия станка —
+    /// [`TrtParams`], ядро kinematics.rs @94cbe11): семантика носителя
+    /// ТА ЖЕ ([`Op::Raw`] T4-паттерн, переменные ротационных слов
+    /// разрешены), но каждый ротационный носитель помечен — флаг
+    /// [`LoweringResult::rtcp_active`] = `true` + диагностика с именем
+    /// профиля — путь для 12.5.3 (там носители будут заменены
+    /// пересчитанными joints-ходами).
+    XyzacTrt { params: TrtParams },
+}
+
+impl Default for RtcpMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+/// Конфигурация интерпретатора/Pass-1 lowering (этап 12.2; 12.5.2 —
+/// RTCP-профиль).
 #[derive(Debug, Clone, PartialEq)]
 pub struct L2Config {
     /// Общий бюджет шагов вычисления (узлы выражений + операторы).
@@ -101,6 +146,12 @@ pub struct L2Config {
     /// None (дефолт) → первый ход с неполными словами не lowered
     /// (E_RUNTIME_STATE-носитель); Some — наследование координат с кадра 1.
     pub initial_pos: Option<[f64; 3]>,
+    /// RTCP-профиль ротационных осей (12.5.2): [`RtcpMode::Off`] (дефолт —
+    /// поведение 12.2) или [`RtcpMode::XyzacTrt`] с геометрией станка.
+    /// Профиль НЕ меняет L1-вывод (ротационный кадр — Raw-носитель T4 в
+    /// обоих режимах, см. документацию [`RtcpMode`]) — только маркировку
+    /// [`LoweringResult::rtcp_active`] и текст диагностики.
+    pub rtcp_mode: RtcpMode,
 }
 
 impl Default for L2Config {
@@ -111,6 +162,7 @@ impl Default for L2Config {
             max_call_depth: 9,
             allow_mirror_bake: false,
             initial_pos: None,
+            rtcp_mode: RtcpMode::Off,
         }
     }
 }
@@ -308,6 +360,15 @@ pub struct LoweringResult {
     /// например, запечённое зеркало T6). Остановы (Err) отражены в
     /// возврате [`L2Evaluator::run`], программа остаётся в L2 (§3).
     pub diagnostics: Vec<Diagnostic>,
+    /// RTCP-профиль был АКТИВЕН на ротационных кадрах (12.5.2): `true`
+    /// ⇔ хоть один ротационный носитель построен под
+    /// [`RtcpMode::XyzacTrt`]. Семантика носителей при этом НЕ менялась
+    /// (значения слов разрешены, joints НЕ пересчитаны — граница 12.5.3,
+    /// см. [`RtcpMode`]): флаг — машина для следующей фазы, чтобы
+    /// потребитель отличал «просто носитель» от «носитель под RTCP,
+    /// ждущий trt-пересчёта». `false` при [`RtcpMode::Off`] и когда
+    /// ротационных кадров не было вовсе.
+    pub rtcp_active: bool,
 }
 
 impl LoweringResult {
@@ -947,19 +1008,33 @@ impl L2Evaluator {
                 };
                 // 2) Ротационная ось → носитель T4 (§3 строка 5): кадр с
                 //    подставленными значениями, слова Null опущены (2.1).
+                //    12.5.2 (RTCP-профиль): при RtcpMode::XyzacTrt вывод ТАК
+                //    ЖЕ — носитель не опускается в L1 (joints не пересчитаны,
+                //    ход X/Y/Z+A/C без trt-пересчёта изменил бы TCP-геометрию),
+                //    но флаг rtcp_active + сообщение диагностики честно
+                //    называют активный профиль и границу 12.5.3 («не молча»).
                 if rp.a.is_some() || rp.b.is_some() || rp.c.is_some() {
+                    let rtcp_trt = matches!(self.config.rtcp_mode, RtcpMode::XyzacTrt { .. });
                     let mut words = frame_words(&rp);
                     if let Some(f) = feed_v {
                         words.push(('F', f));
                     }
                     let text = format_frame(gcode, &words);
+                    let detail = if rtcp_trt {
+                        "rotary axis A/B/C under RTCP profile XyzacTrt: word variables resolved into T4 Raw carrier, joints NOT recomputed — full TCP→joints trt-lowering is phase 12.5.3 (MachineKinematics profile, oracle trtfuncs)"
+                    } else {
+                        "rotary axis A/B/C not representable in L1 (§3 partial lowering, T4 payload)"
+                    };
                     self.out.push_raw(
                         RawMarker::RotaryAxis,
                         ErrorCode::UnsupportedSemantics,
                         Some(text),
                         stmt,
-                        "rotary axis A/B/C not representable in L1 (§3 partial lowering, T4 payload)",
+                        detail,
                     );
+                    if rtcp_trt {
+                        self.out.rtcp_active = true;
+                    }
                     self.update_pos_prog(&rp);
                     return Ok(Flow::Normal);
                 }
@@ -1876,6 +1951,245 @@ mod tests {
                 (20.0, 5.0, 0.0)
             );
         }
+    }
+
+    // ---------- T8: RTCP-профиль lowering (12.5.2) ---------------------------
+
+    /// XyzacTrt-конфиг: геометрия станка по умолчанию ([`TrtParams`] — ядро
+    /// 12.5.1; САМИ параметры на lowering 12.5.2 не влияют — joints не
+    /// пересчитываются, носитель не опускается; полный TCP→joints — 12.5.3).
+    fn cfg_trt() -> L2Config {
+        L2Config {
+            rtcp_mode: RtcpMode::XyzacTrt {
+                params: TrtParams::new([0.0, 0.0, 0.0], 0.0, 0.0, 0.0, false),
+            },
+            ..cfg()
+        }
+    }
+
+    /// `#100 = 15; G0 A#100` — ПЕРЕМЕННАЯ в ротационном слове.
+    fn rotary_var_program() -> L2Program {
+        L2Program::new(
+            vec![
+                assign(100, Expr::num(15.0)),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: None,
+                        y: None,
+                        z: None,
+                        a: Some(Expr::var(100)),
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn t8_rtcp_off_rotary_var_resolved_into_raw_pin() {
+        // ПИН 12.2: rtcp=Off (дефолт) — переменная ротационного слова
+        // разрешается в T4-носитель с подставленным значением
+        // («G0 A15.0000\n»); rtcp_active = false (маркировки нет).
+        let res = ev().run(&rotary_var_program()).unwrap();
+        assert!(res.l1_ops.is_empty());
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        assert_eq!(decode_payload(&res.raw_tail[0].op), "G0 A15.0000\n");
+        assert!(!res.rtcp_active);
+    }
+
+    #[test]
+    fn t8_rtcp_xyzac_trt_same_carrier_marked_active() {
+        // 12.5.2: XyzacTrt — ТОТ ЖЕ Raw-носитель (T4-паттерн), НО результат
+        // помечен rtcp_active = true + диагностика называет профиль и
+        // границу 12.5.3 («не молча»). Код носителя — честный
+        // E_UNSUPPORTED_SEMANTICS: носитель НЕ опущен, joints НЕ
+        // пересчитаны.
+        let res = L2Evaluator::new(cfg_trt())
+            .run(&rotary_var_program())
+            .unwrap();
+        assert!(res.l1_ops.is_empty());
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        assert_eq!(decode_payload(&res.raw_tail[0].op), "G0 A15.0000\n");
+        assert!(res.rtcp_active);
+        match &res.raw_tail[0].op {
+            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::UnsupportedSemantics),
+            _ => panic!("carrier must be Raw"),
+        }
+        // «Не молча»: диагностика носителя содержит имя профиля и фазу 12.5.3.
+        assert!(res
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("XyzacTrt") && d.message.contains("12.5.3")));
+    }
+
+    #[test]
+    fn t8_rtcp_off_carries_no_rtcp_marking() {
+        // Анти-пин «не молча»: при Off НЕТ ни флага, ни RTCP-сообщений —
+        // диагностика носителя прежняя (без имени профиля), ложной
+        // маркировки не возникает.
+        let res = ev().run(&rotary_var_program()).unwrap();
+        assert!(!res.rtcp_active);
+        assert!(res
+            .diagnostics
+            .iter()
+            .all(|d| !d.message.contains("XyzacTrt")));
+    }
+
+    #[test]
+    fn t8_rtcp_trt_t4_mixed_frame_verbatim_both_modes() {
+        // T4 ДОСЛОВНО в обоих режимах: #100 = 15; G0 X#100 A#100 →
+        // payload «G0 X15.0000 A15.0000\n». Линейная часть НЕ опускается в
+        // L1-оп даже под XyzacTrt (ход X/Y/Z+A/C без пересчёта joints
+        // изменил бы TCP-геометрию — граница 12.5.3); различие режимов —
+        // ТОЛЬКО флаг rtcp_active.
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(15.0)),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: Some(Expr::var(100)),
+                        y: None,
+                        z: None,
+                        a: Some(Expr::var(100)),
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        );
+        let off = ev().run(&program).unwrap();
+        let trt = L2Evaluator::new(cfg_trt()).run(&program).unwrap();
+        for res in [&off, &trt] {
+            assert_eq!(res.l1_ops.len(), 0);
+            assert_eq!(res.raw_tail.len(), 1);
+            assert_eq!(
+                decode_payload(&res.raw_tail[0].op),
+                "G0 X15.0000 A15.0000\n"
+            );
+        }
+        assert!(!off.rtcp_active);
+        assert!(trt.rtcp_active);
+    }
+
+    #[test]
+    fn t8_rtcp_trt_rotary_word_expression_resolved_like_linear() {
+        // (а) 12.5.2: переменные в ротационных словах разрешаются ТАК ЖЕ,
+        // как линейные: #101 = #100 * 2 → C30.0000 в payload. Линейная
+        // компонента носителя трекается (ход после него наследует X=10);
+        // L1-вывод Off и XyzacTrt ИДЕНТИЧЕН (семантика не менялась).
+        let program = L2Program::new(
+            vec![
+                assign(100, Expr::num(15.0)),
+                assign(
+                    101,
+                    Expr::Binary(
+                        BinaryOp::Mul,
+                        Box::new(Expr::var(100)),
+                        Box::new(Expr::num(2.0)),
+                    ),
+                ),
+                move_stmt(
+                    MoveKind::Linear,
+                    ExprPose {
+                        x: Some(Expr::num(10.0)),
+                        y: None,
+                        z: None,
+                        a: None,
+                        b: None,
+                        c: Some(Expr::var(101)),
+                    },
+                    Some(Expr::num(300.0)),
+                ),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: None,
+                        y: Some(Expr::num(7.0)),
+                        z: None,
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        );
+        let mk = |rtcp: RtcpMode| L2Config {
+            rtcp_mode: rtcp,
+            initial_pos: Some([0.0, 0.0, 0.0]), // позиция известна — трекинг с кадра 1
+            ..cfg()
+        };
+        let trt = L2Evaluator::new(mk(RtcpMode::XyzacTrt {
+            params: TrtParams::default(),
+        }))
+        .run(&program)
+        .unwrap();
+        assert!(trt.rtcp_active);
+        assert_eq!(trt.l1_ops.len(), 1); // третий ход lowered, второй — носитель
+        assert_eq!(
+            decode_payload(&trt.raw_tail[0].op),
+            "G1 X10.0000 C30.0000 F300.0000\n"
+        );
+        // Наследование из RAW-хода: X=10 (обновлён носителем), Y=7, Z=0.
+        if let Op::Rapid { end, .. } = &trt.l1_ops[0] {
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (10.0, 7.0, 0.0)
+            );
+        } else {
+            panic!("expected lowered Rapid");
+        }
+        // Off-режим: L1-опы и НОСИТЕЛИ идентичны (marker + payload);
+        // различие — ТОЛЬКО reason-строки (RTCP-маркировка «не молча») и флаг.
+        let off = L2Evaluator::new(mk(RtcpMode::Off)).run(&program).unwrap();
+        assert_eq!(off.l1_ops, trt.l1_ops);
+        assert_eq!(off.raw_tail.len(), trt.raw_tail.len());
+        for (o, t) in off.raw_tail.iter().zip(trt.raw_tail.iter()) {
+            assert_eq!(o.marker, t.marker);
+            assert_eq!(decode_payload(&o.op), decode_payload(&t.op));
+        }
+        // Off: флага нет; Trt: диагностика носителя называет профиль.
+        assert!(!off.rtcp_active);
+        assert!(trt
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("XyzacTrt")));
+    }
+
+    #[test]
+    fn t8_rtcp_trt_without_rotary_words_lowering_untouched() {
+        // Программа БЕЗ ротационных слов под XyzacTrt: lowering равен Off
+        // (строка 1 матрицы не тронута), флаг НЕ ставится — RTCP активен
+        // только на ротационных кадрах (честная маркировка, не глобальный шум).
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Rapid,
+                target_const(1.0, 2.0, 3.0),
+                None,
+            )],
+            Vec::new(),
+        );
+        let off = ev().run(&program).unwrap();
+        let trt = L2Evaluator::new(cfg_trt()).run(&program).unwrap();
+        assert_eq!(off.l1_ops, trt.l1_ops);
+        assert_eq!(off.raw_tail, trt.raw_tail);
+        // Diagnostic не PartialEq — сравнение по коду и сообщению.
+        assert_eq!(off.diagnostics.len(), trt.diagnostics.len());
+        for (o, t) in off.diagnostics.iter().zip(trt.diagnostics.iter()) {
+            assert_eq!(o.code, t.code);
+            assert_eq!(o.message, t.message);
+        }
+        assert!(!trt.rtcp_active);
     }
 
     // ---------- D1: кадры, глубина 9, M99/Return, G66 ----------
