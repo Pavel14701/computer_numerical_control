@@ -27,6 +27,7 @@ pub mod emit_l2;
 pub mod emit_linuxcnc;
 pub mod eval;
 pub mod interp;
+pub mod kinematics;
 pub mod lowering;
 pub mod parser_fanuc;
 pub mod parser_haas;
