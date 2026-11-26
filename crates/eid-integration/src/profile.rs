@@ -70,6 +70,21 @@
 //! `tests/kinematics_lowering_e2e.rs`. Перспективные топологии (head-head
 //! и др.) НЕ добавляются без оракула формул (§5.1.5 — брак детали
 //! пост-фактум).
+//!
+//! Фаза 12.5.4 (агент A, 2026-11-26): enum РАСШИРЕН оставшимися
+//! топологиями (research `kinematics_research.md` §1 — все с оракулами):
+//! `xyzab-tdr` (table-table TT-2 cradle/trunnion, оракул
+//! `xyzab_tdr_kins.comp`), `trsrn` (head-head ν=90° + nutating, оракул
+//! `xyzacb_trsrn.comp` + НЕЗАВИСИМЫЙ python kins-twp), `maxkins`
+//! (head-table intersecting DMU 50-класс, оракул `maxkins.c`), `five-axis`
+//! (gantry/bridge mill XYZBCW, оракул `5axiskins.c`). Ядра формул —
+//! `eid_l2::kinematics_{tdr,trsrn,maxkins,5axis}` (круговой инвариант
+//! 784/4116/1568/1568 кейсов, max err ≤ 8e-13). ГРАНИЦА (честно, 12.5.4):
+//! lowering-проводка НОВЫХ топологий ([`MachineKinematics::to_rtcp_mode`])
+//! заморожена вместе с `eid_l2::interp::RtcpMode` — новые варианты маппятся
+//! в `RtcpMode::Off` (поведение Triv) ДО решения оркестратора о
+//! распрокрутке RtcpMode (СТОП-вопрос); ядро формул и данные профиля
+//! готовы, semantic-поверхность верифицирована ядерными тестами.
 
 use eid_core::ast::Units;
 use std::path::Path;
@@ -207,12 +222,142 @@ pub struct TrtKinematics {
     pub conventional_directions: bool,
 }
 
-/// Кинематика станка (12.5.3): топология ротационных осей — enum
-/// (§5.1-амендрмент: НЕ generic-DH; «формула на топологию»). TOML:
+/// Геометрия table-table TT-2 «cradle/trunnion» XYZAB (12.5.4; оракул
+/// LinuxCNC `xyzab_tdr_kins.comp` — пивот A/B-сборки + офсеты лица стола
+/// A; serde kebab-case, все поля serde-default).
+///
+/// Квирк оракула (док ядра `eid_l2::kinematics_tdr`): `x-offset` (dx)
+/// АЛГЕБРАИЧЕСКИ ИНЕРТЕН в comp «как написано» (forward его не читает,
+/// в inverse компенсационные члены гасят qx-сдвиг точно) — хранится 1:1.
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct TdrKinematics {
+    /// Пивот A/B-сборки `[x, y, z]` (HAL `x-/y-/z-rot-point`).
+    pub rot_point: [f64; 3],
+    /// `dx` (HAL `x-offset`) — офсет rot-point → лицо стола A по X
+    /// (инертен в оракуле — см. doc ядра).
+    pub x_offset: f64,
+    /// `dz` (HAL `z-offset`) — офсет rot-point → лицо стола A по Z.
+    pub z_offset: f64,
+    /// `dt` = `tool.tran.z` оракула — вылет инструмента по Z (отдельное
+    /// слагаемое, в отличие от trt, где tool-offset суммируется в dz).
+    pub z_offset_tool: f64,
+}
+
+impl TdrKinematics {
+    /// Проекция в параметры ядра [`eid_l2::kinematics_tdr::TdrParams`].
+    pub fn to_tdr_params(&self) -> eid_l2::kinematics_tdr::TdrParams {
+        eid_l2::kinematics_tdr::TdrParams::new(
+            self.rot_point,
+            self.x_offset,
+            self.z_offset,
+            self.z_offset_tool,
+        )
+    }
+}
+
+/// Геометрия head-head универсальной/nutating головы (12.5.4; оракул
+/// LinuxCNC `xyzacb_trsrn.comp` — пины `nut-angle`, `y-/z-pivot`,
+/// `x-/y-offset`, `y-/z-rot-axis`, `tool-offset-z`). Семантика букв — по
+/// INI sim-конфига: A — table rotary, B — spindle secondary (нутационный),
+/// C — spindle primary. nut-angle домен 0..=90° (при 90° — вырождение в
+/// ортогональную голову Ry(θ2), проверено оракулом и тестами ядра).
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct TrsrnKinematics {
+    /// ν — nut-angle в градусах (0..=90; HAL `nut-angle`).
+    pub nut_angle: f64,
+    /// Ly (HAL `y-pivot`) — пивот головы по Y.
+    pub y_pivot: f64,
+    /// Lz (HAL `z-pivot`) — пивот головы по Z.
+    pub z_pivot: f64,
+    /// Dx (HAL `x-offset`).
+    pub x_offset: f64,
+    /// Dy (HAL `y-offset`).
+    pub y_offset: f64,
+    /// HAL `y-rot-axis` (ядро выводит `Dray = y-rot-axis − (Dy + Ly)`).
+    pub y_rot_axis: f64,
+    /// HAL `z-rot-axis` (ядро выводит `Draz = z-rot-axis − Lz`).
+    pub z_rot_axis: f64,
+    /// Dt (HAL `tool-offset-z`) — вылет инструмента.
+    pub tool_offset_z: f64,
+}
+
+impl TrsrnKinematics {
+    /// Проекция в параметры ядра [`eid_l2::kinematics_trsrn::TrsrnParams`].
+    pub fn to_trsrn_params(&self) -> eid_l2::kinematics_trsrn::TrsrnParams {
+        eid_l2::kinematics_trsrn::TrsrnParams {
+            nut_angle: self.nut_angle,
+            y_pivot: self.y_pivot,
+            z_pivot: self.z_pivot,
+            x_offset: self.x_offset,
+            y_offset: self.y_offset,
+            y_rot_axis: self.y_rot_axis,
+            z_rot_axis: self.z_rot_axis,
+            tool_offset_z: self.tool_offset_z,
+        }
+    }
+}
+
+/// Геометрия head-table intersecting, DMU 50-класс (12.5.4; оракул
+/// LinuxCNC `maxkins.c` — пины `pivot-length`, `tool-length`,
+/// `conventional-directions`). U/V/W-салазки варианта max5 — семантика
+/// ядра (u/v/w в тестах); профиль несёт геометрию головы.
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct MaxkinsKinematics {
+    /// Длина пивота головы (HAL `pivot-length`; дефолт maxkins.c 0.666 —
+    /// машина-специфично, НЕ зашивается).
+    pub pivot_length: f64,
+    /// Длина инструмента (HAL `tool-length`).
+    pub tool_length: f64,
+    /// `false` (дефолт оракула) ⇒ con = −1: направление оси B
+    /// нестандартное (макро `CON(p)` maxkins.c).
+    pub conventional_directions: bool,
+}
+
+impl MaxkinsKinematics {
+    /// Проекция в параметры ядра [`eid_l2::kinematics_maxkins::MaxkinsParams`].
+    pub fn to_maxkins_params(&self) -> eid_l2::kinematics_maxkins::MaxkinsParams {
+        eid_l2::kinematics_maxkins::MaxkinsParams {
+            pivot_length: self.pivot_length,
+            tool_length: self.tool_length,
+            conventional: self.conventional_directions,
+        }
+    }
+}
+
+/// Геометрия gantry/bridge mill XYZBCW (12.5.4; оракул LinuxCNC
+/// `5axiskins.c` — пины `pivot-length`, `tool-length`; W — виртуальная ось
+/// вдоль инструмента, складывается в XYZ-джоинты ядра).
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct FiveAxisKinematics {
+    /// Длина пивота головы (HAL `pivot-length`; дефолт 5axiskins.c 250 —
+    /// машина-специфично, НЕ зашивается).
+    pub pivot_length: f64,
+    /// Длина инструмента (HAL `tool-length`).
+    pub tool_length: f64,
+}
+
+impl FiveAxisKinematics {
+    /// Проекция в параметры ядра [`eid_l2::kinematics_5axis::FiveAxisParams`].
+    pub fn to_fiveaxis_params(&self) -> eid_l2::kinematics_5axis::FiveAxisParams {
+        eid_l2::kinematics_5axis::FiveAxisParams {
+            pivot_length: self.pivot_length,
+            tool_length: self.tool_length,
+        }
+    }
+}
+
+/// Кинематика станка (12.5.3 enum; 12.5.4 — полная семья топологий):
+/// топология ротационных осей — enum (§5.1-амендрмент: НЕ generic-DH;
+/// «формула на топологию»). TOML:
 ///
 /// ```toml
 /// [kinematics]
-/// type = "xyzac-trt"                 # "triv" | "xyzac-trt" | "xyzbc-trt"
+/// type = "xyzac-trt"                 # triv | xyzac-trt | xyzbc-trt |
+///                                    # xyzab-tdr | trsrn | maxkins | five-axis
 /// rot-point = [0.0, 0.0, -345.0]     # пивот вращения стола
 /// y-offset = 0.0                     # XYZAC: смещение пивота A по Y
 /// # x-offset = 0.0                   # XYZBC: смещение пивота B по X
@@ -222,7 +367,10 @@ pub struct TrtKinematics {
 /// ```
 ///
 /// Отсутствие секции (serde-default) = [`MachineKinematics::Triv`] —
-/// прежнее поведение (старые TOML валидны).
+/// прежнее поведение (старые TOML валидны). НОВЫЕ варианты 12.5.4
+/// (xyzab-tdr/trsrn/maxkins/five-axis) — data-model + ядро формул
+/// (`eid_l2::kinematics_*`); в lowering (`to_rtcp_mode`) маппятся в Off
+/// до распрокрутки RtcpMode (заморожен — см. doc модуля).
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum MachineKinematics {
@@ -234,20 +382,35 @@ pub enum MachineKinematics {
     /// TCP→joints через `eid_l2::kinematics::xyzac_inverse`.
     XyzacTrt(TrtKinematics),
     /// XYZBC table-rotary-tilting (стол B + ротор C); та же формула-семья
-    /// оракула (`xyzbc_inverse`). Расширяемо (head-head и др. — только при
-    /// оракуле формул, §5.1).
+    /// оракула (`xyzbc_inverse`).
     XyzbcTrt(TrtKinematics),
+    /// 12.5.4: XYZAB table-table TT-2 «cradle/trunnion» (качающийся стол B
+    /// снизу + ротор A сверху — Hermle-класс); ядро
+    /// `eid_l2::kinematics_tdr` (оракул `xyzab_tdr_kins.comp`; квирк
+    /// инертности dx воспроизведён 1:1).
+    XyzabTdr(TdrKinematics),
+    /// 12.5.4: head-head универсальная (ν=90°) + nutating (ν 0–90°), A —
+    /// стол-ротор, B — secondary, C — primary; ядро
+    /// `eid_l2::kinematics_trsrn` (оракул `xyzacb_trsrn.comp` +
+    /// НЕЗАВИСИМЫЙ python kins-twp; She 2007-сверка — Родригес).
+    Trsrn(TrsrnKinematics),
+    /// 12.5.4: head-table intersecting (DMU 50-класс, вариант max5,
+    /// Haas/Fanuc-вариант при u=v=w=0); ядро `eid_l2::kinematics_maxkins`
+    /// (оракул `maxkins.c`).
+    Maxkins(MaxkinsKinematics),
+    /// 12.5.4: gantry/bridge mill XYZBCW (W — виртуальная ось вдоль
+    /// инструмента); ядро `eid_l2::kinematics_5axis` (оракул
+    /// `5axiskins.c`; tool-frame Rz(C)·Ry(−B)).
+    FiveAxis(FiveAxisKinematics),
 }
 
 impl MachineKinematics {
     /// Пост-валидация семантики (TOML-парс ловит только форму): конечность
-    /// всех значений и разумный диапазон `±`[`KINEMATICS_RANGE_CAP`].
+    /// всех значений и разумный диапазон `±`[`KINEMATICS_RANGE_CAP`];
+    /// trsrn-нутация — домен 0..=90° (документированный домен оракула,
+    /// research §2.3: ν=90° — ортогональное вырождение, ν=0° — Rz).
     /// [`MachineKinematics::Triv`] — валиден всегда (данных не несёт).
     pub fn validate(&self) -> Result<(), String> {
-        let k = match self {
-            MachineKinematics::Triv => return Ok(()),
-            MachineKinematics::XyzacTrt(k) | MachineKinematics::XyzbcTrt(k) => k,
-        };
         let check = |name: &str, v: f64| -> Result<(), String> {
             if !v.is_finite() {
                 return Err(format!(
@@ -261,14 +424,55 @@ impl MachineKinematics {
             }
             Ok(())
         };
-        for (i, v) in k.rot_point.iter().enumerate() {
-            check(&format!("rot-point[{i}]"), *v)?;
+        match self {
+            MachineKinematics::Triv => Ok(()),
+            MachineKinematics::XyzacTrt(k) | MachineKinematics::XyzbcTrt(k) => {
+                for (i, v) in k.rot_point.iter().enumerate() {
+                    check(&format!("rot-point[{i}]"), *v)?;
+                }
+                check("y-offset", k.y_offset)?;
+                check("x-offset", k.x_offset)?;
+                check("z-offset", k.z_offset)?;
+                check("z-offset-tool", k.z_offset_tool)?;
+                Ok(())
+            }
+            MachineKinematics::XyzabTdr(k) => {
+                for (i, v) in k.rot_point.iter().enumerate() {
+                    check(&format!("rot-point[{i}]"), *v)?;
+                }
+                check("x-offset", k.x_offset)?;
+                check("z-offset", k.z_offset)?;
+                check("z-offset-tool", k.z_offset_tool)?;
+                Ok(())
+            }
+            MachineKinematics::Trsrn(k) => {
+                check("nut-angle", k.nut_angle)?;
+                if !(0.0..=90.0).contains(&k.nut_angle) {
+                    return Err(format!(
+                        "kinematics.nut-angle = {} вне домена 0..=90° (нутация оракула trsrn: 90° — ортогональная голова, 0° — Rz-вырождение)",
+                        k.nut_angle
+                    ));
+                }
+                check("y-pivot", k.y_pivot)?;
+                check("z-pivot", k.z_pivot)?;
+                check("x-offset", k.x_offset)?;
+                check("y-offset", k.y_offset)?;
+                check("y-rot-axis", k.y_rot_axis)?;
+                check("z-rot-axis", k.z_rot_axis)?;
+                check("tool-offset-z", k.tool_offset_z)?;
+                Ok(())
+            }
+            MachineKinematics::Maxkins(k) => {
+                check("pivot-length", k.pivot_length)?;
+                check("tool-length", k.tool_length)?;
+                Ok(())
+            }
+            MachineKinematics::FiveAxis(k) => {
+                check("pivot-length", k.pivot_length)?;
+                check("tool-length", k.tool_length)?;
+                Ok(())
+            }
         }
-        check("y-offset", k.y_offset)?;
-        check("x-offset", k.x_offset)?;
-        check("z-offset", k.z_offset)?;
-        check("z-offset-tool", k.z_offset_tool)?;
-        Ok(())
     }
 
     /// Маппинг в RTCP-режим L2-lowering (проброс профиля →
@@ -277,7 +481,17 @@ impl MachineKinematics {
     ///   прежде);
     /// * XyzacTrt/XyzbcTrt → одноимённый режим с `TrtParams`; сумма
     ///   `z-offset + z-offset-tool` кладётся в `TrtParams::z_offset`
-    ///   (контракт оракула: dz = z-offset + tool-offset ДО формул).
+    ///   (контракт оракула: dz = z-offset + tool-offset ДО формул);
+    /// * **НОВЫЕ топологии 12.5.4** (XyzabTdr/Trsrn/Maxkins/FiveAxis) →
+    ///   `RtcpMode::Off`. ГРАНИЦА (12.5.4, честно): ядра формул готовы и
+    ///   верифицированы (`eid_l2::kinematics_{tdr,trsrn,maxkins,5axis}`,
+    ///   круговой инвариант), но `eid_l2::interp::RtcpMode` ЗАМОРОЖЕН —
+    ///   варианты для новых топологий распрокручиваются отдельным решением
+    ///   оркестратора (СТОП-вопрос, «enum-расширения lowering — только по
+    ///   СТОП-вопросу»). До того профиль с новой топологией ведёт себя в
+    ///   lowering как Triv (ротационные кадры — Raw-носители, НЕ
+    ///   пересчитываются) — поведение ЗАФИКСИРОВАНО тестом
+    ///   `kinematics_new_topologies_map_off_until_unfrozen`.
     pub fn to_rtcp_mode(&self) -> eid_l2::interp::RtcpMode {
         match self {
             MachineKinematics::Triv => eid_l2::interp::RtcpMode::Off,
@@ -287,6 +501,15 @@ impl MachineKinematics {
             MachineKinematics::XyzbcTrt(k) => eid_l2::interp::RtcpMode::XyzbcTrt {
                 params: k.to_trt_params(),
             },
+            MachineKinematics::XyzabTdr(_)
+            | MachineKinematics::Trsrn(_)
+            | MachineKinematics::Maxkins(_)
+            | MachineKinematics::FiveAxis(_) => {
+                // 12.5.4: lowering-проводка заморожена вместе с RtcpMode
+                // (см. doc метода). Явный Off — НЕ тихое игнорирование:
+                // семантика задокументирована и зафиксирована тестом.
+                eid_l2::interp::RtcpMode::Off
+            }
         }
     }
 }
@@ -940,6 +1163,262 @@ mod tests {
         assert!(toml::from_str::<MachineProfile>(&bad).is_err());
         let bad2 = profile_toml("\n[kinematics]\ntype = \"XYZAC-TRT\"\n");
         assert!(toml::from_str::<MachineProfile>(&bad2).is_err());
+    }
+
+    // ===========================================================================
+    // 12.5.4: новые топологии — xyzab-tdr / trsrn / maxkins / five-axis
+    // ===========================================================================
+
+    /// Полная секция [kinematics] type="xyzab-tdr": поля читаются (1:1 с
+    /// HAL-пинами оракула), validate проходит; границы 12.5.4: to_rtcp_mode
+    /// = Off (RtcpMode заморожен — СТОП-вопрос оркестратору), ядро
+    /// формул проецируется через to_tdr_params; TOML round-trip.
+    #[test]
+    fn kinematics_toml_xyzab_tdr_section() {
+        let toml_text = profile_toml(
+            "\n[kinematics]\ntype = \"xyzab-tdr\"\nrot-point = [10.0, 0.0, -345.0]\n\
+             x-offset = 2.0\nz-offset = 5.0\nz-offset-tool = 110.0\n",
+        );
+        let p: MachineProfile = toml::from_str(&toml_text).unwrap();
+        assert_eq!(
+            p.kinematics,
+            MachineKinematics::XyzabTdr(TdrKinematics {
+                rot_point: [10.0, 0.0, -345.0],
+                x_offset: 2.0,
+                z_offset: 5.0,
+                z_offset_tool: 110.0,
+            })
+        );
+        p.validate().unwrap();
+        // Граница 12.5.4: lowering-проводка новых топологий = Off
+        // (RtcpMode заморожен, СТОП-вопрос оркестратору).
+        assert_eq!(p.kinematics.to_rtcp_mode(), eid_l2::interp::RtcpMode::Off);
+        assert_eq!(
+            p.l2_lowering_config().rtcp_mode,
+            eid_l2::interp::RtcpMode::Off
+        );
+        // Проекция в ядро: z-offset-tool → tool_offset_z (ОТДЕЛЬНОЕ
+        // слагаемое оракула tdr — НЕ сумма в z-offset, в отличие от trt).
+        let tp = match &p.kinematics {
+            MachineKinematics::XyzabTdr(k) => k.to_tdr_params(),
+            _ => panic!("expected XyzabTdr"),
+        };
+        assert_eq!(tp.rot_point, [10.0, 0.0, -345.0]);
+        assert_eq!(tp.x_offset, 2.0);
+        assert_eq!(tp.z_offset, 5.0);
+        assert_eq!(tp.tool_offset_z, 110.0);
+        // TOML round-trip: сериализация сохраняет тип и поля.
+        let ser = toml::to_string(&p).unwrap();
+        let back: MachineProfile = toml::from_str(&ser).unwrap();
+        assert_eq!(back.kinematics, p.kinematics);
+    }
+
+    /// trsrn / maxkins / five-axis: полный парс секций (все поля), validate,
+    /// проекции в ядра; граница to_rtcp_mode = Off для всех новых.
+    #[test]
+    fn kinematics_toml_trsrn_maxkins_fiveaxis_sections() {
+        let toml_text = profile_toml(
+            "\n[kinematics]\ntype = \"trsrn\"\nnut-angle = 60.0\ny-pivot = 20.0\n\
+             z-pivot = 110.0\nx-offset = 5.0\ny-offset = -7.0\ny-rot-axis = 13.0\n\
+             z-rot-axis = 95.0\ntool-offset-z = 30.0\n",
+        );
+        let p: MachineProfile = toml::from_str(&toml_text).unwrap();
+        assert_eq!(
+            p.kinematics,
+            MachineKinematics::Trsrn(TrsrnKinematics {
+                nut_angle: 60.0,
+                y_pivot: 20.0,
+                z_pivot: 110.0,
+                x_offset: 5.0,
+                y_offset: -7.0,
+                y_rot_axis: 13.0,
+                z_rot_axis: 95.0,
+                tool_offset_z: 30.0,
+            })
+        );
+        p.validate().unwrap();
+        let tp = match &p.kinematics {
+            MachineKinematics::Trsrn(k) => k.to_trsrn_params(),
+            _ => panic!("expected Trsrn"),
+        };
+        assert_eq!(tp.nut_angle, 60.0);
+        assert_eq!(tp.y_pivot, 20.0);
+        assert_eq!(tp.tool_offset_z, 30.0);
+
+        let toml_mk = profile_toml(
+            "\n[kinematics]\ntype = \"maxkins\"\npivot-length = 250.0\n\
+             tool-length = 120.0\nconventional-directions = true\n",
+        );
+        let pm: MachineProfile = toml::from_str(&toml_mk).unwrap();
+        assert_eq!(
+            pm.kinematics,
+            MachineKinematics::Maxkins(MaxkinsKinematics {
+                pivot_length: 250.0,
+                tool_length: 120.0,
+                conventional_directions: true,
+            })
+        );
+        pm.validate().unwrap();
+        let mp = match &pm.kinematics {
+            MachineKinematics::Maxkins(k) => k.to_maxkins_params(),
+            _ => panic!("expected Maxkins"),
+        };
+        assert_eq!(mp.pivot_length, 250.0);
+        assert!(mp.conventional);
+
+        let toml_5x = profile_toml(
+            "\n[kinematics]\ntype = \"five-axis\"\npivot-length = 250.0\ntool-length = 0.0\n",
+        );
+        let p5: MachineProfile = toml::from_str(&toml_5x).unwrap();
+        assert_eq!(
+            p5.kinematics,
+            MachineKinematics::FiveAxis(FiveAxisKinematics {
+                pivot_length: 250.0,
+                tool_length: 0.0,
+            })
+        );
+        p5.validate().unwrap();
+        let fp = match &p5.kinematics {
+            MachineKinematics::FiveAxis(k) => k.to_fiveaxis_params(),
+            _ => panic!("expected FiveAxis"),
+        };
+        assert_eq!(fp.pivot_length, 250.0);
+        // Граница 12.5.4 для всех новых: Off.
+        for k in [&p.kinematics, &pm.kinematics, &p5.kinematics] {
+            assert_eq!(
+                k.to_rtcp_mode(),
+                eid_l2::interp::RtcpMode::Off,
+                "новая топология {k:?}: lowering-проводка заморожена (Off)"
+            );
+        }
+        // serde kebab-case имена всех семи вариантов.
+        for (ty, name) in [
+            ("triv", "\"triv\""),
+            ("xyzac-trt", "\"xyzac-trt\""),
+            ("xyzbc-trt", "\"xyzbc-trt\""),
+            ("xyzab-tdr", "\"xyzab-tdr\""),
+            ("trsrn", "\"trsrn\""),
+            ("maxkins", "\"maxkins\""),
+            ("five-axis", "\"five-axis\""),
+        ] {
+            let t = profile_toml(&format!("\n[kinematics]\ntype = {name}\n"));
+            let parsed: MachineProfile = toml::from_str(&t)
+                .unwrap_or_else(|e| panic!("type {ty} должен парситься (serde kebab-case): {e}"));
+            let ser = toml::to_string(&parsed).unwrap();
+            assert!(
+                ser.contains(&format!("type = {name}")),
+                "сериализация {ty} должна сохранять kebab-имя"
+            );
+        }
+    }
+
+    /// validate() новых топологий: NaN/inf/диапазон — отказ с именем поля;
+    /// nut-angle вне 0..=90 — отказ домена; граничные 0/90 валидны.
+    #[test]
+    fn kinematics_validate_new_topologies() {
+        let cases: [(MachineKinematics, &str); 6] = [
+            (
+                MachineKinematics::XyzabTdr(TdrKinematics {
+                    rot_point: [0.0, f64::NAN, 0.0],
+                    ..TdrKinematics::default()
+                }),
+                "rot-point[1]",
+            ),
+            (
+                MachineKinematics::XyzabTdr(TdrKinematics {
+                    z_offset_tool: f64::INFINITY,
+                    ..TdrKinematics::default()
+                }),
+                "z-offset-tool",
+            ),
+            (
+                MachineKinematics::Trsrn(TrsrnKinematics {
+                    nut_angle: f64::NAN,
+                    ..TrsrnKinematics::default()
+                }),
+                "nut-angle",
+            ),
+            (
+                MachineKinematics::Trsrn(TrsrnKinematics {
+                    nut_angle: 90.0 + 1e-9,
+                    ..TrsrnKinematics::default()
+                }),
+                "nut-angle",
+            ),
+            (
+                MachineKinematics::Maxkins(MaxkinsKinematics {
+                    pivot_length: -KINEMATICS_RANGE_CAP * 2.0,
+                    ..MaxkinsKinematics::default()
+                }),
+                "pivot-length",
+            ),
+            (
+                MachineKinematics::FiveAxis(FiveAxisKinematics {
+                    tool_length: f64::NEG_INFINITY,
+                    ..FiveAxisKinematics::default()
+                }),
+                "tool-length",
+            ),
+        ];
+        for (k, field) in cases {
+            let err = k.validate().unwrap_err();
+            assert!(err.contains(field), "{field}: {err}");
+            let mut p = MachineProfile::linuxcnc_default();
+            p.kinematics = k;
+            assert!(p.validate().is_err(), "полный профиль тоже отказ");
+        }
+        // Границы домена нутации: ровно 0 и 90 валидны.
+        for nut in [0.0f64, 90.0] {
+            assert!(MachineKinematics::Trsrn(TrsrnKinematics {
+                nut_angle: nut,
+                ..TrsrnKinematics::default()
+            })
+            .validate()
+            .is_ok());
+        }
+        // nut-angle = -1 (вне домена снизу) — отказ.
+        assert!(MachineKinematics::Trsrn(TrsrnKinematics {
+            nut_angle: -1.0,
+            ..TrsrnKinematics::default()
+        })
+        .validate()
+        .is_err());
+    }
+
+    /// Граница 12.5.4 ЗАФИКСИРОВАНА: новые топологии в lowering = Off
+    /// (поведение Triv — ротационные кадры Raw) до распрокрутки RtcpMode
+    /// (СТОП-вопрос оркестратору); при этом ПРОЕКЦИЯ В ЯДРО живая —
+    /// круговой инвариант через маппинг профиля (TOML → TdrParams →
+    /// fwd∘inv ≡ identity, 784-кейсовый стиль решётки).
+    #[test]
+    fn kinematics_new_topologies_map_off_until_unfrozen() {
+        use eid_l2::kinematics_tdr::{tdr_forward, tdr_inverse, JointsTdr};
+        // Off-маппинг (замороженная граница).
+        let p: MachineProfile = toml::from_str(&profile_toml(
+            "\n[kinematics]\ntype = \"xyzab-tdr\"\nrot-point = [10.0, 20.0, 30.0]\n\
+             x-offset = 2.0\nz-offset = 5.0\nz-offset-tool = 7.0\n",
+        ))
+        .unwrap();
+        p.validate().unwrap();
+        assert_eq!(p.kinematics.to_rtcp_mode(), eid_l2::interp::RtcpMode::Off);
+        // Круг через проекцию профиля (ядро живо, lowering ждёт распрокрутки).
+        let tp = match &p.kinematics {
+            MachineKinematics::XyzabTdr(k) => k.to_tdr_params(),
+            _ => unreachable!(),
+        };
+        let mut cases = 0usize;
+        for &a in &[0.0f64, 30.0, -90.0, 180.0, 359.0] {
+            for &b in &[0.0f64, 45.0, -90.0, 120.0, 359.0] {
+                let j0 = JointsTdr::new(120.0, -80.0, 250.0, a, b);
+                let pose = tdr_forward(&tp, &j0);
+                let j1 = tdr_inverse(&tp, &pose);
+                for (v0, v1) in [(j0.x, j1.x), (j0.y, j1.y), (j0.z, j1.z)] {
+                    assert!((v1 - v0).abs() < 1e-9, "a={a} b={b}: {v0} -> {v1}");
+                }
+                cases += 1;
+            }
+        }
+        assert!(cases >= 25, "профиль-круг tdr мал: {cases}");
     }
 
     /// validate(): NaN/inf/вне диапазона ±KINEMATICS_RANGE_CAP — отказ с

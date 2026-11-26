@@ -28,6 +28,23 @@ pub mod emit_linuxcnc;
 pub mod eval;
 pub mod interp;
 pub mod kinematics;
+// Фаза 12.5.4 (агент A): оставшиеся топологии кинематики (research
+// `kinematics_research.md` §1 — все «РЕАЛИЗУЕМО СЕЙЧАС», оракулы LinuxCNC).
+// Формулы — математические факты (источники GPL — цитируются в doc):
+// * [`kinematics_tdr`] — table-table TT-2 «cradle/trunnion» XYZAB
+//   (`xyzab_tdr_kins.comp`; квирк forward≠dx воспроизведён 1:1);
+// * [`kinematics_trsrn`] — head-head универсальный (ν=90°) + nutating
+//   (ν 0–90°) (`xyzacb_trsrn.comp` + независимый python-оракул kins-twp);
+// * [`kinematics_maxkins`] — head-table intersecting, DMU 50-класс
+//   (`maxkins.c`);
+// * [`kinematics_5axis`] — gantry/bridge mill XYZBCW (`5axiskins.c`).
+// Интеграция enum топологий — `eid-integration::profile::MachineKinematics`
+// (12.5.4); lowering-проводка новых топологий (RtcpMode) — заморожена
+// (СТОП-вопрос оркестратору), см. doc профиля.
+pub mod kinematics_5axis;
+pub mod kinematics_maxkins;
+pub mod kinematics_tdr;
+pub mod kinematics_trsrn;
 pub mod lowering;
 pub mod parser_fanuc;
 pub mod parser_haas;
