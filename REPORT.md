@@ -230,7 +230,13 @@ Term-IR Formula/NumExpr/ValTerm + Encoder по таблице §3.2 дослов
 
 T1 L1-passthrough 1:1 · T2 std-only (+фича только для будущего solver) · T3 #0-семантика 22 теста · T4 частичный lowering дословно · T5 бесконечный WHILE → E_LIMIT_EXCEEDED (3 конфигурации) · T6 Mirror дефолт-отказ / allow_mirror_bake→инверсия+Notice.
 
-### 13.5 Остатки этапа 12 (честно)
+### 13.5 Фаза 12.5 — Kinematic Axis Lowering — 12.5.1 + 12.5.2 ЗАВЕРШЕНЫ
+
+Разморожена после находки оракула (амендмент v0.1.5): LinuxCNC `trtfuncs.c` — полные forward/inverse формулы XYZAC/XYZBC table-rotary-tilting (A-наклон + C-поворот на столе) с офсетами rot-point/Dy/Dz/tool-offset и флагом con=±1 («rotational axes opposite of conventional»).
+- **12.5.1 kinematics.rs ядро** (agent A, 94cbe11): Rust-порт формул как математических фактов (C-код не копировался — источник Rudy du Preez 2016 GPL-2.0+); **круговой инвариант 3136 кейсов max err 2.27e-13** (машинный эпсилон), независимая матричная сверка 784 кейса; находка: web-транскрипция trtfuncs искажена (выронила con-множители XYZBC-inverse) — добыто curl вербатим + подтверждено алгебраическим выводом. 320 тестов.
+- **12.5.2 RTCP-профиль lowering** (agent B2, b7d28bb): RtcpMode{Off, XyzacTrt{TrtParams}} в L2Config; LoweringResult.rtcp_active («не молча»); честный E_UNSUPPORTED_SEMANTICS носитель в обоих режимах (trt-пересчёт изменил бы TCP-геометрию); T8-тесты ×7. 327/0 eid-l2.
+
+### 13.6 Остатки этапа 12 (честно)
 
 12.4 L2↔L2 emit — не начат · 12.5 кинематика — future (нужен 5-осевой симулятор-оракул) · trace-equivalence пока на linuxcnc-пути (fanuc-MB парсеры долетели к концу — зеркальная сверка следующей) · endsub-retval/named-scoping/polar-@^ — вне §2.4, L1Op-носители · G67/G17-18-19 AST контракты — parser-фидбек D2/A · корпус: WithTransform ×0 (трансформации без корпусного драйвера — синтетика) · l2_available O-word маркеры применены (59006fa).
 
