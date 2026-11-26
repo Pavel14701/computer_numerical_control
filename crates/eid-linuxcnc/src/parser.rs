@@ -45,6 +45,12 @@
 //!    глобальный регистр поверх WCS — смена G54→G55 → start следующего хода
 //!    = unknown, если разность origin'ов не вычислима из текста);
 //!    несколько G92 легальны (Q5 закрыт);
+//!    ГОЛЫЙ G92 (ни одного осевого слова) — жёсткий Err E_INVALID_INPUT
+//!    (v0.22, зонд-сверка target/probe/g92bare: rs274 `All axes missing
+//!    with g52 or g92`, exit 1, в ОБОИХ позициях — старт и mid; прежде:
+//!    молчаливый preset(0,0,0) / Raw no-op — баг-кандидат снят); частичная
+//!    ≥1 ось XYZ легальна (fresa-класс v0.21); `G92 E0` — вне словаря rs274
+//!    вне G76 (класс #13), не задет;
 //!  * R-слово дуги имеет приоритет над IJK при одновременном задании.
 
 use crate::canonicalize::{self, num_snap, p3_snap, to_f64, ArcError, Plane};
@@ -1181,6 +1187,28 @@ fn parse_block(
     let mut line_has_mid_g92 = false;
     for &(maj, min) in &gs {
         if (maj, min) == (92, 0) {
+            // v0.22 фикс (зонд-сверка target/probe/g92bare, rs274 ground
+            // truth): голый G92 — НИ ОДНОГО осевого слова — жёсткий отказ в
+            // ОБОИХ позициях (старт probe1 / mid probe2): rs274 даёт
+            // `All axes missing with g52 or g92`, exit 1, исполнение
+            // обрывается на строке G92. Прежнее поведение расходилось с
+            // rs274 (баг-кандидат): старт → молчаливый preset(0,0,0), mid →
+            // Raw no-op rebase. Частичная (≥1 ось XYZ) — легальна (fresa-
+            // класс v0.21); вне-скоуп осевое (A/B/C/U/V/W) — кадр НЕ голый
+            // (rs274 считает его осевым, G92 A1 легален) — несёт обычный
+            // вне-скоуп Raw-носитель выше; E-слово (`G92 E0` PrusaSlicer) —
+            // вне словаря rs274 вне G76 (v0.21 инвентаризация класс #13,
+            // TRUE-ERR) — отвергается существующей E-проверкой ниже; guard
+            // !has_e сохраняет прежний reason. С eid-grbl на голом G92:
+            // старт — конвергентно (оба отказывают, grbl gcode.c:561);
+            // mid — расхождение пиннуто df5ed90 (grbl: Raw no-op ради
+            // PrusaSlicer) — linuxcnc конвергентен со СВОЕЙ истиной (rs274).
+            if axes.iter().all(|a| a.is_none()) && extra_axes.is_empty() && !has_e {
+                return Err(fl!(
+                    ErrorCode::InvalidInput,
+                    "All axes missing with g52 or g92 (rs274 probe1/probe2 target/probe/g92bare: G92 без осевых слов — жёсткий отказ в любой позиции, исполнение обрывается; легален минимум один осевой, частичная ≥1 ось XYZ — v0.21 fresa-класс)",
+                ));
+            }
             if st.preset.is_none() && !st.saw_motion {
                 // СТАРТОВАЯ пресетка — заголовочное поле Program.frame_preset
                 // (SPEC §3; отсутствующие оси = 0 — back-compat goldens;

@@ -4420,3 +4420,182 @@ fn v020_negative_regress_p_word_and_l2_p19() {
         "{err:?}"
     );
 }
+
+// ===========================================================================
+// v0.22 голый G92 (ни одного осевого слова) — жёсткий Err E_INVALID_INPUT в
+// ОБОИХ позициях. Зонд-сверка target/probe/g92bare (rs274 ground truth,
+// реальный LinuxCNC 2.9 rs274): stderr `All axes missing with g52 or g92`,
+// exit 1, исполнение обрывается на строке G92 (probe1 старт / probe2 mid —
+// ходы ДО в каноне, ПОСЛЕ — нет). Прежнее поведение — баг-кандидат (расход
+// с rs274): старт → молчаливый preset(0,0,0), mid → Raw no-op rebase.
+// Частичная ≥1 ось XYZ — легальна (v0.21 fresa-класс, тесты выше).
+// Конвергенция с eid-grbl (сверка по grbl_parse.rs v020/v021): старт — оба
+// отказывают (grbl gcode.c:561 `if (!axis_words) FAIL`; grbl —
+// E_RUNTIME_STATE, linuxcnc — E_INVALID_INPUT: каждый зеркалит свой
+// источник); mid — grbl принимает Raw no-op «XYZ offset register untouched»
+// (process_g92, РЕШЕНИЕ ПИННУТО df5ed90 ради PrusaSlicer) — расхождение с
+// rs274-истиной пиннуто в eid-grbl, linuxcnc конвергентен со своей истиной.
+// `G92 E0` (PrusaSlicer): в grbl-ветке пропускается (Raw-носитель —
+// лексер grbl несет любое слово, строка вне словаря → Raw); в rs274 E вне
+// G76 — вне словаря (v0.21 инвентаризация класс #13 TRUE-ERR) — прежний
+// отказ сохранён (guard !has_e в фикс-проверке не меняет reason).
+// ===========================================================================
+
+#[test]
+fn v022_g92_bare_startup_err() {
+    // probe1 дословно: голый G92 до ходов — rs274 отказ (exit 1), G1 не
+    // исполнен. Наш отказ: E_INVALID_INPUT, reason — зеркало rs274 stderr.
+    let err = LinuxCncAdapter::new()
+        .parse("%\nG92\nG1 X5 F10\n%\n", "g92bare_startup.ngc")
+        .expect_err("rs274 probe1: голый G92 на старте — отказ, exit 1");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(
+        err[0]
+            .message
+            .starts_with("All axes missing with g52 or g92"),
+        "reason — зеркало rs274 stderr: {}",
+        err[0].message
+    );
+}
+
+#[test]
+fn v022_g92_bare_mid_err() {
+    // probe2 дословно: G0 X10 исполнен, голый G92 mid — rs274 отказ (exit
+    // 1), G1 НЕ исполнен. Наш отказ: тот же код/reason, что и на старте —
+    // позиция не влияет на вердикт.
+    let err = LinuxCncAdapter::new()
+        .parse("%\nG0 X10\nG92\nG1 X5 F10\n%\n", "g92bare_mid.ngc")
+        .expect_err("rs274 probe2: голый G92 mid — отказ, exit 1");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(
+        err[0]
+            .message
+            .starts_with("All axes missing with g52 or g92"),
+        "reason — зеркало rs274 stderr: {}",
+        err[0].message
+    );
+}
+
+#[test]
+fn v022_g92_bare_startup_with_units_and_wcs_still_err() {
+    // Голый G92 не спасают ни модальности в кадре, ни порядок строк:
+    // G21/G54/G90 + G92 без осевых — тот же отказ (rs274: осевые слова
+    // ортогональны модальностям).
+    let err = LinuxCncAdapter::new()
+        .parse("G21 G54 G90\nG92\nM2\n", "g92bare_mod.ngc")
+        .expect_err("голый G92 с модальностями — отказ");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn v022_g92_with_out_of_scope_axis_word_not_bare() {
+    // `G92 A1` — НЕ голый: A — осевое слово rs274 (у источника G92 A1
+    // легален), вне скоупа eid (этап 12) → прежний вне-скоуп Raw-носитель
+    // (Ok + notice), NOT Err. Фикс-проверка считает осевые слова A/B/C/
+    // U/V/W «осевыми» — не сужает до XYZ-отказа.
+    let a = LinuxCncAdapter::new();
+    let out = a
+        .parse("%\nG92 A1.\nG0 X1. Y1. Z1.\n%\n", "g92_a.ngc")
+        .expect("G92 A1 — вне-скоуп Raw-носитель (не голый: A — осевое rs274)");
+    assert!(
+        out.program
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::Raw { .. })),
+        "вне-скоуп ось A — Raw-носитель: {:?}",
+        out.program.ops
+    );
+}
+
+#[test]
+fn v022_g92_e0_prusaslicer_decision() {
+    // PrusaSlicer-паттерн `G92 E0` — РЕШЕНИЕ (конвергентно с eid-grbl,
+    // сверка по grbl_parse/canonicalize v020/v021):
+    //  * СТАРТ: отказ в ОБОИХ диалектах (grbl apply_g92: (None,None,None) →
+    //    E_RUNTIME_STATE gcode.c:561; linuxcnc: E вне G76 — вне словаря
+    //    rs274, v0.21 класс #13 TRUE-ERR «E-слово без G76» — прежний
+    //    reason, guard !has_e фикс-проверки его не меняет). Вердикт-
+    //    конвергенция: оба отказывают;
+    //  * MID: пропуск в ОБОИХ диалектах — grbl: Raw no-op «XYZ offset
+    //    register untouched» (process_g92, РЕШЕНИЕ ПИННУТО df5ed90);
+    //    linuxcnc: прежнее поведение — Raw-носитель с маркером
+    //    «G92 mid-program» + identity-rebase (register не тронут) — raw-
+    //    ветка возвращается раньше E-проверки. Расхождение с rs274-истиной
+    //    (та отвергла бы E вне G76) — того же pinned-класса, что и у
+    //    eid-grbl; задокументировано в стоп-отчёте.
+    let a = LinuxCncAdapter::new();
+    let err = a
+        .parse("%\nG92 E0\nG1 X5 F10\n%\n", "g92_e0.ngc")
+        .expect_err("G92 E0 старт — Err (класс #13: E вне G76)");
+    assert!(
+        err.iter().all(|d| d.code == ErrorCode::InvalidInput),
+        "{err:?}"
+    );
+    assert!(
+        err[0].message.contains("E-слово без G76"),
+        "прежний reason класс #13: {}",
+        err[0].message
+    );
+    let out = a
+        .parse("%\nG0 X10\nG92 E0\nG1 X5 F10\n%\n", "g92_e0.ngc")
+        .expect("G92 E0 mid — Ok: register XYZ не тронут (конвергентно с grbl pinned df5ed90)");
+    assert!(
+        out.program.ops.iter().any(
+            |op| matches!(op, Op::Raw { reason, .. } if reason.starts_with("G92 mid-program"))
+        ),
+        "mid G92 E0 — Raw-носитель: {:?}",
+        out.program.ops
+    );
+    // Identity-rebase: G1 идёт от прежнего чтения (10,0,0) — E0 регистр
+    // XYZ не сдвинул (ни shift, ни пресетки).
+    assert!(
+        matches!(&out.program.ops[2], Op::Linear { start: StartPoint::Known(s), end, .. }
+            if to_f64(s) == [10.0, 0.0, 0.0] && to_f64(end) == [5.0, 0.0, 0.0]),
+        "identity-rebase: {:?}",
+        out.program.ops[2]
+    );
+}
+
+#[test]
+fn v022_g92_bare_cross_dialect_grbl_linuxcnc() {
+    // Кросс-конвергенция на голом G92 (задание п.4):
+    //  * старт (probe1): ОБА отказывают — конвергентно (grbl gcode.c:561 →
+    //    E_RUNTIME_STATE; linuxcnc rs274 → E_INVALID_INPUT);
+    //  * mid (probe2): linuxcnc отказывает (v0.22 фикс); grbl принимает
+    //    Raw no-op («XYZ offset register untouched», process_g92) —
+    //    РЕШЕНИЕ ПИННУТО df5ed90 ради PrusaSlicer — расхождение
+    //    задокументировано, eid-grbl не трогается (вне зоны).
+    let startup = "G21 G90 G94 G17\nG92\nG1 X5 F100\nM2\n";
+    let mid = "G21 G90 G94 G17\nG0 X10\nG92\nG1 X5 F100\nM2\n";
+    let lc = LinuxCncAdapter::new();
+    let gr = eid_grbl::GrblAdapter::new();
+
+    let lc_startup = lc.parse(startup, "x_startup.ngc");
+    let gr_startup = gr.parse(startup, "x_startup.ngc");
+    assert!(lc_startup.is_err(), "linuxcnc старт: отказ (v0.22)");
+    assert!(gr_startup.is_err(), "grbl старт: отказ (gcode.c:561)");
+
+    let lc_mid = lc.parse(mid, "x_mid.ngc");
+    assert!(lc_mid.is_err(), "linuxcnc mid: отказ (rs274 probe2)");
+    let gr_mid = gr
+        .parse(mid, "x_mid.ngc")
+        .expect("grbl mid: Ok — pinned df5ed90 (Raw no-op, PrusaSlicer)");
+    assert!(
+        gr_mid
+            .program
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::Raw { reason, .. } if reason.contains("offset register untouched"))),
+        "grbl mid-носитель — Raw no-op: {:?}",
+        gr_mid.program.ops
+    );
+}
