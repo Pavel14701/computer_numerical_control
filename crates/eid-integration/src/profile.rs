@@ -54,22 +54,9 @@
 //!
 //! Фаза 12.5 (12.5.3, амендменты v0.1.3/v0.1.5 дизайн-дока EID-L2-DESIGN §12.5):
 //! секция TOML `[kinematics]` — кинематика станка
-//! ([`MachineKinematics`]: Triv-дефолт | XyzacTrt | XyzbcTrt, enum топологий
-//! — принятое архитектурное решение §5.1, НЕ generic-DH). Маппинг в
-//! lowering: [`MachineKinematics::to_rtcp_mode`] → `eid_l2::interp::RtcpMode`
-//! (XyzacTrt/XyzbcTrt с геометрией [`TrtKinematics`] — оракул trtfuncs,
-//! ядро `eid_l2::kinematics` @94cbe11, круговой инвариант 3136 кейсов);
-//! `Triv` → Off (прежнее поведение — старые TOML без секции валидны,
-//! serde-default). Потребитель — L2-конвейер (`eid_l2::lowering::lower`):
-//! ротационные кадры опускаются в L1-опы machine-осей (TCP→joints).
-//! ГРАНИЦА (честно): L1↔L1-конвейер `translate_*_with_profile`
-//! (translate.rs) секцию НЕ потребляет — маршрутизация L2-программ в
-//! CLI-конвейер — отдельная фаза (12.4 не роутит L2); kinematics-проход
-//! доступен библиотечным вызовом lower() с
-//! `MachineProfile::l2_lowering_config()` — см. e2e
-//! `tests/kinematics_lowering_e2e.rs`. Перспективные топологии (head-head
-//! и др.) НЕ добавляются без оракула формул (§5.1.5 — брак детали
-//! пост-фактум).
+//! ([`MachineKinematics`], enum топологий — принятое архитектурное решение
+//! §5.1, НЕ generic-DH). Маппинг в lowering:
+//! [`MachineKinematics::to_rtcp_mode`] → `eid_l2::interp::RtcpMode`.
 //!
 //! Фаза 12.5.4 (агент A, 2026-11-26): enum РАСШИРЕН оставшимися
 //! топологиями (research `kinematics_research.md` §1 — все с оракулами):
@@ -79,12 +66,21 @@
 //! (head-table intersecting DMU 50-класс, оракул `maxkins.c`), `five-axis`
 //! (gantry/bridge mill XYZBCW, оракул `5axiskins.c`). Ядра формул —
 //! `eid_l2::kinematics_{tdr,trsrn,maxkins,5axis}` (круговой инвариант
-//! 784/4116/1568/1568 кейсов, max err ≤ 8e-13). ГРАНИЦА (честно, 12.5.4):
-//! lowering-проводка НОВЫХ топологий ([`MachineKinematics::to_rtcp_mode`])
-//! заморожена вместе с `eid_l2::interp::RtcpMode` — новые варианты маппятся
-//! в `RtcpMode::Off` (поведение Triv) ДО решения оркестратора о
-//! распрокрутке RtcpMode (СТОП-вопрос); ядро формул и данные профиля
-//! готовы, semantic-поверхность верифицирована ядерными тестами.
+//! 784/4116/1568/1568 кейсов, max err ≤ 8e-13).
+//!
+//! РАЗМОРОЗКА (12.5.4-проводка 6ba0055 + подключение профиля): ВСЕ шесть
+//! топологий маппятся в СВОЙ `RtcpMode` с геометрией профиля (Off — только
+//! Triv); lowering-проводка всех режимов выполнена в `eid_l2::interp`
+//! (ветка 2.5 non-trt RTCP в exec_move, arc-носители честные). Потребители:
+//! (1) библиотечный проход `eid_l2::lowering::lower(&program, cfg)` с
+//! `MachineProfile::l2_lowering_config()` — e2e
+//! `tests/kinematics_lowering_e2e.rs`; (2) CLI-маршрут L2-программ —
+//! `translate::translate_text_with_profile` роутит `l2_available`-тексты
+//! диалектов с L2-front-end (linuxcnc/fanuc/haas) в L2-конвейер
+//! (parse → Pass-1 lower с кинематикой профиля → сборка L1-Program →
+//! emit цели; см. doc translate.rs «L2-маршрут»). Перспективные топологии
+//! (head-head non-intersecting и др.) НЕ добавляются без оракула формул
+//! (§5.1.5 — брак детали пост-фактум).
 
 use eid_core::ast::Units;
 use std::path::Path;
@@ -367,10 +363,10 @@ impl FiveAxisKinematics {
 /// ```
 ///
 /// Отсутствие секции (serde-default) = [`MachineKinematics::Triv`] —
-/// прежнее поведение (старые TOML валидны). НОВЫЕ варианты 12.5.4
-/// (xyzab-tdr/trsrn/maxkins/five-axis) — data-model + ядро формул
-/// (`eid_l2::kinematics_*`); в lowering (`to_rtcp_mode`) маппятся в Off
-/// до распрокрутки RtcpMode (заморожен — см. doc модуля).
+/// прежнее поведение (старые TOML валидны, lowering = Off/Raw-носители).
+/// Каждая не-Triv топология маппится в СВОЙ `RtcpMode` с геометрией
+/// профиля ([`MachineKinematics::to_rtcp_mode`]; lowering-проводка всех
+/// шести режимов — `eid_l2::interp`, разморозка 12.5.4).
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum MachineKinematics {
@@ -476,22 +472,16 @@ impl MachineKinematics {
     }
 
     /// Маппинг в RTCP-режим L2-lowering (проброс профиля →
-    /// `L2Config.rtcp_mode`; «b7d28bb-аналог» для kinematics):
-    /// * [`MachineKinematics::Triv`] → `RtcpMode::Off` (Raw-носители — как
-    ///   прежде);
-    /// * XyzacTrt/XyzbcTrt → одноимённый режим с `TrtParams`; сумма
-    ///   `z-offset + z-offset-tool` кладётся в `TrtParams::z_offset`
-    ///   (контракт оракула: dz = z-offset + tool-offset ДО формул);
-    /// * **НОВЫЕ топологии 12.5.4** (XyzabTdr/Trsrn/Maxkins/FiveAxis) →
-    ///   `RtcpMode::Off`. ГРАНИЦА (12.5.4, честно): ядра формул готовы и
-    ///   верифицированы (`eid_l2::kinematics_{tdr,trsrn,maxkins,5axis}`,
-    ///   круговой инвариант), но `eid_l2::interp::RtcpMode` ЗАМОРОЖЕН —
-    ///   варианты для новых топологий распрокручиваются отдельным решением
-    ///   оркестратора (СТОП-вопрос, «enum-расширения lowering — только по
-    ///   СТОП-вопросу»). До того профиль с новой топологией ведёт себя в
-    ///   lowering как Triv (ротационные кадры — Raw-носители, НЕ
-    ///   пересчитываются) — поведение ЗАФИКСИРОВАНО тестом
-    ///   `kinematics_new_topologies_map_off_until_unfrozen`.
+    /// `L2Config.rtcp_mode`; «b7d28bb-аналог» для kinematics). ВСЕ шесть
+    /// топологий распрокручены (12.5.4-проводка 6ba0055 + разморозка
+    /// профиля): каждая топология → одноимённый режим с СВОЕЙ геометрией
+    /// (`TrtParams`/`TdrParams`/`TrsrnParams`/`MaxkinsParams`/
+    /// `FiveAxisParams`); [`MachineKinematics::Triv`] → `RtcpMode::Off`
+    /// (Raw-носители — как прежде). Семантика lowering per-режим — в doc
+    /// `eid_l2::interp::RtcpMode`: trt/tdr/maxkins/five-axis — pass-through
+    /// ротационных слов (программа содержит joint-значения) + TCP→joints
+    /// через inverse ядра; Trsrn — solver (программные углы = ориентация
+    /// инструмента, joints решаются angle-solver'ом).
     pub fn to_rtcp_mode(&self) -> eid_l2::interp::RtcpMode {
         match self {
             MachineKinematics::Triv => eid_l2::interp::RtcpMode::Off,
@@ -501,15 +491,18 @@ impl MachineKinematics {
             MachineKinematics::XyzbcTrt(k) => eid_l2::interp::RtcpMode::XyzbcTrt {
                 params: k.to_trt_params(),
             },
-            MachineKinematics::XyzabTdr(_)
-            | MachineKinematics::Trsrn(_)
-            | MachineKinematics::Maxkins(_)
-            | MachineKinematics::FiveAxis(_) => {
-                // 12.5.4: lowering-проводка заморожена вместе с RtcpMode
-                // (см. doc метода). Явный Off — НЕ тихое игнорирование:
-                // семантика задокументирована и зафиксирована тестом.
-                eid_l2::interp::RtcpMode::Off
-            }
+            MachineKinematics::XyzabTdr(k) => eid_l2::interp::RtcpMode::XyzabTdr {
+                params: k.to_tdr_params(),
+            },
+            MachineKinematics::Trsrn(k) => eid_l2::interp::RtcpMode::Trsrn {
+                params: k.to_trsrn_params(),
+            },
+            MachineKinematics::Maxkins(k) => eid_l2::interp::RtcpMode::Maxkins {
+                params: k.to_maxkins_params(),
+            },
+            MachineKinematics::FiveAxis(k) => eid_l2::interp::RtcpMode::FiveAxis {
+                params: k.to_fiveaxis_params(),
+            },
         }
     }
 }
@@ -1170,9 +1163,9 @@ mod tests {
     // ===========================================================================
 
     /// Полная секция [kinematics] type="xyzab-tdr": поля читаются (1:1 с
-    /// HAL-пинами оракула), validate проходит; границы 12.5.4: to_rtcp_mode
-    /// = Off (RtcpMode заморожен — СТОП-вопрос оркестратору), ядро
-    /// формул проецируется через to_tdr_params; TOML round-trip.
+    /// HAL-пинами оракула), validate проходит; to_rtcp_mode = СВОЙ режим
+    /// с геометрией профиля (TOML → TdrParams), ядро формул проецируется
+    /// через to_tdr_params; TOML round-trip.
     #[test]
     fn kinematics_toml_xyzab_tdr_section() {
         let toml_text = profile_toml(
@@ -1190,12 +1183,17 @@ mod tests {
             })
         );
         p.validate().unwrap();
-        // Граница 12.5.4: lowering-проводка новых топологий = Off
-        // (RtcpMode заморожен, СТОП-вопрос оркестратору).
-        assert_eq!(p.kinematics.to_rtcp_mode(), eid_l2::interp::RtcpMode::Off);
+        // Свой режим с геометрией профиля (TOML → TdrParams → lowering).
+        let eid_l2::interp::RtcpMode::XyzabTdr { params } = p.kinematics.to_rtcp_mode() else {
+            panic!("expected XyzabTdr mode");
+        };
+        assert_eq!(params.rot_point, [10.0, 0.0, -345.0]);
+        assert_eq!(params.x_offset, 2.0);
+        assert_eq!(params.z_offset, 5.0);
+        assert_eq!(params.tool_offset_z, 110.0);
         assert_eq!(
             p.l2_lowering_config().rtcp_mode,
-            eid_l2::interp::RtcpMode::Off
+            p.kinematics.to_rtcp_mode()
         );
         // Проекция в ядро: z-offset-tool → tool_offset_z (ОТДЕЛЬНОЕ
         // слагаемое оракула tdr — НЕ сумма в z-offset, в отличие от trt).
@@ -1283,14 +1281,20 @@ mod tests {
             _ => panic!("expected FiveAxis"),
         };
         assert_eq!(fp.pivot_length, 250.0);
-        // Граница 12.5.4 для всех новых: Off.
-        for k in [&p.kinematics, &pm.kinematics, &p5.kinematics] {
-            assert_eq!(
-                k.to_rtcp_mode(),
-                eid_l2::interp::RtcpMode::Off,
-                "новая топология {k:?}: lowering-проводка заморожена (Off)"
-            );
-        }
+        // Каждая новая топология — СВОЙ режим с геометрией профиля
+        // (разморозка 12.5.4-проводки: Off остаётся только у Triv).
+        assert!(matches!(
+            p.kinematics.to_rtcp_mode(),
+            eid_l2::interp::RtcpMode::Trsrn { .. }
+        ));
+        assert!(matches!(
+            pm.kinematics.to_rtcp_mode(),
+            eid_l2::interp::RtcpMode::Maxkins { params } if params.pivot_length == 250.0
+        ));
+        assert!(matches!(
+            p5.kinematics.to_rtcp_mode(),
+            eid_l2::interp::RtcpMode::FiveAxis { params } if params.pivot_length == 250.0
+        ));
         // serde kebab-case имена всех семи вариантов.
         for (ty, name) in [
             ("triv", "\"triv\""),
@@ -1385,26 +1389,70 @@ mod tests {
         .is_err());
     }
 
-    /// Граница 12.5.4 ЗАФИКСИРОВАНА: новые топологии в lowering = Off
-    /// (поведение Triv — ротационные кадры Raw) до распрокрутки RtcpMode
-    /// (СТОП-вопрос оркестратору); при этом ПРОЕКЦИЯ В ЯДРО живая —
-    /// круговой инвариант через маппинг профиля (TOML → TdrParams →
-    /// fwd∘inv ≡ identity, 784-кейсовый стиль решётки).
+    /// Разморозка 12.5.4-проводки: ВСЕ топологии маппятся в СВОЙ режим
+    /// (Off — только Triv), и круговой инвариант ядра проходит через
+    /// маппинг профиля (TOML → to_rtcp_mode → params ядра → fwd∘inv ≡
+    /// identity, 784-кейсовый стиль решётки на tdr).
     #[test]
-    fn kinematics_new_topologies_map_off_until_unfrozen() {
+    fn kinematics_new_topologies_map_to_own_mode_kernel_circle() {
         use eid_l2::kinematics_tdr::{tdr_forward, tdr_inverse, JointsTdr};
-        // Off-маппинг (замороженная граница).
+        // Полная матрица: каждая топология → свой вариант RtcpMode.
+        let samples = [
+            (
+                MachineKinematics::XyzabTdr(TdrKinematics::default()),
+                "xyzab-tdr",
+            ),
+            (
+                MachineKinematics::Trsrn(TrsrnKinematics::default()),
+                "trsrn",
+            ),
+            (
+                MachineKinematics::Maxkins(MaxkinsKinematics::default()),
+                "maxkins",
+            ),
+            (
+                MachineKinematics::FiveAxis(FiveAxisKinematics::default()),
+                "five-axis",
+            ),
+        ];
+        for (k, name) in samples {
+            let mode = k.to_rtcp_mode();
+            let own = matches!(
+                (k, &mode),
+                (
+                    MachineKinematics::XyzabTdr(_),
+                    eid_l2::interp::RtcpMode::XyzabTdr { .. }
+                ) | (
+                    MachineKinematics::Trsrn(_),
+                    eid_l2::interp::RtcpMode::Trsrn { .. }
+                ) | (
+                    MachineKinematics::Maxkins(_),
+                    eid_l2::interp::RtcpMode::Maxkins { .. }
+                ) | (
+                    MachineKinematics::FiveAxis(_),
+                    eid_l2::interp::RtcpMode::FiveAxis { .. }
+                )
+            );
+            assert!(
+                own,
+                "{name}: маппинг обязан быть в СВОЙ режим, got {mode:?}"
+            );
+        }
+        // Off — только Triv (и старые TOML без секции).
+        assert_eq!(
+            MachineKinematics::Triv.to_rtcp_mode(),
+            eid_l2::interp::RtcpMode::Off
+        );
+        // Круг через маппинг профиля (ядро живо, lowering на своём режиме).
         let p: MachineProfile = toml::from_str(&profile_toml(
             "\n[kinematics]\ntype = \"xyzab-tdr\"\nrot-point = [10.0, 20.0, 30.0]\n\
              x-offset = 2.0\nz-offset = 5.0\nz-offset-tool = 7.0\n",
         ))
         .unwrap();
         p.validate().unwrap();
-        assert_eq!(p.kinematics.to_rtcp_mode(), eid_l2::interp::RtcpMode::Off);
-        // Круг через проекцию профиля (ядро живо, lowering ждёт распрокрутки).
-        let tp = match &p.kinematics {
-            MachineKinematics::XyzabTdr(k) => k.to_tdr_params(),
-            _ => unreachable!(),
+        let eid_l2::interp::RtcpMode::XyzabTdr { params: tp } = p.l2_lowering_config().rtcp_mode
+        else {
+            panic!("tdr-профиль обязан маппиться в XyzabTdr-режим");
         };
         let mut cases = 0usize;
         for &a in &[0.0f64, 30.0, -90.0, 180.0, 359.0] {

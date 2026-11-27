@@ -31,7 +31,7 @@
 //! не меняют (semantic_diff их не видит).
 
 use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
-use eid_core::ast::{Op, Program, SrcSpan};
+use eid_core::ast::{Op, PathMode, Program, SrcSpan, Units};
 use eid_core::diag::LimitInfo;
 use eid_core::diag::{raw_refusal, Diagnostic, ErrorCode, Stage};
 use eid_core::verify::Notice;
@@ -42,6 +42,7 @@ use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
 
 use crate::profile::{Limits, MachineProfile, ProfileEmissionOpts, ProgramEndStyle};
+use eid_l2::interp::L2Config;
 
 /// Имя канонического текстового формата EID (registry-имя EidTextAdapter).
 pub const EID_TEXT_DIALECT: &str = "eid-l1";
@@ -393,6 +394,426 @@ pub fn format_diagnostic(d: &Diagnostic) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// L2-маршрут (12.4-роут): макро-программы → L2-конвейер → L1-Program → emit.
+// Контракт (фаза 12.4 + разморозка 12.5.4): текст с L2-конструкциями
+// (eid_l2::l2_available) диалекта с L2-front-end (fanuc/haas/linuxcnc)
+// роутится в Pass-1 lowering eid-l2 (с кинематикой профиля — RtcpMode из
+// MachineKinematics::to_rtcp_mode), собранная L1-Program идёт обычным
+// хвостом конвейера: AST-лимиты → RAW-правило (SPEC §8.2) → emit цели.
+// Диалекты без front-end и чистые L1-тексты — прежний конвейер.
+// ---------------------------------------------------------------------------
+
+/// L2-front-end диалекта-источника (12.4-роут): какой парсер разбирает
+/// макро-программы.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum L2Frontend {
+    /// O-word RS274 (parser_linuxcnc: o<имя>/o123, IF/WHILE/do, выражения,
+    /// `#<_ini[..]>`).
+    LinuxCnc,
+    /// Macro B Fanuc (parser_fanuc: #var, GOTO/WHILE-DO, G65/G66/M98).
+    Fanuc,
+    /// Macro B Haas (parser_haas: ядро Fanuc + bare-IF wrap + M97 N-метки).
+    Haas,
+}
+
+impl L2Frontend {
+    /// Front-end по каноническому имени диалекта-источника; диалекты без
+    /// макро-семейства — None (файлы всегда идут чистым L1-конвейером:
+    /// l2_available-эвристика T1 допускает false-positive, но роутит
+    /// только туда, где front-end есть).
+    fn of(dialect: &str) -> Option<L2Frontend> {
+        match dialect {
+            "linuxcnc" => Some(L2Frontend::LinuxCnc),
+            "fanuc" => Some(L2Frontend::Fanuc),
+            "haas" => Some(L2Frontend::Haas),
+            _ => None,
+        }
+    }
+
+    /// Каноническое имя (для диагностики).
+    fn dialect(self) -> &'static str {
+        match self {
+            L2Frontend::LinuxCnc => "linuxcnc",
+            L2Frontend::Fanuc => "fanuc",
+            L2Frontend::Haas => "haas",
+        }
+    }
+
+    /// Parse L2-AST (§2.4 дизайн-дока EID-L2-DESIGN).
+    fn parse(self, src: &str) -> Result<eid_l2::ast::L2Program, Vec<eid_l2::eval::L2Error>> {
+        match self {
+            L2Frontend::LinuxCnc => eid_l2::parser_linuxcnc::parse_program(src),
+            L2Frontend::Fanuc => eid_l2::parser_fanuc::parse_program(src),
+            L2Frontend::Haas => eid_l2::parser_haas::parse_program(src),
+        }
+    }
+}
+
+/// Результат units-скана L2-источника (см. [`scan_l2_units`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum L2UnitsScan {
+    /// G21 или ни одного G-кода единиц → mm (power-on дефолт
+    /// Fanuc/Haas/LinuxCNC).
+    Mm,
+    /// G20 → inch.
+    In,
+    /// ОБА кода — units-switch: маршрут L2 отклоняется (честный отказ,
+    /// не молча-неверная шапка эмиссии).
+    Mixed,
+}
+
+/// Обойти все G-коды текста (комментарии вырезаны общим strip_comments;
+/// o<name>/o123-токены пропущены — имя `o<g20sub>` не G-код; слова
+/// разбираются парами (буква, число) — «G90G21»/«N10G20» видятся; числа
+/// с хвостовой точкой «G21.» нормализуются trim_end_matches('.')).
+/// Читатель каждого кода — `hit` (ранний выход — возврат false).
+fn scan_g_codes(src: &str, buf: &mut String, mut hit: impl FnMut(f64) -> bool) {
+    for line in src.lines() {
+        for tok in strip_comments(line, buf).split_whitespace() {
+            let up = tok.to_ascii_uppercase();
+            if up.starts_with('O') {
+                continue; // O-заголовки/имена подпрограмм — не слова G
+            }
+            let bytes = up.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() {
+                let letter = bytes[i];
+                i += 1;
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                    i += 1;
+                }
+                if start == i || letter != b'G' {
+                    continue;
+                }
+                let text = up[start..i].trim_end_matches('.');
+                if let Ok(g) = text.parse::<f64>() {
+                    if !hit(g) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// NURBS-гейт маршрута (SPEC v0.19): файлы с G5/G5.1/G5.2/G5.3 идут
+/// ЧИСТЫМ L1-конвейером — у linuxcnc-адаптера есть spline_active-режим
+/// line-level Raw{SEM} (корень ревизии v0.19: строки-продолжения NURBS
+/// без G-кода; L2-парсер их НЕ знает и трактует как модальные ходы —
+/// маршрут L2 регрессировал бы v0.19). Гейт консервативен по диалектам:
+/// G5-семья в fanuc/haas тоже уводит файл в L1-путь (zero regression).
+fn has_nurbs_g5(src: &str) -> bool {
+    let mut buf = String::new();
+    let mut nurbs = false;
+    scan_g_codes(src, &mut buf, |g| {
+        if matches!(g, g if g == 5.0 || g == 5.1 || g == 5.2 || g == 5.3) {
+            nurbs = true;
+            false // ранний выход
+        } else {
+            true
+        }
+    });
+    nurbs
+}
+
+/// Скан G20/G21 в тексте L2-источника. НУЖЕН потому, что L2-парсеры
+/// абсорбируют единицы молча (ABSORB_G на Move-кадрах; автономная
+/// модальная строка «G21 G90» — modal-only, мимо AST): единицы в
+/// L2-Program не попадают, а эмиссия пишет шапку G20|G21 из
+/// `Program.units` — молчаливо-неверная шапка = ошибка ×25.4 в станочных
+/// координатах (см. [`scan_g_codes`] — механика токенов).
+fn scan_l2_units(src: &str) -> L2UnitsScan {
+    let mut buf = String::new();
+    let mut saw_g20 = false;
+    let mut saw_g21 = false;
+    scan_g_codes(src, &mut buf, |g| {
+        match g {
+            20.0 => saw_g20 = true,
+            21.0 => saw_g21 = true,
+            _ => {}
+        }
+        !(saw_g20 && saw_g21) // Mixed известен — ранний выход
+    });
+    match (saw_g20, saw_g21) {
+        (true, true) => L2UnitsScan::Mixed,
+        (true, false) => L2UnitsScan::In,
+        _ => L2UnitsScan::Mm,
+    }
+}
+
+/// Есть ли в L2-программе ходы с ротационными словами (A/B/C)? Рекурсивно:
+/// главные stmts + тела While/WithTransform + тела подпрограмм (subs).
+/// Гейт маршрута (см. [`translate_l2_route`] шаг 4а): под активной
+/// кинематикой ротационные joints НЕ представимы в L1-грамматике v0.3
+/// (Op-концы Point3 — слота A/B/C нет), lowered-поток несёт только X/Y/Z
+/// machine-joints — эмиссия такой программы потеряла бы ход ротационной
+/// оси; такие программы честно отказываются (именованная граница).
+fn l2_program_has_rotary_moves(p: &eid_l2::ast::L2Program) -> bool {
+    fn pose_rotary(t: &eid_l2::ast::ExprPose) -> bool {
+        t.a.is_some() || t.b.is_some() || t.c.is_some()
+    }
+    fn walk(stmts: &[eid_l2::ast::L2Stmt]) -> bool {
+        stmts.iter().any(|s| match s {
+            eid_l2::ast::L2Stmt::Move { target, .. } => pose_rotary(target),
+            eid_l2::ast::L2Stmt::WithTransform { body, .. } => walk(body),
+            eid_l2::ast::L2Stmt::While { body, .. } => walk(body),
+            _ => false,
+        })
+    }
+    walk(&p.stmts) || p.subs.iter().any(|s| walk(&s.body))
+}
+
+/// Декод payload_hex носителя (hex UTF-8 байтов кадра, кодирование
+/// `raw_frame_op` eid-l2) → текст кадра. Повреждённый hex → честный
+/// плейсхолдер (не panic — эмиссия не должна падать на данных).
+fn decode_hex_payload(hex: &str) -> String {
+    let bytes = (0..hex.len() / 2)
+        .filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok())
+        .collect::<Vec<u8>>();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// L2-конвейер (12.4-роут): front-end parse → Pass-1 lower
+/// ([`L2Config`] — RTCP-режим из kinematics профиля) → сборка L1-Program →
+/// общий хвост конвейера (AST-лимиты → RAW-правило → emit цели).
+///
+/// Сборка Program: `eid_version` — magic «EID/L1 v0.3» (SPEC §10.4, эмиттеры
+/// отвергают прочие); `units` — units-скан текста (G20/G21 в AST не
+/// попадают — см. [`scan_l2_units`]; ОБА кода → отказ
+/// E_UNSUPPORTED_SEMANTICS: units-switch конвертируется только анкер-механизмом
+/// L1-адаптера linuxcnc, у lowering механизма нет); `path_mode` — ExactPath
+/// (G61/G64 L2-парсеры абсорбируют; канонический выбор грамматик адаптеров —
+/// blend-толеранс макро-программы не переносится, emission-предупреждения
+/// целей активны); `frame_preset` — None (G54–G59 абсорбируются; чтение
+/// offset-ов через SysVar::WcsOffset честно требует таблицу станка —
+/// E_REQUIRES_MACHINE_TABLE). Порядок опов —
+/// [`eid_l2::interp::LoweringResult::into_ordered_ops`] (носители МЕЖДУ
+/// ходами; конкатенация l1_ops ++ raw_tail переупорядочила бы программу).
+/// RTCP-маркеры (G43.4/G43.5/G49-носители pass-1) под активной кинематикой
+/// материализуются комментариями шапки (исполняемая эмиссия G43.4 на цель =
+/// двойное преобразование — см. шаг 4 в теле); авто-PEND — зеркало
+/// L1-канонизаторов (SPEC §3 v0.16).
+///
+/// Возвращает `Ok(None)` для чистого макро-фрагмента (ноль machine-опов —
+/// источник вернётся L1-конвейеру).
+fn translate_l2_route(
+    source_name: &str,
+    target: &AnyAdapter,
+    src: &str,
+    file: &str,
+    cfg: L2Config,
+    limits: &Limits,
+    preamble: bool,
+) -> Result<Option<TranslateOutcome>, TranslateError> {
+    let frontend = L2Frontend::of(source_name).expect("роут вызывается только при front-end");
+
+    // 1. units-скан ДО parse: Mixed = честный отказ (молча-неверная шапка
+    //    эмиссии запрещена — та же дисциплина «тихое игнорирование», что и
+    //    в emission-флагах профиля).
+    let units = match scan_l2_units(src) {
+        L2UnitsScan::Mm => Units::Mm,
+        L2UnitsScan::In => Units::In,
+        L2UnitsScan::Mixed => {
+            return Err(TranslateError::Parse(vec![Diagnostic {
+                code: ErrorCode::UnsupportedSemantics,
+                stage: Stage::Parse,
+                src: None,
+                options: Vec::new(),
+                limit: None,
+                message: "units-switch (G20 и G21 в одной программе) не переносится \
+                          L2-конвейером: L2-парсеры абсорбируют единицы, lowering не \
+                          конвертирует координаты (анкер-механизм — только L1-адаптер \
+                          linuxcnc); маршрут L2 отклонён"
+                    .to_string(),
+            }]));
+        }
+    };
+
+    // 2. Front-end parse (Macro B / O-word RS274).
+    let l2prog = frontend.parse(src).map_err(|errs| {
+        TranslateError::Parse(
+            errs.iter()
+                .map(|e| Diagnostic {
+                    code: e.error_code(),
+                    stage: Stage::Parse,
+                    src: None,
+                    options: Vec::new(),
+                    limit: None,
+                    message: format!("L2 {}: {}", frontend.dialect(), e.message()),
+                })
+                .collect(),
+        )
+    })?;
+
+    // 2б. Гейт ротационных ходов под активной кинематикой (ИМЕНОВАННАЯ
+    //     граница, «не молча»): TCP→joints lowering вычисляет X/Y/Z
+    //     machine-joints (ветка 2.5/exec_trt_move), но L1-грамматика v0.3
+    //     слота ротационных осей НЕ имеет (Op-концы Point3) — ротационные
+    //     pass-through joints в L1-текст не представимы. Эмиссия программы
+    //     с ротационными ходами потеряла бы движение A/B/C на станке.
+    //     Честный отказ с путём решения (расширение grammar — замороженная
+    //     поверхность, отдельное решение; прямой 5-осевой эмиттер
+    //     L2→машина). Программы БЕЗ ротационных ходов (3-осевой TCP на
+    //     5-осевой машине) проходят полностью — флагман маршрута.
+    let kins_active = cfg.rtcp_mode != eid_l2::interp::RtcpMode::Off;
+    if kins_active && l2_program_has_rotary_moves(&l2prog) {
+        return Err(TranslateError::Parse(vec![Diagnostic {
+            code: ErrorCode::UnsupportedSemantics,
+            stage: Stage::Canonicalize,
+            src: None,
+            options: Vec::new(),
+            limit: None,
+            message: format!(
+                "программа содержит ходы с ротационными словами (A/B/C) под \
+                 кинематикой {:?}: TCP→joints lowering вычисляет X/Y/Z \
+                 machine-joints, но L1-грамматика v0.3 не имеет слота ротационных \
+                 осей — эмиссия потеряла бы движение A/B/C. Полная 4/5-осевая \
+                 эмиссия требует расширения grammar (замороженная поверхность — \
+                 отдельное решение) или прямого эмиттера L2→машина; \
+                 kinematics-проход доступен библиотечным вызовом \
+                 eid_l2::lowering::lower (круговые инварианты ядер 1e-13)",
+                cfg.rtcp_mode
+            ),
+        }]));
+    }
+
+    // 3. Pass-1 lowering (бюджеты L2Config; RTCP-режим — из профиля).
+    //    cfg потребляется lower() (kins_active вычислен выше).
+    let mut res = eid_l2::lowering::lower(&l2prog, cfg).map_err(|e| {
+        TranslateError::Parse(vec![Diagnostic {
+            code: e.error_code(),
+            stage: Stage::Canonicalize,
+            src: None,
+            options: Vec::new(),
+            limit: None,
+            message: e.message(),
+        }])
+    })?;
+    let mut l2_diags = std::mem::take(&mut res.diagnostics);
+
+    // 4. Сборка L1-Program (см. контракт в doc функции). НОЛЬ machine-опов
+    //    = чистый макро-фрагмент (присваивания/циклы, ни ходов, ни конца
+    //    программы): L2-компиляции нечего — Ok(None) вернет источник
+    //    L1-конвейеру (same-dialect verbatim-носители; кросс — raw_refusal).
+    //
+    //    RTCP-маркеры pass-1 (носители с reason «L2 pass-1 [rtcp]:» — кадры
+    //    G43.4/G43.5/G49): под АКТИВНОЙ кинематикой (rtcp_mode != Off)
+    //    ходы ПОСЛЕ маркера уже resolved в machine-оси веткой 2.5 lowering
+    //    — маркер не untranslated-контент, а отчёт компилятора. Исполняемая
+    //    эмиссия G43.4 на цель ЗАПРЕЩЕНА: цель применила бы свою кинематику
+    //    ПОВЕРХ наших joints (двойное преобразование — неверная траектория).
+    //    Маркер материализуется комментарием в шапке выхода + диагностикой
+    //    («не молча») и НЕ участвует в RAW-правиле §8.2. Под Off (Triv)
+    //    компиляции не было — маркер остаётся Raw-носителем (прежнее
+    //    поведение: same-dialect verbatim G43.4 делает ходы TCP на цели).
+    let mut rtcp_marker_notes: Vec<String> = Vec::new();
+    let mut ops: Vec<Op> = Vec::new();
+    for op in res.into_ordered_ops() {
+        if kins_active {
+            if let Op::Raw {
+                reason,
+                payload_hex,
+                src,
+                ..
+            } = &op
+            {
+                if reason.starts_with("L2 pass-1 [rtcp]:") {
+                    let frame = decode_hex_payload(payload_hex);
+                    rtcp_marker_notes.push(frame.trim().to_string());
+                    l2_diags.push(Diagnostic {
+                        code: ErrorCode::UnsupportedSemantics,
+                        stage: Stage::Canonicalize,
+                        src: Some(src.clone()),
+                        options: Vec::new(),
+                        limit: None,
+                        message: format!(
+                            "RTCP-маркер materialized as comment (ходы после него \
+                             resolved в machine-оси кинематикой профиля; исполняемая \
+                             эмиссия G43.4/G49 на цель = двойное преобразование): \
+                             «{}»",
+                            frame.trim()
+                        ),
+                    });
+                    continue;
+                }
+            }
+        }
+        ops.push(op);
+    }
+    if ops.is_empty() {
+        return Ok(None);
+    }
+    // SPEC §3 v0.16 (зеркало L1-канонизаторов): отсутствие M2/M30 в
+    // lowered-потоке — неявный конец, авто-PEND последним опом; «не молча» —
+    // диагностика в l2_lowering_diagnostics (аналог NoticeKind::
+    // MissingProgramEnd).
+    if !ops.iter().any(|o| matches!(o, Op::ProgramEnd { .. })) {
+        let line_count = src.lines().count().max(1) as u32;
+        ops.push(Op::ProgramEnd {
+            src: SrcSpan {
+                file: file.into(),
+                line_start: line_count,
+                col_start: 1,
+                line_end: line_count,
+                col_end: 1,
+            },
+        });
+        l2_diags.push(Diagnostic {
+            code: ErrorCode::UnsupportedSemantics,
+            stage: Stage::Canonicalize,
+            src: None,
+            options: Vec::new(),
+            limit: None,
+            message: "W_MISSING_PROGRAM_END: no M2/M30 in lowered stream — implicit \
+                      program end appended (SPEC §3 v0.16, зеркало L1-канонизаторов)"
+                .to_string(),
+        });
+    }
+    let program = Program {
+        eid_version: "EID/L1 v0.3".to_string(),
+        units,
+        path_mode: PathMode::ExactPath,
+        frame_preset: None,
+        ops,
+    };
+
+    // 5. Общий хвост: AST-лимиты профиля → RAW-правило (SPEC §8.2) → emit.
+    enforce_ast_limits(&program, file, limits)?;
+    let spans = raw_spans(&program);
+    let cross = target.dialect_name() != source_name;
+    let golden = source_name == EID_TEXT_DIALECT;
+    if !spans.is_empty() && (cross || golden) {
+        return Err(TranslateError::Emit(vec![raw_refusal(&spans)]));
+    }
+    let target_out = target.emit(&program).map_err(TranslateError::Emit)?;
+    // Шапка выхода: преамбула #11 + RTCP-комментарии компиляции (в порядке
+    // кадров-маркеров; текст кадра verbatim в комментарии).
+    let mut head = String::new();
+    if preamble {
+        head.push_str(GENERATED_PREAMBLE);
+        head.push('\n');
+    }
+    for note in &rtcp_marker_notes {
+        head.push_str(&format!(
+            "(EID RTCP COMPILED: {note} — motion in machine axes)\n"
+        ));
+    }
+    let emitted = format!("{head}{}", target_out.text);
+
+    Ok(Some(TranslateOutcome {
+        from: source_name.to_string(),
+        to: target.name().to_string(),
+        program,
+        emitted,
+        notices: Vec::new(),
+        emit_warnings: target_out.diagnostics,
+        q3_warnings: target_out.warnings,
+        l2_lowering_diagnostics: l2_diags,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // RAW-правило (SPEC §8.2) — диагностика отказа: eid_core::diag::raw_refusal
 // (аудит #7: прежняя зеркальная копия eid-harness::translate::raw_refusal
 // устранена — единая точка в core)
@@ -431,6 +852,10 @@ pub struct TranslateOutcome {
     pub emit_warnings: Vec<Diagnostic>,
     /// Q3-warning-строки цели (Ok-путь; Grbl warnings-буфер, #40/#41/#45).
     pub q3_warnings: Vec<String>,
+    /// Диагностики L2-lowering (12.4-роут, Ok-путь; Stage::Canonicalize —
+    /// носители «не молча» + notices вроде запечённого зеркала T6). На
+    /// чистом L1-конвейере пусто.
+    pub l2_lowering_diagnostics: Vec<Diagnostic>,
 }
 
 // ---------------------------------------------------------------------------
@@ -657,6 +1082,34 @@ pub fn translate_text_with_profile(
     }
     let target = target.with_emission_opts(emission);
 
+    // 12.4-роут: макро-программа диалекта с L2-front-end → L2-конвейер
+    // (parse Macro B/O-word → Pass-1 lower с кинематикой профиля →
+    // L1-Program → emit цели). Ok(None) — чистый макро-фрагмент (lowering
+    // дал ноль machine-опов: присваивания/циклы без ходов и program-end):
+    // компилировать нечего, верное представление источника — L1-конвейер
+    // ниже (same-dialect: verbatim-носители §8.1; кросс — честный
+    // raw_refusal §8.2). Диалекты без front-end (grbl-1.1: словарь 1.1
+    // макро-конструкций не содержит; eid-l1: канонический формат;
+    // grbl-hal/fluidnc: pending) — тоже прежний конвейер (T1
+    // zero-overhead: l2_available — один проход байтов по тексту).
+    let l2_capable =
+        eid_l2::l2_available(src) && !has_nurbs_g5(src) && L2Frontend::of(source.name()).is_some();
+    if l2_capable {
+        match translate_l2_route(
+            source.name(),
+            &target,
+            src,
+            file,
+            profile.map(|p| p.l2_lowering_config()).unwrap_or_default(),
+            limits,
+            preamble,
+        ) {
+            Ok(Some(outcome)) => return Ok(outcome),
+            Ok(None) => {} // макро-фрагмент — L1-путь ниже
+            Err(e) => return Err(e),
+        }
+    }
+
     let source_out = source.parse(src, file).map_err(TranslateError::Parse)?;
     let program = source_out.program;
     let notices = source_out.notices;
@@ -694,6 +1147,7 @@ pub fn translate_text_with_profile(
         notices,
         emit_warnings,
         q3_warnings,
+        l2_lowering_diagnostics: Vec::new(),
     })
 }
 

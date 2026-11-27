@@ -121,6 +121,11 @@ fn cmd_translate(args: &[String]) -> CliResult<()> {
             for n in &outcome.notices {
                 println!("  notice: {n}");
             }
+            // L2-маршрут (12.4-роут): диагностики Pass-1 lowering (носители
+            // «не молча», RTCP-материализация, авто-PEND) — Ok-путь.
+            for d in &outcome.l2_lowering_diagnostics {
+                eprintln!("  lowering: {}", format_diagnostic(d));
+            }
             for w in &outcome.emit_warnings {
                 eprintln!("  warning: {}", format_diagnostic(w));
             }
@@ -529,10 +534,17 @@ eid — транслятор G-кода через канонический фо
   --input <file>      Входной файл G-кода
   --output <file>     Выходной файл (translate)
 
-СТАТУС (регистрация haas, этап 3 agent C):
+СТАТУС (L2-маршрут 12.4 + kinematics 12.5.4):
   translate: live для grbl-1.1, linuxcnc, fanuc, haas, eid-l1 (реальные
   адаптеры C/D/eid-fanuc/C-eid-haas/A). grbl-hal/fluidnc — pending (Агент C,
-  семейство GRBL). RAW-правило (SPEC §8.2): программа с Raw-опами не
+  семейство GRBL). L2-маршрут: макро-программы (переменные #, IF/WHILE/GOTO,
+  G65/G66, O-word) диалектов fanuc/haas/linuxcnc КОМПИЛИРУЮТСЯ через
+  Pass-1 lowering eid-l2 в concrete L1-опы (не носители); секция [kinematics]
+  профиля включает TCP→joints (6 топологий — xyzac/xyzbc-trt, xyzab-tdr,
+  trsrn, maxkins, five-axis); G43.4/G49 под активной кинематикой —
+  комментарии шапки (двойное преобразование запрещено); программы с
+  ротационными ходами под кинематикой — именованный отказ (L1-грамматика
+  без слота A/B/C). RAW-правило (SPEC §8.2): программа с Raw-опами не
   переводится кросс-диалектно (E_RAW_UNTRANSLATABLE, exit 1); same-dialect —
   verbatim. verify: parse + validate + mock-sim (structural-проверки:
   program_end, zero-length, axis_limits профиля с приведением единиц mm/in —
@@ -576,10 +588,16 @@ max_word_chars — до parse, max_ops_per_program / max_unroll_iterations — �
   eid translate --from grbl --to linuxcnc --input in.ngc --output out.ngc   # дефолт-профиль
 
 СТАТУС: live — реальные адаптеры grbl-1.1/linuxcnc/fanuc/haas/eid-l1 через
-registry (eid-integration::translate). Отказы parse/emit — диагностики в
-stderr ([stage] code + message + src), exit 1. drop-notices (SPEC §3) и
-emit-warnings (Q3, напр. path_mode ExactPath → G61 у fanuc/haas, G110–G112
-у haas) печатаются отдельно (notice/warning, не отказ).
+registry (eid-integration::translate). L2-МАРШРУТ: макро-программы fanuc/
+haas/linuxcnc (#-переменные, IF/WHILE/GOTO, G65, O-word) компилируются
+Pass-1 lowering eid-l2 → concrete L1 → эмиссия цели; [kinematics] профиля
+включает TCP→joints (6 топологий; G43.4 → комментарий шапки, ротационные
+ходы — именованный отказ: L1-грамматика без слота A/B/C). Отказы parse/
+emit — диагностики в stderr ([stage] code + message + src), exit 1.
+drop-notices (SPEC §3), emit-warnings (Q3, напр. path_mode ExactPath → G61
+у fanuc/haas, G110–G112 у haas) и l2-lowering diagnostics (носители,
+RTCP-материализация, авто-PEND) печатаются отдельно (notice/warning/
+lowering, не отказ).
 
 КОДЫ ВЫХОДА: 0 — перевод выполнен; 1 — профиль/файлы/отказ трансляции; 2 — usage.
 "

@@ -739,9 +739,37 @@ pub struct LoweringResult {
     /// профиль). `false` при [`RtcpMode::Off`] и когда trt-путь не
     /// задействован ни разу.
     pub rtcp_active: bool,
+    /// Приватная лента порядка исполнения (12.4-роут): `L1(i)` — элемент
+    /// `l1_ops[i]`, `Raw(i)` — элемент `raw_tail[i]`; лента = полный поток
+    /// опов в порядке исполнения. НУЖНА потому, что runtime-носители НЕ
+    /// обязаны быть хвостом: ротационный кадр под Off-профилем становится
+    /// носителем МЕЖДУ двумя ходами (ход-носитель идёт в raw_tail, соседние
+    /// ходы — в l1_ops), и сборка `l1_ops ++ raw_tail` переупорядочила бы
+    /// программу (носитель уехал в конец после последующих ходов).
+    /// Заполняется [`LoweringResult::push_l1`]/[`LoweringResult::push_raw`];
+    /// читается [`LoweringResult::into_ordered_ops`].
+    exec_order: Vec<ExecRef>,
+}
+
+/// Элемент ленты порядка исполнения (см. [`LoweringResult::exec_order`]).
+/// Лента сама является порядком — вариант лишь называет очередь-источник.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecRef {
+    /// Оп из `l1_ops` (индекс = позиция очереди).
+    L1(usize),
+    /// Носитель из `raw_tail` (индекс = позиция очереди).
+    Raw(usize),
 }
 
 impl LoweringResult {
+    /// Пуш lowered-опа с записью в ленту порядка (ВСЕ места пуша `l1_ops`
+    /// проходят через него — [`LoweringResult::into_ordered_ops`] обязан
+    /// видеть полный поток).
+    fn push_l1(&mut self, op: Op) {
+        self.exec_order.push(ExecRef::L1(self.l1_ops.len()));
+        self.l1_ops.push(op);
+    }
+
     /// Носитель RAW + диагностика. `payload` — ТЕКСТ кадра с подставленными
     /// значениями (§3/T4; hex-кодирование в [`raw_frame_op`]); None →
     /// легаси debug-дамп оператора.
@@ -767,6 +795,7 @@ impl LoweringResult {
                 src,
             },
         };
+        self.exec_order.push(ExecRef::Raw(self.raw_tail.len()));
         self.raw_tail.push(RawTailItem { marker, op });
         self.diagnostics.push(Diagnostic {
             code,
@@ -776,6 +805,25 @@ impl LoweringResult {
             options: Vec::new(),
             limit: None,
         });
+    }
+
+    /// Полный поток L1-опов в ПОРЯДКЕ ИСПОЛНЕНИЯ: `l1_ops` и `raw_tail`
+    /// объединяются по ленте [`LoweringResult::exec_order`]. Контракт для
+    /// потребителя lower() (12.4-роут translate, kinematics-e2e): собирать
+    /// `Program.ops` ТОЛЬКО через него — конкатенация `l1_ops ++ raw_tail`
+    /// корректна лишь когда носителей нет вовсе (напр. fanuc_trace_equiv)
+    /// или все они в начале потока; в общем случае (ротационный носитель
+    /// МЕЖДУ двумя ходами) конкатенация переупорядочивает программу.
+    pub fn into_ordered_ops(self) -> Vec<Op> {
+        let mut l1 = self.l1_ops.into_iter();
+        let mut raw = self.raw_tail.into_iter().map(|t| t.op);
+        self.exec_order
+            .into_iter()
+            .map(|r| match r {
+                ExecRef::L1(_) => l1.next().expect("exec_order/l1_ops длины согласованы"),
+                ExecRef::Raw(_) => raw.next().expect("exec_order/raw_tail длины согласованы"),
+            })
+            .collect()
     }
 }
 
@@ -1125,7 +1173,7 @@ impl L2Evaluator {
             }
             L2Stmt::Move { .. } => self.exec_move(program, stmt),
             L2Stmt::L1Op(op) => {
-                self.out.l1_ops.push(op.clone());
+                self.out.push_l1(op.clone());
                 Ok(Flow::Normal)
             }
             L2Stmt::Label { .. } => Ok(Flow::Normal), // no-op (позиция GOTO)
@@ -1466,7 +1514,7 @@ impl L2Evaluator {
                             sub: None,
                         }
                     };
-                    self.out.l1_ops.push(op);
+                    self.out.push_l1(op);
                     self.out.rtcp_active = true;
                     self.out.diagnostics.push(Diagnostic {
                         code: ErrorCode::UnsupportedSemantics,
@@ -1574,7 +1622,7 @@ impl L2Evaluator {
                             sub: None,
                         },
                     };
-                    self.out.l1_ops.push(op);
+                    self.out.push_l1(op);
                     self.pos_prog = Some(ep);
                     self.modals.set_motion(match kind {
                         MoveKind::Rapid => 0,
@@ -1745,7 +1793,7 @@ impl L2Evaluator {
                 sub: None,
             }
         };
-        self.out.l1_ops.push(op);
+        self.out.push_l1(op);
         self.out.rtcp_active = true;
         // per-op диагностика «не молча»: L1-оп несёт machine-координаты
         // осей (НЕ TCP) при прежнем заголовке эмиттера — спец-семантика
@@ -1923,7 +1971,7 @@ impl L2Evaluator {
                     src,
                     sub: None,
                 };
-                self.out.l1_ops.push(op);
+                self.out.push_l1(op);
                 self.pos_prog = Some(ep);
                 self.modals.set_motion(match dir_eff {
                     Dir::Cw => 2,
@@ -2666,6 +2714,56 @@ mod tests {
                 (20.0, 5.0, 0.0)
             );
         }
+    }
+
+    /// 12.4-роут: носитель МЕЖДУ ходами — [`LoweringResult::into_ordered_ops`]
+    /// восстанавливает порядок исполнения (конкатенация `l1_ops ++ raw_tail`
+    /// переупорядочила бы: носитель уехал в конец ПОСЛЕ последующих ходов).
+    /// Программа — как в `t4_linear_rotary_payload_and_pos_update` (ход;
+    /// ротационный кадр-носитель; ход): полный поток = [Rapid, Raw, Rapid].
+    #[test]
+    fn into_ordered_ops_merges_interleaved_carriers() {
+        let program = L2Program::new(
+            vec![
+                move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
+                move_stmt(
+                    MoveKind::Linear,
+                    ExprPose {
+                        x: Some(Expr::num(20.0)),
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(0.0)),
+                        a: Some(Expr::num(90.0)),
+                        b: None,
+                        c: None,
+                    },
+                    Some(Expr::num(300.0)),
+                ),
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: None,
+                        y: Some(Expr::num(5.0)),
+                        z: None,
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
+        assert_eq!(res.l1_ops.len(), 2);
+        assert_eq!(res.raw_tail.len(), 1);
+        let ops = res.into_ordered_ops();
+        assert_eq!(ops.len(), 3, "2 хода + 1 носитель");
+        assert!(matches!(ops[0], Op::Rapid { .. }), "первый ход — Rapid");
+        assert!(
+            matches!(ops[1], Op::Raw { .. }),
+            "носитель — ПОСЛЕ первого хода, ПЕРЕД третьим (порядок исполнения)"
+        );
+        assert!(matches!(ops[2], Op::Rapid { .. }), "третий ход — Rapid");
     }
 
     // ---------- T8: RTCP-профиль lowering (12.5.2) ---------------------------

@@ -6,18 +6,33 @@
 //! спеков: SPEC-EID-L1 v0.20, interface v0.2.0, grammar v0.4.
 //! Единственная зависимость — eid-core (path), std-only.
 //!
-//! Модули (фаза 12.1):
+//! Модули:
 //! * [`ast`] — L2 AST (§2 дизайн-дока);
 //! * [`eval`] — семантика #0 (таблицы 2.1–2.4), `L2Env`, `L2Error`;
-//! * [`interp`] — интерпретатор D0–D2 (`L2Evaluator`) + минимальный
-//!   Pass-1 lowering (`LoweringResult`);
-//! * [`parser_fanuc`]/[`parser_haas`]/[`parser_linuxcnc`] — заготовки
-//!   контрактов `parse_program` для агентов B/C/D;
-//! * [`smt`] — заготовка фазы 12.3 (feature `smt`, кода за ней нет);
-//! * [`lowering`] — заготовка фазы 12.2 (полный Pass-1).
+//! * [`interp`] — интерпретатор D0–D3 (`L2Evaluator`) + Pass-1 lowering
+//!   ([`LoweringResult`]: `l1_ops` + `raw_tail` + лента порядка исполнения;
+//!   потребление — [`LoweringResult::into_ordered_ops`]); RTCP-режимы
+//!   `RtcpMode` (6 топологий — 12.5.3/12.5.4, TCP→joints);
+//! * [`parser_fanuc`]/[`parser_haas`] — Macro B (общее ядро
+//!   [`parser_macro_common`]: Fanuc-таблица G65-букв BUG-D1, Haas bare-IF
+//!   wrap + M97);
+//! * [`parser_linuxcnc`] — O-word RS274 (o<имя>/o123, IF/ELSEIF/DO,
+//!   выражения, `#<_ini[..]>`);
+//! * [`lowering`] — полный Pass-1 (точка входа `lower`);
+//! * [`emit_l2`]/[`emit_linuxcnc`] — фаза 12.4: L2↔L2 диалектная эмиссия
+//!   (Macro B Fanuc↔Haas; O-word LinuxCNC — реструктуризация GOTO в
+//!   o-if/do-while);
+//! * [`smt`] — символьная верификация ветвлений (фаза 12.3: side-condition
+//!   матчинг веток);
+//! * [`kinematics`] + `kinematics_{tdr,trsrn,maxkins,5axis}` — ядра формул
+//!   шести топологий (оракулы LinuxCNC; круговые инварианты ≤ 8e-13).
 //!
 //! Маршрутизация T1 (zero-overhead): [`l2_available`] — дешёвый детект
 //! L2-конструкций по тексту; false → чистый L1-конвейер без L2-фаз.
+//! Live-потребитель — `eid-integration::translate` (12.4-роут):
+//! l2_available-тексты диалектов с front-end (fanuc/haas/linuxcnc) →
+//! parse → [`lowering::lower`] с кинематикой профиля → L1-Program →
+//! emit цели.
 
 pub mod ast;
 // Фаза 12.4 (агент D3): L2-to-L2 диалектная эмиссия — ядро + Macro-B
@@ -39,8 +54,11 @@ pub mod kinematics;
 //   (`maxkins.c`);
 // * [`kinematics_5axis`] — gantry/bridge mill XYZBCW (`5axiskins.c`).
 // Интеграция enum топологий — `eid-integration::profile::MachineKinematics`
-// (12.5.4); lowering-проводка новых топологий (RtcpMode) — заморожена
-// (СТОП-вопрос оркестратору), см. doc профиля.
+// (12.5.4); lowering-проводка ВСЕХ топологий live (RtcpMode распрокручен —
+// 6ba0055; профиль маппит каждую топологию в свой режим). Граница эмиссии
+// (12.4-роут): L1-грамматика v0.3 слота ротационных осей не имеет —
+// программы с ротационными ходами под кинематикой в translate честно
+// отказывают; kinematics-проход — библиотечный lower().
 pub mod kinematics_5axis;
 pub mod kinematics_maxkins;
 pub mod kinematics_tdr;
@@ -49,9 +67,6 @@ pub mod lowering;
 pub mod parser_fanuc;
 pub mod parser_haas;
 pub mod parser_linuxcnc;
-// Возвращено агентом B2 (файл завершён, собирается; комментарий агента A от
-// временного выключения — см. git-историю: ошибки E0432/E0255/E0599/E0614/
-// E0277/E0063 первой редакции устранены).
 pub mod parser_macro_common;
 pub mod smt;
 
