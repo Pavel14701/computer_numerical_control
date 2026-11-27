@@ -112,7 +112,8 @@ Point3**. Кинематика готова; не подключена **тра�
 |---|---|
 | Same-topology 5→5 через CLI (та же геометрия) | ✅ **работает**, verified (`xyzac_inverse`-оракул при A90 в тесте) |
 | Same-topology **different-geometry** (другой пивот/офсеты) | ✅ **K1 two-kins TRANSFER**: forward_A → TCP → inverse_B (штамп несёт полную геометрию; физическая инвариантность forward_B(joints_B) ≡ forward_A(joints_A) — ядро как оракул в тесте; verified пара: XYZAC↔XYZAC, остальные same-tag пары — тот же pass, per-pair goldens при потребности) |
-| Cross-topology (XYZAC→XYZBC, head-head→trt) | ❌ **named boundary (K2)** — семантика углов между семьями различна (стол↔голова: tool-axis в part-frame против мира), нужен per-семейный orientation-solver; честная оценка 1–2 недели |
+| Cross-topology **внутри trt-семьи** (XYZAC↔XYZBC) | ✅ **K2a transfer**: плоскости наклона перпендикулярны → деталь монтируется повёрнутой φ=±90° вокруг Z (mounting-инструкция в штампе), b_B = a_A, part-frame путь инвариантен; round-trip восстановляет источник |
+| Cross-topology **стол↔голова** (XYZAC→trsrn/maxkins/5axis) | ❌ **named boundary (K2b)** — нужен part-frame tool-axis solver per семью головы (1–2 недели, при спросе) |
 | RTCP-на-rs274 | ❌ **named boundary** — G43.4 motion-controller слой, не interp |
 | Арки под кинематикой | ⚠️ **carriers**; при K1-transfer носители/дуги → **отказ** (payload — кадры source-машины, сегментируйте источник) |
 | Tamper-защита штампа | ⚠️ **от случайной порчи** (integrity-пин: параметры пересчитываются в hash); осознанная подмена параметров+hash вместе — не детектируется |

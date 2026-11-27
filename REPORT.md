@@ -413,7 +413,16 @@ forward_A(joints_A)** — ядро как оракул в тесте; штамп
 (нулевая → пивот −345); остальные same-tag пары — тот же pass, per-pair
 goldens при потребности. L2-маршрут (макро-файлы): match → форс Off
 (повторный inverse = двойное преобразование), mismatch → отказ (гибрид
-неоднозначен). **K2 cross-topology — named boundary**: семантика углов
+неоднозначен). **K2a cross-topology trt-семья — РЕАЛИЗОВАНА (XYZAC↔XYZBC)**: плоскости
+наклона перпендикулярны (part-frame tool-axis из оракул-формул:
+XYZAC (0,−sin a,−cos a) — наклон в part-+Y; XYZBC (sin b,0,−cos b) — в
+part-+X) → перенос с re-fixture поворотом детали φ=±90° вокруг Z
+(mounting-инструкция в штампе): b_B = a_A, c_B = c_A, xyz_B =
+Rz(φ)·(xyz_A − center_A) + center_B (part zero = центр вращения стола;
+center из геометрий: XYZAC (xr, dy+yr, dz+zr), XYZBC (dx+xr, yr, dz+zr));
+part-frame путь инвариантен; round-trip восстановляет источник. Математика
+con-независима (азимутальный Rz выпадает из оси). **K2b стол↔голова —
+named boundary**: семантика углов
 между семьями различна (стол: tool-axis в part-frame; голова: в мире) —
 нужен per-семейный orientation-solver (1–2 недели, отдельный трек при
 спросе); Reachability/workspace — named boundary трека B. Carriers/дуги

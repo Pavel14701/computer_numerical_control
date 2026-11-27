@@ -1538,22 +1538,64 @@ pub fn translate_text_with_profile(
                 ));
             }
             (Some(_), _) => {
-                return Err(TranslateError::Emit(vec![Diagnostic {
-                    code: ErrorCode::InvalidInput,
-                    stage: Stage::Emit,
-                    src: None,
-                    options: Vec::new(),
-                    limit: None,
-                    message: format!(
-                        "cross-topology transfer not supported: источник joints \
-                         для {} (hash={src_hash}), профиль цели — {} — семантика \
-                         углов между семьями различна (стол↔голова: part-frame \
-                         tool-axis solver per семью); two-kins K2 — named boundary, \
-                         REPORT §16",
-                        kins_tag(src_mode),
-                        kins_tag(&target_mode)
-                    ),
-                }]));
+                // K2a: кросс-топология в trt-семье (XYZAC ↔ XYZBC) —
+                // перпендикулярные плоскости наклона (part-frame tool-axis:
+                // XYZAC (0,−sin a,−cos a) — наклон в +Y; XYZBC (sin b,0,−cos b)
+                // — наклон в +X) → перенос с re-fixture поворотом детали
+                // φ=±90° вокруг Z (стандартная практика переустановки;
+                // mounting-инструкция в штампе). Остальные пары
+                // (стол↔голова) — K2b named (orientation-solver per семью).
+                match (kins_tag(src_mode), kins_tag(&target_mode)) {
+                    ("xyzac-trt", "xyzbc-trt") | ("xyzbc-trt", "xyzac-trt") => {
+                        let phi = if kins_tag(src_mode) == "xyzac-trt" {
+                            90.0
+                        } else {
+                            -90.0
+                        };
+                        let transferred = two_kins_trt_cross(
+                            std::mem::take(&mut program.ops),
+                            src_mode,
+                            &target_mode,
+                            phi,
+                        )
+                        .map_err(|msg| {
+                            TranslateError::Emit(vec![Diagnostic {
+                                code: ErrorCode::InvalidInput,
+                                stage: Stage::Emit,
+                                src: None,
+                                options: Vec::new(),
+                                limit: None,
+                                message: msg,
+                            }])
+                        })?;
+                        program.ops = transferred;
+                        stamp_head = Some(format!(
+                            "(EID KINEMATICS: {} hash={} {} — xyz/rotary values are machine joints for this geometry only; cross-topology transferred from {} hash={src_hash}; MOUNT PART ROTATED {phi:+.0} DEG AROUND Z, zero at table rotation center)",
+                            kins_tag(&target_mode),
+                            target_hash.unwrap(),
+                            stamp_tail(&target_mode),
+                            kins_tag(src_mode)
+                        ));
+                    }
+                    _ => {
+                        return Err(TranslateError::Emit(vec![Diagnostic {
+                            code: ErrorCode::InvalidInput,
+                            stage: Stage::Emit,
+                            src: None,
+                            options: Vec::new(),
+                            limit: None,
+                            message: format!(
+                                "cross-topology transfer not supported: источник joints \
+                                 для {} (hash={src_hash}), профиль цели — {} — стол↔голова \
+                                 требует part-frame tool-axis solver per семью (голова: axis \
+                                 из углов через цепочку вращения; стол: fixture-поворот + tilt) \
+                                 — two-kins K2b, named boundary, REPORT §16",
+                                kins_tag(src_mode),
+                                kins_tag(&target_mode)
+                            ),
+                        }]));
+                    }
+                }
             }
             (None, _) => {
                 // Triv-цель: машина цели не задана — pass-through, штамп живёт.
@@ -1741,6 +1783,166 @@ fn two_kins_point(p: &Point3, src: &RtcpMode, dst: &RtcpMode) -> Point3 {
         slot(&p.a, joints.a),
         slot(&p.b, joints.b),
         slot(&p.c, joints.c),
+    )
+}
+
+/// Центр вращения стола в joint-пространстве (из формул forward: вектор
+/// v = joints − center есть part-frame TCP — part zero = центр вращения).
+/// XYZAC: (xr, dy+yr, dz+zr); XYZBC: (dx+xr, yr, dz+zr).
+fn trt_joint_center(mode: &RtcpMode) -> [f64; 3] {
+    match mode {
+        RtcpMode::XyzacTrt { params } => [
+            params.rot_point[0],
+            params.y_offset + params.rot_point[1],
+            params.z_offset + params.rot_point[2],
+        ],
+        RtcpMode::XyzbcTrt { params } => [
+            params.x_offset + params.rot_point[0],
+            params.rot_point[1],
+            params.z_offset + params.rot_point[2],
+        ],
+        _ => unreachable!("trt joint-center только для trt-режимов"),
+    }
+}
+
+/// Поворот вокруг Z на φ градусов (fixture re-mounting детали).
+fn rot_z(v: [f64; 3], phi_deg: f64) -> [f64; 3] {
+    let (s, c) = (phi_deg.to_radians().sin(), phi_deg.to_radians().cos());
+    [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
+}
+
+/// Слот-ремэп trt-кросса: XYZAC (a,c) ↔ XYZBC (b,c). Установленное значение
+/// угла переезжает в слот целевой топологии (b_B = a_A — плоскости наклона
+/// выровнены fixture-поворотом), None остаётся None (home).
+fn trt_cross_slots(
+    a: &Option<Num>,
+    b: &Option<Num>,
+    c: &Option<Num>,
+    to_xyzbc: bool,
+) -> (Option<Num>, Option<Num>, Option<Num>) {
+    let num = |v: f64| Num::new(eid_core::emitter::fmt_num(v), v);
+    if to_xyzbc {
+        // a → b; c → c; новый a = None.
+        let nb = a.as_ref().map(|n| num(n.value()));
+        (None, nb, c.clone())
+    } else {
+        // b → a; c → c; новый b = None.
+        let na = b.as_ref().map(|n| num(n.value()));
+        (na, None, c.clone())
+    }
+}
+
+/// Two-kins K2a: кросс-топология XYZAC ↔ XYZBC (обе — стол-машины trt-семьи).
+/// Математика (из оракул-формул, con-независимо): part-frame tool-axis
+/// XYZAC = (0, −sin a, −cos a) (наклон в part-+Y); XYZBC = (sin b, 0, −cos b)
+/// (наклон в part-+X) — плоскости перпендикулярны → деталь на цели
+/// монтируется повёрнутой на φ=±90° вокруг Z (fixture), после чего
+/// b_B = a_A (наклон совпадает), c_B = c_A (азимут — конвенция минимума),
+/// xyz_B = Rz(φ)·(xyz_A − center_A) + center_B (part zero = центр вращения
+/// стола; part-frame путь детали инвариантен). Носители/дуги — отказ
+/// (payload — кадры source-машины).
+fn two_kins_trt_cross(
+    ops: Vec<Op>,
+    src: &RtcpMode,
+    dst: &RtcpMode,
+    phi_deg: f64,
+) -> Result<Vec<Op>, String> {
+    let center_src = trt_joint_center(src);
+    let center_dst = trt_joint_center(dst);
+    let to_xyzbc = kins_tag(dst) == "xyzbc-trt";
+    ops.into_iter()
+        .map(|op| match op {
+            Op::Rapid {
+                start,
+                end,
+                state,
+                src: op_src,
+                sub,
+            } => {
+                let start = match start {
+                    StartPoint::Known(p) => StartPoint::Known(trt_cross_point(
+                        &p,
+                        &center_src,
+                        &center_dst,
+                        phi_deg,
+                        to_xyzbc,
+                    )),
+                    StartPoint::Unknown => StartPoint::Unknown,
+                };
+                Ok(Op::Rapid {
+                    start,
+                    end: trt_cross_point(&end, &center_src, &center_dst, phi_deg, to_xyzbc),
+                    state,
+                    src: op_src,
+                    sub,
+                })
+            }
+            Op::Linear {
+                start,
+                end,
+                state,
+                src: op_src,
+                sub,
+            } => {
+                let start = match start {
+                    StartPoint::Known(p) => StartPoint::Known(trt_cross_point(
+                        &p,
+                        &center_src,
+                        &center_dst,
+                        phi_deg,
+                        to_xyzbc,
+                    )),
+                    StartPoint::Unknown => StartPoint::Unknown,
+                };
+                Ok(Op::Linear {
+                    start,
+                    end: trt_cross_point(&end, &center_src, &center_dst, phi_deg, to_xyzbc),
+                    state,
+                    src: op_src,
+                    sub,
+                })
+            }
+            Op::Arc { .. } => Err(
+                "cross-topology transfer: дуга (ARC) геометрически непереносима \
+                 без пересечения TCP-пути в joint-полилинию (tolerance-решение, \
+                 named boundary) — сегментируйте источник на линейные ходы"
+                    .to_string(),
+            ),
+            Op::Raw { .. } => Err(
+                "cross-topology transfer: RAW-носитель в программе — payload \
+                 содержит кадры source-машины, геометрически непереносим \
+                 (named boundary — REPORT §16)"
+                    .to_string(),
+            ),
+            other => Ok(other),
+        })
+        .collect()
+}
+
+/// Точка trt-кросса: part-frame позиция (xyz − center_src) → fixture-поворот
+/// Rz(φ) → + center_dst; слоты ремэпятся (a↔b).
+fn trt_cross_point(
+    p: &Point3,
+    center_src: &[f64; 3],
+    center_dst: &[f64; 3],
+    phi_deg: f64,
+    to_xyzbc: bool,
+) -> Point3 {
+    let v = [
+        p.x.value() - center_src[0],
+        p.y.value() - center_src[1],
+        p.z.value() - center_src[2],
+    ];
+    let v_dst = rot_z(v, phi_deg);
+    let num = |v: f64| Num::new(eid_core::emitter::fmt_num(v), v);
+    let (a, b, c) = trt_cross_slots(&p.a, &p.b, &p.c, to_xyzbc);
+    Point3::pose(
+        num(v_dst[0] + center_dst[0]),
+        num(v_dst[1] + center_dst[1]),
+        num(v_dst[2] + center_dst[2]),
+        a,
+        b,
+        c,
     )
 }
 

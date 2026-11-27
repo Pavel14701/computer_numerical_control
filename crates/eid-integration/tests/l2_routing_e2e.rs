@@ -637,3 +637,194 @@ fn kinematics_cross_topology_refuses_v022() {
         other => panic!("ожидался Emit, фактический: {other:?}"),
     }
 }
+
+// ===========================================================================
+// Two-kins K2a: кросс-топология XYZAC ↔ XYZBC (trt-семья, перпендикулярные
+// плоскости наклона → re-fixture φ=±90°). Чек-лист «правило → тест»:
+//   наклон-мэппинг b_B = a_A через формулы осей (XYZAC part-frame
+//       (0,−sin a,−cos a) = Rz(−φ)·(sin b,0,−cos b) при φ=+90°) →
+//       cross_topology_trt_transfer_v022
+//   part-frame позиция: v_B = Rz(φ)·v_A (центры вращения из геометрий) →
+//       тот же тест
+//   round-trip XYZAC→XYZBC→XYZAC восстанавливает joints →
+//       cross_topology_trt_roundtrip_v022
+// ===========================================================================
+
+/// Центр вращения стола (зеркало trt_joint_center для теста).
+fn test_trt_center(p: &eid_l2::kinematics::TrtParams, xyzac: bool) -> [f64; 3] {
+    if xyzac {
+        [
+            p.rot_point[0],
+            p.y_offset + p.rot_point[1],
+            p.z_offset + p.rot_point[2],
+        ]
+    } else {
+        [
+            p.x_offset + p.rot_point[0],
+            p.rot_point[1],
+            p.z_offset + p.rot_point[2],
+        ]
+    }
+}
+
+/// K2a transfer: XYZAC (нулевая геометрия) → XYZBC (пивот −345, офсеты):
+/// наклон переезжает a→b, part-frame позиция повёрнута fixture'ом φ=+90°,
+/// mounting-инструкция в штампе.
+#[test]
+fn cross_topology_trt_transfer_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof_a = fanuc_rtcp_profile();
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof_a))
+        .expect("компиляция XYZAC");
+    let j_a = out
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("lowered op");
+
+    let mut prof_b = MachineProfile::linuxcnc_default();
+    prof_b.kinematics = eid_integration::profile::MachineKinematics::XyzbcTrt(TrtKinematics {
+        rot_point: [5.0, 0.0, -345.0],
+        y_offset: 0.0,
+        x_offset: 7.0,
+        z_offset: 25.0,
+        z_offset_tool: 110.0,
+        conventional_directions: false,
+    });
+    prof_b.validate().unwrap();
+    let second =
+        translate_text_with_profile("linuxcnc", "haas", &out.emitted, "b.nc", Some(&prof_b))
+            .expect("XYZAC→XYZBC — K2a transfer");
+    let j_b = second
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("transferred op");
+
+    // Наклон-мэппинг: b_B = a_A (плоскости выровнены fixture'ом).
+    assert_eq!(j_b.b.as_ref().map(|n| n.value()), Some(90.0), "a→b");
+    assert!(j_b.a.is_none(), "XYZBC не имеет A-слота");
+    // C в источнике не задан (нет C-слова) — None → None (home, resolved).
+    assert!(j_b.c.is_none(), "C-home переезжает как None");
+
+    // Part-frame позиция: v_B = Rz(90°)·v_A (центры из геометрий).
+    let eid_l2::interp::RtcpMode::XyzacTrt { params: pa } = prof_a.kinematics.to_rtcp_mode() else {
+        panic!()
+    };
+    let eid_l2::interp::RtcpMode::XyzbcTrt { params: pb } = prof_b.kinematics.to_rtcp_mode() else {
+        panic!()
+    };
+    let ca = test_trt_center(&pa, true);
+    let cb = test_trt_center(&pb, false);
+    let v_a = [
+        j_a.x.value() - ca[0],
+        j_a.y.value() - ca[1],
+        j_a.z.value() - ca[2],
+    ];
+    // Rz(+90°): (x,y,z) → (−y, x, z)
+    let v_b_expected = [-v_a[1], v_a[0], v_a[2]];
+    assert!(
+        (j_b.x.value() - (v_b_expected[0] + cb[0])).abs() < 1e-9
+            && (j_b.y.value() - (v_b_expected[1] + cb[1])).abs() < 1e-9
+            && (j_b.z.value() - (v_b_expected[2] + cb[2])).abs() < 1e-9,
+        "part-frame позиция через fixture: {j_b:?}"
+    );
+
+    // ОСЬ-инвариантность через формулы: part-frame tool-axis A
+    // (0,−sin a,−cos a) == Rz(−φ)·(B-table axis (sin b,0,−cos b)).
+    let d_a = [
+        0.0,
+        -(90.0f64).to_radians().sin(),
+        -(90.0f64).to_radians().cos(),
+    ];
+    let d_b_table = [
+        (90.0f64).to_radians().sin(),
+        0.0,
+        -(90.0f64).to_radians().cos(),
+    ];
+    // Rz(−90°): (x,y,z) → (y, −x, z)
+    let d_b_part = [d_b_table[1], -d_b_table[0], d_b_table[2]];
+    for i in 0..3 {
+        assert!(
+            (d_a[i] - d_b_part[i]).abs() < 1e-9,
+            "part-frame tool-axis инвариантен: {d_a:?} vs {d_b_part:?}"
+        );
+    }
+    // Mounting-инструкция в штампе.
+    let stamp = second
+        .emitted
+        .lines()
+        .find(|l| l.contains("(EID KINEMATICS:"))
+        .expect("штамп");
+    assert!(stamp.contains("MOUNT PART ROTATED +90 DEG"), "{stamp}");
+    assert!(
+        stamp.contains("cross-topology transferred from xyzac-trt"),
+        "{stamp}"
+    );
+}
+
+/// Round-trip XYZAC→XYZBC→XYZAC восстанавливает исходные joints (fixture
+/// φ=−90° обратный, слоты b→a).
+#[test]
+fn cross_topology_trt_roundtrip_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof_a = fanuc_rtcp_profile();
+    let first = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof_a))
+        .expect("компиляция XYZAC");
+    let j_a = first
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("lowered op");
+
+    let mut prof_b = MachineProfile::linuxcnc_default();
+    prof_b.kinematics = eid_integration::profile::MachineKinematics::XyzbcTrt(TrtKinematics {
+        rot_point: [5.0, 0.0, -345.0],
+        y_offset: 0.0,
+        x_offset: 7.0,
+        z_offset: 25.0,
+        z_offset_tool: 110.0,
+        conventional_directions: false,
+    });
+    prof_b.validate().unwrap();
+    let second =
+        translate_text_with_profile("linuxcnc", "haas", &first.emitted, "b.nc", Some(&prof_b))
+            .expect("K2a → XYZBC");
+
+    let back =
+        translate_text_with_profile("haas", "linuxcnc", &second.emitted, "c.nc", Some(&prof_a))
+            .expect("K2a → обратно XYZAC");
+    let j_back = back
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("round-trip op");
+    assert_eq!(
+        j_back.a.as_ref().map(|n| n.value()),
+        Some(90.0),
+        "a восстановлен"
+    );
+    assert_eq!(
+        (j_back.x.value() - j_a.x.value()).abs(),
+        0.0,
+        "xyz round-trip"
+    );
+    assert_eq!((j_back.y.value() - j_a.y.value()).abs(), 0.0);
+    assert_eq!((j_back.z.value() - j_a.z.value()).abs(), 0.0);
+}
