@@ -447,7 +447,11 @@ fn kinematics_hash_stamp_roundtrip_v022() {
         .expect("штамп геометрии в шапке")
         .to_string();
     assert!(stamp_line.contains("hash="), "{stamp_line}");
-    assert!(stamp_line.contains("XyzacTrt"), "{stamp_line}");
+    assert!(stamp_line.contains("xyzac-trt"), "{stamp_line}");
+    assert!(
+        stamp_line.contains("rot-point=0,0,0"),
+        "параметры геометрии в штампе: {stamp_line}"
+    );
     // Реингест того же файла тем же профилем — hash совпал → Ok.
     let back = translate_text_with_profile(
         "linuxcnc",
@@ -512,26 +516,123 @@ fn kinematics_hash_match_forces_passthrough_v022() {
     assert_eq!(a2, Some(90.0), "слот pass-through сохранён");
 }
 
-/// Расхождение hash (XYZAC, ДРУГАЯ геометрия — пивот −345): честный отказ
-/// (тихая порча траектории закрыта маркером). Реингест — L2-маршрут
-/// (A-слово триггерит l2_available).
+/// Two-kins K1 (same-topology different-geometry): XYZAC геометрия A
+/// (нулевая) → XYZAC геометрия B (пивот −345, z-offset 25+110) — TRANSFER:
+/// forward_A(joints_A) → TCP → inverse_B → joints_B; физическая
+/// инвариантность — forward_B(joints_B) ≡ forward_A(joints_A) (ядро как
+/// оракул в тесте); штамп переписан на геометрию цели.
 #[test]
-fn kinematics_hash_mismatch_refuses_v022() {
+fn kinematics_hash_mismatch_transfers_k1_v022() {
+    use eid_l2::kinematics::{xyzac_forward, Joints5};
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof_a = fanuc_rtcp_profile();
+    let first = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof_a))
+        .expect("компиляция с геометрией A");
+    let j_a = first
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("lowered op");
+    let other = fanuc_rtcp_profile_other_geometry();
+    let second =
+        translate_text_with_profile("linuxcnc", "haas", &first.emitted, "b.nc", Some(&other))
+            .expect("same-topology different-geometry — K1 transfer");
+    let j_b = second
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end.clone()),
+            _ => None,
+        })
+        .expect("transferred op");
+    // joints изменились (другая геометрия).
+    assert!(
+        j_a.x.value() != j_b.x.value() || j_a.z.value() != j_b.z.value(),
+        "transfer обязан переписать joints: {j_a:?} vs {j_b:?}"
+    );
+    // Слоты: A90 сохранилась (same-topology — семантика углов та же).
+    assert_eq!(j_b.a.as_ref().map(|n| n.value()), Some(90.0));
+    // ФИЗИЧЕСКАЯ ИНВАРИАНТНОСТЬ через ядро: forward_B(joints_B) ≡ forward_A(joints_A).
+    let eid_l2::interp::RtcpMode::XyzacTrt { params: pa } = prof_a.kinematics.to_rtcp_mode() else {
+        panic!()
+    };
+    let eid_l2::interp::RtcpMode::XyzacTrt { params: pb } = other.kinematics.to_rtcp_mode() else {
+        panic!()
+    };
+    let pose_a = xyzac_forward(
+        &pa,
+        &Joints5::new(j_a.x.value(), j_a.y.value(), j_a.z.value(), 90.0, 0.0),
+    );
+    let pose_b = xyzac_forward(
+        &pb,
+        &Joints5::new(j_b.x.value(), j_b.y.value(), j_b.z.value(), 90.0, 0.0),
+    );
+    assert!(
+        (pose_a.x - pose_b.x).abs() < 1e-9
+            && (pose_a.y - pose_b.y).abs() < 1e-9
+            && (pose_a.z - pose_b.z).abs() < 1e-9,
+        "мир-инвариантность: forward_A(jA)={pose_a:?} vs forward_B(jB)={pose_b:?}"
+    );
+    // Штамп переписан на геометрию цели (с её параметрами).
+    let stamp = second
+        .emitted
+        .lines()
+        .find(|l| l.contains("(EID KINEMATICS:"))
+        .expect("штамп");
+    assert!(
+        stamp.contains("rot-point=0,0,-345"),
+        "геометрия цели: {stamp}"
+    );
+    assert!(stamp.contains("transferred from xyzac-trt"), "{stamp}");
+}
+
+/// Tamper-детекция: подмена параметра в штампе (z-offset) — integrity-пин
+/// ловит (параметры обязаны пересчитываться в hash).
+#[test]
+fn kinematics_stamp_tamper_refuses_v022() {
     let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
     let prof = fanuc_rtcp_profile();
     let out = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof))
-        .expect("компиляция с геометрией A");
-    let other = fanuc_rtcp_profile_other_geometry();
-    let err = translate_text_with_profile("linuxcnc", "haas", &out.emitted, "b.nc", Some(&other))
-        .expect_err("different-geometry — отказ (тихая порча закрыта)");
+        .expect("компиляция");
+    // Подмена: z-offset 0 → 999 (hash не тронут).
+    let tampered = out.emitted.replace("z-offset=0", "z-offset=999");
+    assert!(tampered != out.emitted, "подмена применена");
+    let err = translate_text_with_profile("linuxcnc", "haas", &tampered, "b.nc", Some(&prof))
+        .expect_err("tamper — integrity-отказ");
     match &err {
-        // L1-маршрут: гейт на этапе emit (чистая реэмиссия — проверка перед
-        // выгрузкой joints на станок цели).
         TranslateError::Emit(diags) => {
-            assert_eq!(diags[0].code, ErrorCode::InvalidInput);
             let m = &diags[0].message;
-            assert!(m.contains("geometry hash mismatch"), "{m}");
-            assert!(m.contains("two-kins"), "{m}");
+            assert!(m.contains("stamp tampered"), "{m}");
+        }
+        other => panic!("ожидался Emit, фактический: {other:?}"),
+    }
+}
+
+/// Cross-topology (XYZAC → Maxkins) — named отказ (K2: семантика углов
+/// между семьями различна — part-frame tool-axis solver per семью).
+#[test]
+fn kinematics_cross_topology_refuses_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof_a = fanuc_rtcp_profile();
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof_a))
+        .expect("компиляция");
+    let mut mk = MachineProfile::fanuc_default();
+    mk.kinematics = eid_integration::profile::MachineKinematics::Maxkins(
+        eid_integration::profile::MaxkinsKinematics::default(),
+    );
+    mk.validate().unwrap();
+    let err = translate_text_with_profile("linuxcnc", "haas", &out.emitted, "b.nc", Some(&mk))
+        .expect_err("cross-topology — отказ (K2)");
+    match &err {
+        TranslateError::Emit(diags) => {
+            let m = &diags[0].message;
+            assert!(m.contains("cross-topology transfer not supported"), "{m}");
+            assert!(m.contains("two-kins K2"), "{m}");
         }
         other => panic!("ожидался Emit, фактический: {other:?}"),
     }

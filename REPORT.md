@@ -399,27 +399,37 @@ pass-through); (8) semantic_diff p3_close — слоты часть равенс
 6 топологий — предыдущие итерации. Оценка «3–4 дня» была для ПРОВОДКИ —
 она выдержана; «сделано за день» относилось бы к проводке, не к проекту.
 
-**Защита геометрии (ревью-6, `kinematics_hash` — полдня, применена
-сразу):** FNV-1a от топологии + бит-паттернов всех полей геометрии
-(eid-l2 `RtcpMode::geometry_hash`); выход lowering с активной кинематикой
-штампуется `(EID KINEMATICS: <mode> hash=…)`; L2-маршрут: совпадение hash
-→ pass-through (повторный inverse = двойное преобразование — форс Off),
-расхождение → честный отказ; L1-маршрут (реингест скомпилированного файла
-без макро-маркеров — роутинг различает через has_macro_markers:
-l2_available на одних A/B/C-словах был false-positive, L2-фронтенд модальные
-шапки несёт носителями): штамп vs кинематика профиля цели → mismatch
-отказ, match/Triv — штамп форвардится. Plain файл БЕЗ штампа —
-геометрическая идентичность не проверяема (named). Тесты: штамп-раундтрип,
-match-force-passthrough (joints 1:1), mismatch-отказ, FNV-детерминизм +
+**Защита геометрии + two-kins K1 (ревью-6/7):** FNV-1a от топологии +
+бит-паттернов всех полей геометрии (eid-l2 `RtcpMode::geometry_hash`).
+Штамп несёт **полную геометрию** (ревью-7: hash — только идентичность,
+для forward нужны параметры; integrity-пин — параметры пересчитываются
+в hash, tamper → отказ; от случайной порчи, не злого умысла — named).
+**K1 same-topology different-geometry — TRANSFER**: forward_штамп(joints)
+→ TCP-pose → inverse_цель → joints_B (op-level pass, L2-evaluator не
+нужен — реингест всегда plain-файл); слоты переписываются только у
+установленных; **физическая инвариантность forward_B(joints_B) ≡
+forward_A(joints_A)** — ядро как оракул в тесте; штамп переписывается на
+геометрию цели (`transferred from …`). Verified пара: XYZAC↔XYZAC
+(нулевая → пивот −345); остальные same-tag пары — тот же pass, per-pair
+goldens при потребности. L2-маршрут (макро-файлы): match → форс Off
+(повторный inverse = двойное преобразование), mismatch → отказ (гибрид
+неоднозначен). **K2 cross-topology — named boundary**: семантика углов
+между семьями различна (стол: tool-axis в part-frame; голова: в мире) —
+нужен per-семейный orientation-solver (1–2 недели, отдельный трек при
+спросе); Reachability/workspace — named boundary трека B. Carriers/дуги
+при transfer → отказ (payload — кадры source-машины; сегментируйте
+источник). Роутинг-фикс: has_macro_markers (l2_available на одних
+A/B/C-словах — false-positive, ломал реингест). Тесты: штамп-раундтрип с
+параметрами, K1-transfer + мир-инвариантность, tamper-отказ,
+cross-topology-отказ, match-force-passthrough, FNV-детерминизм +
 чувствительность к каждому полю.
 
 **Что L1 v0.4 НЕ решает (named):** арки под кинематикой (носители —
 сегментация отдельным tolerance-решением; арочные 5-осевые файлы всё ещё
-отказывают); кросс-топология (two-kins: source-forward + target-inverse —
-один профиль на прогон); RTCP-на-rs274 (G43.4 — motion-controller слой);
-feed в joint-space; plain файл без штампа (см. выше); same-topology
-different-geometry = ~~тихая порча~~ **закрыто hash-маркером** (выше);
-профиль обязан совпадать). Переменные/циклы — L2 (слоты осей ≠ переменные).
+отказывают); кросс-топология (K2 — orientation-solver, named выше);
+RTCP-на-rs274 (G43.4 — motion-controller слой); feed в joint-space;
+plain файл без штампа (см. выше). Переменные/циклы — L2 (слоты осей ≠
+переменные).
 
 **Поправка ревью 3 (W/U/V, «нести vs понимать»):** различие принято
 (прецедент Raw), но «generic letter-map» отвергнут КОРПУСОМ: W

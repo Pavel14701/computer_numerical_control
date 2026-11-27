@@ -31,7 +31,7 @@
 //! не меняют (semantic_diff их не видит).
 
 use eid_core::adapter::{Adapter, EmitOutput, ParseOutput};
-use eid_core::ast::{Op, PathMode, Program, SrcSpan, Units};
+use eid_core::ast::{Num, Op, PathMode, Point3, Program, SrcSpan, StartPoint, Units};
 use eid_core::diag::LimitInfo;
 use eid_core::diag::{raw_refusal, Diagnostic, ErrorCode, Stage};
 use eid_core::verify::Notice;
@@ -42,7 +42,13 @@ use eid_linuxcnc::LinuxCncAdapter;
 use std::path::Path;
 
 use crate::profile::{Limits, MachineProfile, ProfileEmissionOpts, ProgramEndStyle};
-use eid_l2::interp::L2Config;
+use eid_l2::interp::{L2Config, RtcpMode};
+use eid_l2::kinematics::Pose6;
+use eid_l2::kinematics::TrtParams;
+use eid_l2::kinematics_5axis::FiveAxisParams;
+use eid_l2::kinematics_maxkins::MaxkinsParams;
+use eid_l2::kinematics_tdr::TdrParams;
+use eid_l2::kinematics_trsrn::TrsrnParams;
 
 /// Имя канонического текстового формата EID (registry-имя EidTextAdapter).
 pub const EID_TEXT_DIALECT: &str = "eid-l1";
@@ -553,36 +559,211 @@ fn decode_hex_payload(hex: &str) -> String {
 }
 
 /// Маркер геометрии в исходном тексте (штамп lowering'а с активной
-/// кинематикой: `(EID KINEMATICS: <mode> hash=<16hex> …)`). Комментарий —
-/// контроллеры и semantic_diff его игнорируют; конвейер читает как
-/// идентичность геометрии, для которой посчитаны joint-значения.
+/// кинематикой). Комментарий — контроллеры и semantic_diff его игнорируют;
+/// конвейер читает как ПОЛНОЕ описание геометрии, для которой посчитаны
+/// joint-значения:
+/// `(EID KINEMATICS: <tag> hash=<16hex> <params…>)`.
+/// Параметры в штампе обязательны (ревью-7): hash — только идентичность,
+/// для two-kins forward нужен сам TrtParams; hash — integrity-пин
+/// (параметры пересчитываются в hash; случайная порча → отказ;
+/// осознанная подмена параметров+hash вместе — не детектируется, named).
 const KINEMATICS_STAMP_PREFIX: &str = "(EID KINEMATICS:";
 
-/// Скан штампа геометрии: (имя режима, hash) — в скобочных комментариях;
-/// первый валидный маркер (16 hex после `hash=`).
-fn scan_kinematics_stamp(src: &str) -> Option<(String, String)> {
-    let mut from = 0;
-    while let Some(i) = src[from..].find(KINEMATICS_STAMP_PREFIX) {
-        let start = from + i + KINEMATICS_STAMP_PREFIX.len();
-        let end = start + src[start..].find(')').unwrap_or(src.len() - start);
-        let inner = &src[start..end];
-        let name = inner
-            .split_whitespace()
-            .next()
-            .unwrap_or("unknown")
-            .to_string();
-        if let Some(k) = inner.find("hash=") {
-            let hex: String = inner[k + 5..]
-                .chars()
-                .take_while(|c| c.is_ascii_hexdigit())
-                .collect();
-            if hex.len() == 16 {
-                return Some((name, hex));
-            }
-        }
-        from = end;
+/// Канонический тег топологии (совпадает с TOML-именем MachineKinematics).
+fn kins_tag(mode: &RtcpMode) -> &'static str {
+    match mode {
+        RtcpMode::Off => "off",
+        RtcpMode::XyzacTrt { .. } => "xyzac-trt",
+        RtcpMode::XyzbcTrt { .. } => "xyzbc-trt",
+        RtcpMode::XyzabTdr { .. } => "xyzab-tdr",
+        RtcpMode::Trsrn { .. } => "trsrn",
+        RtcpMode::Maxkins { .. } => "maxkins",
+        RtcpMode::FiveAxis { .. } => "five-axis",
     }
-    None
+}
+
+/// Хвост штампа — сериализация параметров геометрии (f64 через Display —
+/// Ryū short-round-trip: parse восстанавливает биты точно).
+fn stamp_tail(mode: &RtcpMode) -> String {
+    let f = |v: f64| format!("{v}");
+    match mode {
+        RtcpMode::Off => String::new(),
+        RtcpMode::XyzacTrt { params } | RtcpMode::XyzbcTrt { params } => format!(
+            "rot-point={},{},{} y-offset={} x-offset={} z-offset={} con={}",
+            f(params.rot_point[0]),
+            f(params.rot_point[1]),
+            f(params.rot_point[2]),
+            f(params.y_offset),
+            f(params.x_offset),
+            f(params.z_offset),
+            params.conventional
+        ),
+        RtcpMode::XyzabTdr { params } => format!(
+            "rot-point={},{},{} x-offset={} z-offset={} tool-offset-z={}",
+            f(params.rot_point[0]),
+            f(params.rot_point[1]),
+            f(params.rot_point[2]),
+            f(params.x_offset),
+            f(params.z_offset),
+            f(params.tool_offset_z)
+        ),
+        RtcpMode::Trsrn { params } => format!(
+            "nut-angle={} y-pivot={} z-pivot={} x-offset={} y-offset={} \
+             y-rot-axis={} z-rot-axis={} tool-offset-z={}",
+            f(params.nut_angle),
+            f(params.y_pivot),
+            f(params.z_pivot),
+            f(params.x_offset),
+            f(params.y_offset),
+            f(params.y_rot_axis),
+            f(params.z_rot_axis),
+            f(params.tool_offset_z)
+        ),
+        RtcpMode::Maxkins { params } => format!(
+            "pivot-length={} tool-length={} con={}",
+            f(params.pivot_length),
+            f(params.tool_length),
+            params.conventional
+        ),
+        RtcpMode::FiveAxis { params } => format!(
+            "pivot-length={} tool-length={}",
+            f(params.pivot_length),
+            f(params.tool_length)
+        ),
+    }
+}
+
+/// Реконструкция RtcpMode из тега + kv-хвоста штампа. None — неизвестный
+/// тег/битые поля (вызывающая сторона отказывает — неразбираемый штамп
+/// не молча игнорируется).
+fn mode_from_stamp(tag: &str, kv: &str) -> Option<RtcpMode> {
+    let get = |key: &str| -> Option<f64> {
+        kv.split_whitespace().find_map(|tok| {
+            tok.strip_prefix(key)
+                .and_then(|rest| rest.strip_prefix('='))
+                .and_then(|v| v.parse::<f64>().ok())
+        })
+    };
+    let get_bool = |key: &str| -> Option<bool> {
+        kv.split_whitespace().find_map(|tok| {
+            tok.strip_prefix(key)
+                .and_then(|rest| rest.strip_prefix('='))
+                .and_then(|v| match v {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                })
+        })
+    };
+    let point = |key: &str| -> Option<[f64; 3]> {
+        let tok = kv
+            .split_whitespace()
+            .find(|t| t.starts_with(key))?
+            .strip_prefix(key)?
+            .strip_prefix('=')?;
+        let mut it = tok.split(',');
+        Some([
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+            it.next()?.parse().ok()?,
+        ])
+    };
+    match tag {
+        "xyzac-trt" | "xyzbc-trt" => {
+            let params = TrtParams::new(
+                point("rot-point")?,
+                get("y-offset")?,
+                get("x-offset")?,
+                get("z-offset")?,
+                get_bool("con")?,
+            );
+            Some(if tag == "xyzac-trt" {
+                RtcpMode::XyzacTrt { params }
+            } else {
+                RtcpMode::XyzbcTrt { params }
+            })
+        }
+        "xyzab-tdr" => Some(RtcpMode::XyzabTdr {
+            params: TdrParams::new(
+                point("rot-point")?,
+                get("x-offset")?,
+                get("z-offset")?,
+                get("tool-offset-z")?,
+            ),
+        }),
+        "trsrn" => Some(RtcpMode::Trsrn {
+            params: TrsrnParams {
+                nut_angle: get("nut-angle")?,
+                y_pivot: get("y-pivot")?,
+                z_pivot: get("z-pivot")?,
+                x_offset: get("x-offset")?,
+                y_offset: get("y-offset")?,
+                y_rot_axis: get("y-rot-axis")?,
+                z_rot_axis: get("z-rot-axis")?,
+                tool_offset_z: get("tool-offset-z")?,
+            },
+        }),
+        "maxkins" => Some(RtcpMode::Maxkins {
+            params: MaxkinsParams {
+                pivot_length: get("pivot-length")?,
+                tool_length: get("tool-length")?,
+                conventional: get_bool("con")?,
+            },
+        }),
+        "five-axis" => Some(RtcpMode::FiveAxis {
+            params: FiveAxisParams {
+                pivot_length: get("pivot-length")?,
+                tool_length: get("tool-length")?,
+            },
+        }),
+        _ => None,
+    }
+}
+
+/// Скан штампа с integrity-пином: Ok(Some((mode, hash))) — валидный штамп
+/// (параметры пересчитаны в hash — совпал); Ok(None) — штампа нет; Err —
+/// штамп есть, но неразбираем/подменён (честный отказ, не молча-игнор).
+fn scan_kinematics_stamp(src: &str) -> Result<Option<(RtcpMode, String)>, String> {
+    // Первый штамп в тексте (все пути внутри возвращают — цикл не нужен).
+    if let Some(i) = src.find(KINEMATICS_STAMP_PREFIX) {
+        let start = i + KINEMATICS_STAMP_PREFIX.len();
+        let end = start + src[start..].find(')').unwrap_or(src.len() - start);
+        let inner = src[start..end].trim();
+        let mut toks = inner.split_whitespace();
+        let tag = toks.next().unwrap_or("").to_string();
+        let hash = toks
+            .find_map(|t| t.strip_prefix("hash="))
+            .unwrap_or("")
+            .to_string();
+        let tail = inner
+            .find("hash=")
+            .map(|k| {
+                let rest = &inner[k..];
+                // пропустить hash=xxxx до whitespace
+                let after = rest.find(' ').map(|s| &rest[s..]).unwrap_or("");
+                after.trim().to_string()
+            })
+            .unwrap_or_default();
+        if hash.len() != 16 {
+            return Err(format!(
+                "kinematics stamp unparsable: «{inner}» (hash= 16 hex)"
+            ));
+        }
+        let Some(mode) = mode_from_stamp(&tag, &tail) else {
+            return Err(format!(
+                "kinematics stamp unparsable: tag `{tag}` неизвестен или параметры битые"
+            ));
+        };
+        if mode.geometry_hash().as_deref() != Some(hash.as_str()) {
+            return Err(format!(
+                "kinematics stamp tampered: параметры дают hash={}, штамп заявляет hash={hash} \
+                 (integrity-пин; случайная порча — перекомпилируйте источник)",
+                mode.geometry_hash().unwrap_or_default()
+            ));
+        }
+        return Ok(Some((mode, hash)));
+    }
+    Ok(None)
 }
 
 /// Есть ли в тексте МАКРО-маркеры помимо ротационных слов (♯, O-word+keyword,
@@ -743,40 +924,78 @@ fn translate_l2_route(
     //     Выход штампуется тем же hash (идемпотентно: штамп живёт через хопы
     //       пайплайна EID). Под Off-профилем (Triv) hash не проверяется и
     //       не ставится — геометрия не применялась.
-    let mut stamp: Option<(String, String)> = None; // (mode name, hash)
+    let mut stamp: Option<String> = None; // готовая строка штампа
     if kins_active {
         let name = cfg.rtcp_mode.name();
         let hash = cfg
             .rtcp_mode
             .geometry_hash()
             .expect("kins_active ⇒ режим с геометрией");
-        if let Some((_, src_hash)) = scan_kinematics_stamp(src) {
-            if src_hash != hash {
+        match scan_kinematics_stamp(src) {
+            Err(tamper) => {
                 return Err(TranslateError::Parse(vec![Diagnostic {
                     code: ErrorCode::InvalidInput,
                     stage: Stage::Parse,
                     src: None,
                     options: Vec::new(),
                     limit: None,
-                    message: format!(
-                        "geometry hash mismatch: источник скомпилирован для \
-                         кинематики hash={src_hash}, активный профиль даёт \
-                         hash={hash} ({name}) — joint-значения специфичны для \
-                         геометрии, обратный inverse чужой геометрии тихо \
-                         испортил бы траекторию (same-topology different-geometry \
-                         закрыт hash-маркером; кросс-геометрия/кросс-топология \
-                         = two-kins, named boundary — REPORT §16)"
-                    ),
-                }]));
+                    message: tamper,
+                }]))
             }
-            // Совпал: значения уже joints этой геометрии — pass-through.
-            cfg.rtcp_mode = eid_l2::interp::RtcpMode::Off;
+            Ok(Some((_, src_hash))) => {
+                if src_hash != hash {
+                    // Макро-файл со штампом чужой геометрии — неоднозначный
+                    // гибрид (TCP-семантика vs уже-joints): K1-transfer здесь
+                    // не делается (см. L1-маршрут), честный отказ.
+                    return Err(TranslateError::Parse(vec![Diagnostic {
+                        code: ErrorCode::InvalidInput,
+                        stage: Stage::Parse,
+                        src: None,
+                        options: Vec::new(),
+                        limit: None,
+                        message: format!(
+                            "geometry hash mismatch: источник скомпилирован для \
+                             кинематики hash={src_hash}, активный профиль даёт \
+                             hash={hash} ({name}) — макро-файл со штампом чужой \
+                             геометрии неоднозначен (TCP-семантика или уже-joints); \
+                             cross-geometry transfer выполняется на plain-файлах \
+                             через L1-маршрут (two-kins K1, REPORT §16)"
+                        ),
+                    }]));
+                }
+                // Совпал: значения уже joints этой геометрии — pass-through.
+                cfg.rtcp_mode = eid_l2::interp::RtcpMode::Off;
+            }
+            Ok(None) => {}
         }
-        stamp = Some((name.to_string(), hash));
-    } else if let Some((sname, shash)) = scan_kinematics_stamp(src) {
-        // Off-профиль: геометрия не применялась, но штамп источника обязан
-        // жить дальше (маркер идемпотентно переезжает в выход).
-        stamp = Some((sname, shash));
+        stamp = Some(format!(
+            "(EID KINEMATICS: {} hash={hash} {} — xyz/rotary values are machine joints for this geometry only)",
+            kins_tag(&cfg.rtcp_mode),
+            stamp_tail(&cfg.rtcp_mode)
+        ));
+    } else {
+        // Off-профиль: tampered штамп всё равно отказ (не молча-игнор),
+        // валидный — форвардится в выход.
+        match scan_kinematics_stamp(src) {
+            Err(tamper) => {
+                return Err(TranslateError::Parse(vec![Diagnostic {
+                    code: ErrorCode::InvalidInput,
+                    stage: Stage::Parse,
+                    src: None,
+                    options: Vec::new(),
+                    limit: None,
+                    message: tamper,
+                }]))
+            }
+            Ok(Some((src_mode, src_hash))) => {
+                stamp = Some(format!(
+                    "(EID KINEMATICS: {} hash={src_hash} {} — xyz/rotary values are machine joints for this geometry only)",
+                    kins_tag(&src_mode),
+                    stamp_tail(&src_mode)
+                ));
+            }
+            Ok(None) => {}
+        }
     }
 
     // 3. Pass-1 lowering (бюджеты L2Config; RTCP-режим — из профиля или
@@ -900,10 +1119,9 @@ fn translate_l2_route(
     // геометрии hash — идемпотентный маркер для следующего хопа EID-пайплайна
     // (совпадение → pass-through; расхождение → честный отказ). Контроллеры
     // и semantic_diff комментарии игнорируют.
-    if let Some((name, hash)) = &stamp {
-        head.push_str(&format!(
-            "(EID KINEMATICS: {name} hash={hash} — xyz/rotary values are machine joints for this geometry only)\n"
-        ));
+    if let Some(line) = &stamp {
+        head.push_str(line);
+        head.push('\n');
     }
     for note in &rtcp_marker_notes {
         head.push_str(&format!(
@@ -1246,16 +1464,80 @@ pub fn translate_text_with_profile(
         return Err(TranslateError::Emit(vec![raw_refusal(&spans)]));
     }
 
-    // Защита геометрии L1-маршрута (ревью-6): штамп в источнике говорит
-    // «значения — joints геометрии hash=H»; профиль с кинематикой описывает
-    // ЦЕЛЕВОЙ станок (L1-адаптеры кинематику не применяют — чистая
-    // реэмиссия) → hash обязан совпадать, иначе тихая порча на станке цели.
-    // Профиль Triv/без [kinematics] — проверка неприменима (машина цели
-    // не задана — ответственность пользователя, named в README).
-    let src_stamp = scan_kinematics_stamp(src);
-    if let (Some((sname, shash)), Some(profile)) = (&src_stamp, profile) {
-        if let Some(want_hash) = profile.kinematics.to_rtcp_mode().geometry_hash() {
-            if *shash != want_hash {
+    // Геометрия L1-маршрута (ревью-6 + two-kins K1): штамп в источнике
+    // говорит «значения — joints геометрии (параметры в штампе, hash —
+    // integrity-пин)». Профиль с кинематикой описывает ЦЕЛЕВОЙ станок
+    // (L1-адаптеры сами кинематику не применяют):
+    //   * tampered/неразбираемый штамп → отказ (не молча-игнор);
+    //   * hash совпал → pass-through 1:1 (уже joints цели);
+    //   * hash различается, ТАГ тот же → **two-kins K1 transfer**:
+    //     forward_штамп(joints) → TCP-pose → inverse_цель → новые joints
+    //     (same-topology: семантика углов идентична, проходят насквозь;
+    //     физическая инвариантность — forward_B(joints_B) ≡ forward_A(joints_A),
+    //     проверяется тестом через ядро);
+    //   * ТЕГ другой (кросс-топология) → честный отказ: семантика углов
+    //     между семьями различна (стол↔голова — part-frame tool-axis solver
+    //     per семью) — two-kins K2, named boundary, REPORT §16;
+    //   * носители/дуги в программе при transfer → отказ (payload — кадры
+    //     source-машины, геометрически непереносимы);
+    //   * профиль Triv → цель не задана: pass-through, штамп форвардится
+    //     (проверка неприменима — named в README).
+    let src_stamp = match scan_kinematics_stamp(src) {
+        Err(tamper) => {
+            return Err(TranslateError::Emit(vec![Diagnostic {
+                code: ErrorCode::InvalidInput,
+                stage: Stage::Emit,
+                src: None,
+                options: Vec::new(),
+                limit: None,
+                message: tamper,
+            }]));
+        }
+        Ok(other) => other,
+    };
+    let mut program = program;
+    let mut stamp_head: Option<String> = None;
+    if let Some((src_mode, src_hash)) = &src_stamp {
+        let target_mode = profile
+            .map(|p| p.kinematics.to_rtcp_mode())
+            .unwrap_or(RtcpMode::Off);
+        let target_hash = target_mode.geometry_hash();
+        match (&target_hash, &src_hash.as_str()) {
+            (Some(want), h) if want == h => {
+                // Совпал: 1:1, штамп форвардится (геометрия штампа источника).
+                stamp_head = Some(format!(
+                    "(EID KINEMATICS: {} hash={src_hash} {} — xyz/rotary values are machine joints for this geometry only)",
+                    kins_tag(src_mode),
+                    stamp_tail(src_mode)
+                ));
+            }
+            (Some(_), _) if kins_tag(src_mode) == kins_tag(&target_mode) => {
+                // K1 two-kins: same-topology different-geometry — TRANSFER.
+                let transferred = two_kins_same_topology(
+                    std::mem::take(&mut program.ops),
+                    src_mode,
+                    &target_mode,
+                )
+                .map_err(|msg| {
+                    TranslateError::Emit(vec![Diagnostic {
+                        code: ErrorCode::InvalidInput,
+                        stage: Stage::Emit,
+                        src: None,
+                        options: Vec::new(),
+                        limit: None,
+                        message: msg,
+                    }])
+                })?;
+                program.ops = transferred;
+                stamp_head = Some(format!(
+                    "(EID KINEMATICS: {} hash={} {} — xyz/rotary values are machine joints for this geometry only; transferred from {} hash={src_hash})",
+                    kins_tag(&target_mode),
+                    target_hash.unwrap(),
+                    stamp_tail(&target_mode),
+                    kins_tag(src_mode)
+                ));
+            }
+            (Some(_), _) => {
                 return Err(TranslateError::Emit(vec![Diagnostic {
                     code: ErrorCode::InvalidInput,
                     stage: Stage::Emit,
@@ -1263,14 +1545,23 @@ pub fn translate_text_with_profile(
                     options: Vec::new(),
                     limit: None,
                     message: format!(
-                        "geometry hash mismatch: источник содержит joints для \
-                         кинематики hash={shash} ({sname}), профиль цели даёт \
-                         hash={want_hash} — L1-маршрут не пересчитывает значения \
-                         (чистая реэмиссия); загрузка этих joints на станок \
-                         другой геометрии тихо испортила бы траекторию \
-                         (кросс-геометрия = two-kins, named boundary — REPORT §16)"
+                        "cross-topology transfer not supported: источник joints \
+                         для {} (hash={src_hash}), профиль цели — {} — семантика \
+                         углов между семьями различна (стол↔голова: part-frame \
+                         tool-axis solver per семью); two-kins K2 — named boundary, \
+                         REPORT §16",
+                        kins_tag(src_mode),
+                        kins_tag(&target_mode)
                     ),
                 }]));
+            }
+            (None, _) => {
+                // Triv-цель: машина цели не задана — pass-through, штамп живёт.
+                stamp_head = Some(format!(
+                    "(EID KINEMATICS: {} hash={src_hash} {} — xyz/rotary values are machine joints for this geometry only)",
+                    kins_tag(src_mode),
+                    stamp_tail(src_mode)
+                ));
             }
         }
     }
@@ -1285,10 +1576,9 @@ pub fn translate_text_with_profile(
         head.push_str(GENERATED_PREAMBLE);
         head.push('\n');
     }
-    if let Some((sname, shash)) = &src_stamp {
-        head.push_str(&format!(
-            "(EID KINEMATICS: {sname} hash={shash} — xyz/rotary values are machine joints for this geometry only)\n"
-        ));
+    if let Some(stamp_line) = &stamp_head {
+        head.push_str(stamp_line);
+        head.push('\n');
     }
     let emitted = format!("{head}{}", target_out.text);
     let emit_warnings = target_out.diagnostics;
@@ -1304,6 +1594,215 @@ pub fn translate_text_with_profile(
         q3_warnings,
         l2_lowering_diagnostics: Vec::new(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Two-kins K1 (same-topology different-geometry): op-level pass.
+// Контракт (решение ревью-7): forward_штамп → TCP-pose → inverse_цель —
+// углы проходят насквозь (same-tag: семантика углов идентична), xyz и
+// слоты переписываются. Носители/дуги — отказ (payload геометрически
+// непереносим). Кросс-топология — K2 (named), сюда не попадает.
+// ---------------------------------------------------------------------------
+
+/// Джоинты топологии → Pose6 (неиспользуемые оси = 0.0).
+fn kins_forward_pose(mode: &RtcpMode, j: &Pose6) -> Pose6 {
+    use eid_l2::kinematics::{xyzac_forward, xyzbc_forward, Joints5, JointsBC};
+    use eid_l2::kinematics_5axis::{fiveaxis_forward, JointsXyzbcw};
+    use eid_l2::kinematics_maxkins::{maxkins_forward, JointsMaxkins};
+    use eid_l2::kinematics_tdr::{tdr_forward, JointsTdr};
+    use eid_l2::kinematics_trsrn::{trsrn_tcp_forward, JointsTsrn};
+    match mode {
+        RtcpMode::Off => *j,
+        RtcpMode::XyzacTrt { params } => {
+            xyzac_forward(params, &Joints5::new(j.x, j.y, j.z, j.a, j.c))
+        }
+        RtcpMode::XyzbcTrt { params } => {
+            xyzbc_forward(params, &JointsBC::new(j.x, j.y, j.z, j.b, j.c))
+        }
+        RtcpMode::XyzabTdr { params } => {
+            tdr_forward(params, &JointsTdr::new(j.x, j.y, j.z, j.a, j.b))
+        }
+        RtcpMode::Trsrn { params } => {
+            trsrn_tcp_forward(params, &JointsTsrn::new(j.x, j.y, j.z, j.a, j.b, j.c))
+        }
+        RtcpMode::Maxkins { params } => {
+            let pose = maxkins_forward(
+                params,
+                &JointsMaxkins {
+                    x: j.x,
+                    y: j.y,
+                    z: j.z,
+                    a: j.a,
+                    b: j.b,
+                    c: j.c,
+                    u: 0.0,
+                    v: 0.0,
+                    w: 0.0,
+                },
+            );
+            Pose6::new(pose.x, pose.y, pose.z, pose.a, pose.b, pose.c)
+        }
+        RtcpMode::FiveAxis { params } => {
+            let pose = fiveaxis_forward(
+                params,
+                &JointsXyzbcw {
+                    x: j.x,
+                    y: j.y,
+                    z: j.z,
+                    b: j.b,
+                    c: j.c,
+                    w: 0.0,
+                },
+            );
+            Pose6::new(pose.x, pose.y, pose.z, 0.0, pose.b, pose.c)
+        }
+    }
+}
+
+/// TCP-pose → джоинты целевой топологии → Pose6 (неиспользуемые оси = 0.0).
+fn kins_inverse_pose(mode: &RtcpMode, pose: &Pose6) -> Pose6 {
+    use eid_l2::kinematics::{xyzac_inverse, xyzbc_inverse};
+    use eid_l2::kinematics_5axis::{fiveaxis_inverse, PoseXyzbcw};
+    use eid_l2::kinematics_maxkins::{maxkins_inverse, PoseMaxkins};
+    use eid_l2::kinematics_tdr::tdr_inverse;
+    use eid_l2::kinematics_trsrn::trsrn_tcp_inverse;
+    match mode {
+        RtcpMode::Off => *pose,
+        RtcpMode::XyzacTrt { params } => {
+            let j = xyzac_inverse(params, pose);
+            Pose6::new(j.x, j.y, j.z, j.a, 0.0, j.c)
+        }
+        RtcpMode::XyzbcTrt { params } => {
+            let j = xyzbc_inverse(params, pose);
+            Pose6::new(j.x, j.y, j.z, 0.0, j.b, j.c)
+        }
+        RtcpMode::XyzabTdr { params } => {
+            let j = tdr_inverse(params, pose);
+            Pose6::new(j.x, j.y, j.z, j.a, j.b, 0.0)
+        }
+        RtcpMode::Trsrn { params } => {
+            let j = trsrn_tcp_inverse(params, pose);
+            Pose6::new(j.x, j.y, j.z, j.a, j.b, j.c)
+        }
+        RtcpMode::Maxkins { params } => {
+            let j = maxkins_inverse(
+                params,
+                &PoseMaxkins {
+                    x: pose.x,
+                    y: pose.y,
+                    z: pose.z,
+                    a: pose.a,
+                    b: pose.b,
+                    c: pose.c,
+                    u: 0.0,
+                    v: 0.0,
+                    w: 0.0,
+                },
+            );
+            Pose6::new(j.x, j.y, j.z, j.a, j.b, j.c)
+        }
+        RtcpMode::FiveAxis { params } => {
+            let j = fiveaxis_inverse(
+                params,
+                &PoseXyzbcw {
+                    x: pose.x,
+                    y: pose.y,
+                    z: pose.z,
+                    b: pose.b,
+                    c: pose.c,
+                    w: 0.0,
+                },
+            );
+            Pose6::new(j.x, j.y, j.z, 0.0, j.b, j.c)
+        }
+    }
+}
+
+/// Точка (xyz + слоты) под two-kins: forward_штамп → inverse_цель; слоты
+/// переписываются ТОЛЬКО у установленных (Some — resolved-значение, None —
+/// угол не установлен в программе — остаётся None: машина цели тоже home).
+fn two_kins_point(p: &Point3, src: &RtcpMode, dst: &RtcpMode) -> Point3 {
+    let j = Pose6::new(
+        p.x.value(),
+        p.y.value(),
+        p.z.value(),
+        p.a.as_ref().map(|n| n.value()).unwrap_or(0.0),
+        p.b.as_ref().map(|n| n.value()).unwrap_or(0.0),
+        p.c.as_ref().map(|n| n.value()).unwrap_or(0.0),
+    );
+    let pose = kins_forward_pose(src, &j);
+    let joints = kins_inverse_pose(dst, &pose);
+    let num = |v: f64| Num::new(eid_core::emitter::fmt_num(v), v);
+    let slot = |was: &Option<Num>, v: f64| was.as_ref().map(|_| num(v));
+    Point3::pose(
+        num(joints.x),
+        num(joints.y),
+        num(joints.z),
+        slot(&p.a, joints.a),
+        slot(&p.b, joints.b),
+        slot(&p.c, joints.c),
+    )
+}
+
+/// Two-kins K1 pass: same-topology different-geometry. Носители/дуги —
+/// отказ (payload — кадры source-машины, геометрически непереносим;
+/// named: «сегментируйте источник»).
+fn two_kins_same_topology(ops: Vec<Op>, src: &RtcpMode, dst: &RtcpMode) -> Result<Vec<Op>, String> {
+    ops.into_iter()
+        .map(|op| match op {
+            Op::Rapid {
+                start,
+                end,
+                state,
+                src: op_src,
+                sub,
+            } => {
+                let start = match start {
+                    StartPoint::Known(p) => StartPoint::Known(two_kins_point(&p, src, dst)),
+                    StartPoint::Unknown => StartPoint::Unknown,
+                };
+                Ok(Op::Rapid {
+                    start,
+                    end: two_kins_point(&end, src, dst),
+                    state,
+                    src: op_src,
+                    sub,
+                })
+            }
+            Op::Linear {
+                start,
+                end,
+                state,
+                src: op_src,
+                sub,
+            } => {
+                let start = match start {
+                    StartPoint::Known(p) => StartPoint::Known(two_kins_point(&p, src, dst)),
+                    StartPoint::Unknown => StartPoint::Unknown,
+                };
+                Ok(Op::Linear {
+                    start,
+                    end: two_kins_point(&end, src, dst),
+                    state,
+                    src: op_src,
+                    sub,
+                })
+            }
+            Op::Arc { .. } => Err(
+                "cross-geometry transfer: дуга (ARC) геометрически непереносима \
+                 без пересечения TCP-пути в joint-полилинию (tolerance-решение, \
+                 named boundary) — сегментируйте источник на линейные ходы"
+                    .to_string(),
+            ),
+            Op::Raw { .. } => Err(
+                "cross-geometry transfer: RAW-носитель в программе — payload \
+                 содержит кадры source-машины (ротационные дуги/state-only), \
+                 геометрически непереносим (named boundary — REPORT §16)"
+                    .to_string(),
+            ),
+            other => Ok(other),
+        })
+        .collect()
 }
 
 /// Файл → файл (CLI-путь, критерий #9): чтение, конвейер, запись. Профиль не

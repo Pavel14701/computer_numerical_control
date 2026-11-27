@@ -70,17 +70,16 @@ angle-solver'ом). Независимые верификации не от C-к
 | Программы с ротационными ходами → цель **без** осей в словаре (grbl-1.1) | ❌ emit-гейт legality (E_UNSUPPORTED_SYNTAX `rotary_slots_outside_grbl_dictionary`) | контроллер физически не имеет оси — честный отказ typed-условием, не тихая потеря |
 | Полный 4/5-осевой lowering (в т.ч. с rotary) | ⚙️ library-only | `eid_l2::lowering::lower(&program, cfg)` с `MachineProfile::l2_lowering_config()` — круговые инварианты ядер; e2e `kinematics_lowering_e2e.rs`; НЕ через CLI |
 
-Практический смысл (после L1 v0.4): **«перенести деталь с 5-осевика на
-5-осевик» работает ТОЛЬКО same-topology same-geometry** (XYZAC→XYZAC,
-XYZBC→XYZBC — один и тот же пивот/офсеты). **Cross-topology** (XYZAC→
-XYZBC, head-head→trt) — **named boundary, НЕ работает**: inverse другой
-топологии даёт другие joint-значения, а слоты не знают, чьим inverse они
-посчитаны — нужен two-kins (source-forward → ориентация → target-inverse),
-не начат. **Different-geometry same-topology закрыт hash-маркером**:
-выход lowering'а с активной кинематикой штампуется
-`(EID KINEMATICS: <mode> hash=<16hex>)`; реингест с профилем другой
-геометрии → честный отказ (без маркера — plain цеховой файл, geometric
-id разрыв не ловим, ответственность пользователя — named).
+Практический смысл (после L1 v0.4 + two-kins K1): **«перенести деталь с
+5-осевика на 5-осевик» same-topology работает при ЛЮБОЙ геометрии** —
+выход lowering'а штампуется полной геометрией `(EID KINEMATICS: <tag>
+hash=<16hex> <параметры>)`; реингест с профилем другой геометрии того же
+тега → **two-kins K1 transfer** (forward_штамп → TCP → inverse_цель —
+мир-инвариантность проверяется ядром в тесте). **Cross-topology**
+(XYZAC→XYZBC, head-head→trt) — **named boundary K2, НЕ работает**:
+семантика углов между семьями различна (стол: tool-axis в part-frame;
+голова: в мире) — нужен per-семейный orientation-solver (1–2 недели,
+отдельный трек). Reachability (workspace) — named boundary трека B.
 
 ### Почему так: историческая граница Point3 (была — закрыта v0.4)
 
@@ -107,15 +106,17 @@ Point3**. Кинематика готова; не подключена **тра�
 | L2→dialect напрямую («перевод поверх») | второй маршрут эмиссии поверх lowering | **проиграл L1-слотам**: два эмиттера на диалект, две verification story, intermediate без текста; формат a/b/c из emit_l2 остаётся переиспользуемым |
 | L1.5/L3 | промежуточный уровень с rotary | не выбран — новый слой, самый дорогой |
 
-**Границы после L1 v0.4 — точная таблица (ревью-6):**
+**Границы после L1 v0.4 + two-kins K1 — точная таблица (ревью-6/7):**
 
 | Что | Статус |
 |---|---|
 | Same-topology 5→5 через CLI (та же геометрия) | ✅ **работает**, verified (`xyzac_inverse`-оракул при A90 в тесте) |
-| Cross-topology (XYZAC→XYZBC, head-head→trt) | ❌ **named boundary**, не работает — нужен two-kins (не начат); same-topology different-geometry **отказ по hash** |
-| Different-geometry same-topology | ✅ **закрыто hash-маркером** (FNV-1a от геометрии; штамп в выходе, реингест с чужой геометрией → отказ) |
+| Same-topology **different-geometry** (другой пивот/офсеты) | ✅ **K1 two-kins TRANSFER**: forward_A → TCP → inverse_B (штамп несёт полную геометрию; физическая инвариантность forward_B(joints_B) ≡ forward_A(joints_A) — ядро как оракул в тесте; verified пара: XYZAC↔XYZAC, остальные same-tag пары — тот же pass, per-pair goldens при потребности) |
+| Cross-topology (XYZAC→XYZBC, head-head→trt) | ❌ **named boundary (K2)** — семантика углов между семьями различна (стол↔голова: tool-axis в part-frame против мира), нужен per-семейный orientation-solver; честная оценка 1–2 недели |
 | RTCP-на-rs274 | ❌ **named boundary** — G43.4 motion-controller слой, не interp |
-| Арки под кинематикой | ⚠️ **carriers** (сегментация в joint-полилинию — отдельное tolerance-решение) |
+| Арки под кинематикой | ⚠️ **carriers**; при K1-transfer носители/дуги → **отказ** (payload — кадры source-машины, сегментируйте источник) |
+| Tamper-защита штампа | ⚠️ **от случайной порчи** (integrity-пин: параметры пересчитываются в hash); осознанная подмена параметров+hash вместе — не детектируется |
+| Reachability (workspace станка) | ❌ **named boundary (трек B)** — out-of-workspace pose не детектируется, ответственность пользователя; workspace в профиле — при спросе |
 | Физический станок | ❌ **не тестировался** (круговые инварианты = само-согласованность, не эквивалентность контроллеру) |
 | Plain цеховой файл БЕЗ штампа (joints из другого постпроцессора) | ⚠️ геометрическая идентичность не проверяема — ответственность пользователя (named) |
 
