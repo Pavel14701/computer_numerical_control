@@ -122,21 +122,10 @@ fn macro_fragment_cross_dialect_refuses_raw_rule() {
     }
 }
 
-/// Ротационное слово под Off-профилем (Triv) — носитель lowering →
-/// кросс-диалект честно отказывает (§8.2; компиляции не было).
-#[test]
-fn rotary_carrier_under_off_cross_refuses() {
-    let src = "G21 G90\nG0 A90.\nM30\n";
-    let err = translate_text_with_profile("fanuc", "linuxcnc", src, "rot.ngc", None)
-        .expect_err("ротационный носитель под Off кросс-диалект — отказ");
-    match &err {
-        TranslateError::Emit(diags) => {
-            assert_eq!(diags[0].code, ErrorCode::RawUntranslatable);
-            assert!(diags[0].message.contains("RAW op(s)"), "{diags:?}");
-        }
-        other => panic!("ожидался Emit/RawUntranslatable, фактический: {other:?}"),
-    }
-}
+// (СНЯТО — L1 v0.4, SPEC v0.22) Тест `rotary_carrier_under_off_cross_refuses`
+// флипнулся в успех: ротационный кадр под Off понижается pass-through-опом
+// со слотами — кросс-диалект легален. Покрытие переехало в
+// `rotary_motion_under_off_lowers_passthrough_slots`.
 
 /// ФЛАГМАН разморозки (12.5.4): 3-осевой TCP на 5-осевой машине — Fanuc
 /// Macro B + G43.4 + TCP-ход (без ротационных слов) под XYZAC trt-профилем
@@ -211,12 +200,13 @@ fn rtcp_profile_compiles_tcp_to_joints_cross_dialect() {
     );
 }
 
-/// ИМЕНОВАННАЯ граница (12.5.4-роут): ротационные ходы под активной
-/// кинематикой — честный отказ (L1-грамматика v0.3 без слота A/B/C:
-/// эмиссия потеряла бы движение ротационной оси; полный-TCP lowering с
-/// круговыми инвариантами доступен библиотечным lower()).
+/// ФЛАГМАН L1 v0.4 (SPEC v0.22; реверс ревью-4): ротационные ходы под
+/// активной кинематикой — END-TO-END: TCP→joints inverse + resolved слоты
+/// (программный A90 = pass-through joint), G43.4 → комментарий шапки,
+/// кросс-диалект linuxcnc (ось в словаре). Бывший именованный отказ
+/// (гейт «L1-грамматика без слота A/B/C») снят слотами.
 #[test]
-fn rotary_motion_under_kinematics_refuses_named_boundary() {
+fn rotary_motion_under_kinematics_end_to_end_v022() {
     let src = concat!(
         "O0001\n",
         "G21 G90\n",
@@ -225,37 +215,110 @@ fn rotary_motion_under_kinematics_refuses_named_boundary() {
         "M30\n",
     );
     let prof = fanuc_rtcp_profile();
-    let err = translate_text_with_profile("fanuc", "grbl-1.1", src, "rtcp5x.nc", Some(&prof))
-        .expect_err("ротационные ходы под кинематикой — именованный отказ");
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "rtcp5x.nc", Some(&prof))
+        .expect("rotary-программа кросс-диалект компилируется (L1 v0.4 слоты)");
+    // Ход lowered: xyz joints через inverse (оракул-сверка), A = pass-through.
+    let eid_l2::interp::RtcpMode::XyzacTrt { params } = prof.kinematics.to_rtcp_mode() else {
+        panic!("профиль обязан давать XyzacTrt-режим");
+    };
+    let pose = Pose6::new(10.0, 0.0, -10.0, 90.0, 0.0, 0.0);
+    let want = xyzac_inverse(&params, &pose);
+    let linear = out
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end),
+            _ => None,
+        })
+        .expect("lowered Rapid (machine-оси) присутствует");
+    assert!(
+        (linear.x.value() - want.x).abs() < 1e-9
+            && (linear.y.value() - want.y).abs() < 1e-9
+            && (linear.z.value() - want.z).abs() < 1e-9,
+        "TCP→joints при A90: ожидалось {want:?}, фактическое {:?}",
+        (linear.x.value(), linear.y.value(), linear.z.value())
+    );
+    // Resolved слот: программный A90 — pass-through joint.
+    assert_eq!(linear.a.as_ref().map(|x| x.value()), Some(90.0));
+    // G43.4-маркер материализован; Raw не остаётся.
+    assert!(
+        !out.program.ops.iter().any(|o| matches!(o, Op::Raw { .. })),
+        "RTCP-маркер материализован — Raw нет: {:?}",
+        out.program.ops
+    );
+    assert!(out.emitted.contains("EID RTCP COMPILED: G43.4 H1"));
+    // Эмиссия цели несёт ротационное слово (linuxcnc — ось в словаре).
+    assert!(
+        out.emitted.contains("A90"),
+        "слот в эмиссии: {:?}",
+        out.emitted
+    );
+}
+
+/// Тот же rotary-источник на цель БЕЗ осей в словаре (grbl-1.1) — честный
+/// emit-гейт legality (E_UNSUPPORTED_SYNTAX): цель физически не имеет оси.
+/// Гейт — LegalityCondition typed-enum (agent-B, Stage 2).
+#[test]
+fn rotary_motion_to_grbl_refuses_legality_gate() {
+    let src = concat!(
+        "O0001\n",
+        "G21 G90\n",
+        "G43.4 H1\n",
+        "G0 X10. Y0 Z-10. A90.\n",
+        "M30\n",
+    );
+    let prof = fanuc_rtcp_profile();
+    let err = translate_text_with_profile("fanuc", "grbl-1.1", src, "rtcp_grbl.nc", Some(&prof))
+        .expect_err("rotary на grbl — emit-гейт legality");
     match &err {
-        TranslateError::Parse(diags) => {
-            assert_eq!(diags[0].code, ErrorCode::UnsupportedSemantics);
-            let m = &diags[0].message;
-            assert!(m.contains("ротационными словами"), "{m}");
-            assert!(m.contains("L1-грамматика v0.3"), "{m}");
-            assert!(m.contains("eid_l2::lowering::lower"), "{m}");
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags[0].code, ErrorCode::UnsupportedSyntax);
         }
-        other => panic!("ожидался Parse/UnsupportedSemantics, фактический: {other:?}"),
+        other => panic!("ожидался Emit/UnsupportedSyntax, фактический: {other:?}"),
     }
 }
 
-/// Тот же ротационный ход под Off (Triv) — прежнее поведение: носитель
-/// lowering → кросс-диалект §8.2-отказ (покрыто
-/// rotary_carrier_under_off_cross_refuses); здесь — same-dialect verbatim
-/// остаётся легальным.
+/// Ротационный ход под Off (Triv) — lowered pass-through со слотами (не
+/// носитель): кросс-диалект linuxcnc легален (слот в эмиссии), same-dialect —
+/// каноническая эмиссия опа. «Байт-вербатим» — свойство Raw-носителей; слоты
+/// — resolved-state (§1.2 v0.22). (Кадр полный-XYZ + A: partial-поза с
+/// unknown-стартом — честный IncompletePose-носитель, не этот кейс.)
 #[test]
-fn rotary_motion_under_off_same_dialect_still_verbatim() {
-    let src = "G21 G90\nG0 A90.\nM30\n";
-    // Off-ветка: Triv-профиль (fanuc_default) — гейт ротационных ходов не
-    // срабатывает (kins_active = false), кадр идёт носителем lowering.
+fn rotary_motion_under_off_lowers_passthrough_slots() {
+    let src = "G21 G90\nG0 X10. Y0. Z0. A90.\nM30\n";
     let triv = MachineProfile::fanuc_default();
     assert_eq!(
         triv.kinematics,
         eid_integration::profile::MachineKinematics::Triv
     );
-    let out = translate_text_with_profile("fanuc", "fanuc", src, "rot.ngc", Some(&triv))
-        .expect("same-dialect ротационный кадр под Triv — verbatim");
+    // Кросс-диалект: pass-through слот легален (linuxcnc — ось в словаре).
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "rot.nc", Some(&triv))
+        .expect("rotary pass-through под Off кросс-диалект");
+    let rapid = out
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some(end),
+            _ => None,
+        })
+        .expect("lowered Rapid присутствует");
+    assert_eq!(rapid.a.as_ref().map(|x| x.value()), Some(90.0));
     assert!(out.emitted.contains("A90"), "{:?}", out.emitted);
+    // Same-dialect: каноническая эмиссия опа (не verbatim-носитель).
+    let out_same = translate_text_with_profile("fanuc", "fanuc", src, "rot_same.nc", Some(&triv))
+        .expect("same-dialect rotary pass-through");
+    assert!(out_same.emitted.contains("A90"), "{:?}", out_same.emitted);
+    assert!(
+        !out_same
+            .program
+            .ops
+            .iter()
+            .any(|o| matches!(o, Op::Raw { .. })),
+        "rotary-кадр lowered (не Raw): {:?}",
+        out_same.program.ops
+    );
 }
 
 /// units-switch (G20 и G21 в одной программе) — честный отказ маршрута:

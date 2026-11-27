@@ -74,6 +74,7 @@
 // lint отключён точечно, форматирование не трогаем.
 #![allow(clippy::doc_lazy_continuation)]
 
+use eid_core::adapter::Adapter;
 use eid_core::ast::{Dir, Frame, Op, Point3, Program, Spindle, StartPoint, Units};
 use eid_core::diag::Diagnostic;
 use eid_core::diag::{ErrorCode, Stage};
@@ -3453,19 +3454,50 @@ fn mround2_feed_restated_cycle_first_derived_only() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mround2_abc_word_dispositions_raw() {
-    // Ротационные оси A/B/C → Raw{SEMANTICS} (stage 12), не Err.
-    for w in ["A90.", "B45.", "C180."] {
+fn mround2_abc_rot_slots_on_motion_v022() {
+    // Ротационные слова A/B/C на модальном ходовом кадре — resolved
+    // rotary-слоты (SPEC v0.22 §5; прежняя диспозиция «Raw{SEMANTICS},
+    // stage 12» снята амендментом §1.2 — переименование пин-теста
+    // mround2_abc_word_dispositions_raw). Чисто-rotary ход (XYZ
+    // наследуются, угол меняется) — НЕ zero-length (§3 v0.22): оп живой.
+    for (w, letter_val) in [
+        ("A90.", (0usize, 90.0)),
+        ("B45.", (1, 45.0)),
+        ("C180.", (2, 180.0)),
+    ] {
         let p = parse(&format!("G0 X1. Y1. Z1.\n{w}\nM30\n")).expect("ok");
+        // Второй ход = чисто-rotary кадр (первый — XYZ-подвод).
+        let rot_op = p
+            .ops
+            .iter()
+            .rev()
+            .find(|o| {
+                matches!(
+                    o,
+                    Op::Rapid { sub: None, .. } | Op::Linear { sub: None, .. }
+                )
+            })
+            .expect("чисто-rotary ход построен");
+        let end = match rot_op {
+            Op::Rapid { end, .. } | Op::Linear { end, .. } => end,
+            other => panic!("{w} → ходовой оп с rot-слотами, получено {other:?}"),
+        };
+        let slots = [
+            end.a.as_ref().map(|n| n.value()),
+            end.b.as_ref().map(|n| n.value()),
+            end.c.as_ref().map(|n| n.value()),
+        ];
+        let (idx, val) = letter_val;
+        assert_eq!(slots[idx], Some(val), "{w} → слот конца хода");
         assert!(
-            matches!(
-                p.ops.iter().find(|o| matches!(o, Op::Raw { .. })),
-                Some(Op::Raw {
+            !p.ops.iter().any(|o| matches!(
+                o,
+                Op::Raw {
                     code: ErrorCode::UnsupportedSemantics,
                     ..
-                })
-            ),
-            "{w} → Raw SEMANTICS"
+                }
+            )),
+            "{w} — прежний Raw-носитель снят (слот вместо носителя)"
         );
     }
 }
@@ -4673,4 +4705,180 @@ fn mround2_peck_est_boundary_3333_and_4999() {
     // G73: n = 4999 → est = 2+2·4999+1 = 10001 > 10000 → Limit.
     let r = parse("G0 X0. Y0. Z5.\nG73 X5. Z-9.997 R0. Q0.002 F100.\nM30\n");
     assert_eq!(err_code(r), ErrorCode::LimitExceeded);
+}
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): resolved rotary-слоты Point3.
+// Чек-лист «правило → тест» (трассируемость правило↔тест):
+//   §1.2 v0.22 слово на G0/G1-кадре → слот конца + machine-модальное
+//       наследование (кадр без слова → унаследованный modal; Known-старт =
+//       конец предыдущего опа) → spec_1_2_fanuc_rot_slot_modal_link_v022
+//   §1.2 v0.22 первый ход после якоря — старт None
+//       → spec_1_2_fanuc_rot_first_move_start_none_v022
+//   §5 v0.22 G65 A5. — АРГУМЕНТ вызова, НЕ слот (существующий dispatch)
+//       → spec_5_fanuc_g65_arg_not_slot_v022
+//   §6 v0.22 дуга с A/B/C — прежний носитель
+//       → spec_6_fanuc_rot_arc_carrier_v022
+//   §7 v0.22 цикл с A/B/C — прежний носитель
+//       → spec_7_fanuc_rot_cycle_carrier_v022
+//   R1 v0.22 round-trip parse→emit→parse AST-стабилен
+//       → spec_1_2_fanuc_rot_roundtrip_ast_v022
+//   3-осевые опы (все None) — байт-идентичны прежним: существующие goldens
+//       (fanuc_emit.rs) — доказательство без регенерации.
+// ===========================================================================
+
+/// Позитив: слово на ходовом кадре → слот; чисто-rotary кадр — движение
+/// (не zero-length, §3 v0.22); кадр без слова → унаследованная модальность;
+/// старт = слоты конца предыдущего опа.
+#[test]
+fn spec_1_2_fanuc_rot_slot_modal_link_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X10. A90.\nG1 A0. F100.\nG1 X20.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    let mut motions = p.ops.iter().filter_map(|op| match op {
+        Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => Some((start, end)),
+        _ => None,
+    });
+    let (s1, e1) = motions.next().expect("первый ход");
+    let StartPoint::Known(s1p) = s1 else {
+        panic!("known start")
+    };
+    assert!(
+        s1p.a.is_none() && s1p.b.is_none() && s1p.c.is_none(),
+        "первый ход после G92-якоря — старт None (якорь углы не ставит)"
+    );
+    assert_eq!(e1.a.as_ref().map(|n| n.value()), Some(90.0), "слово → слот");
+    let (s2, e2) = motions.next().expect("второй ход (чисто-rotary: A90→A0)");
+    let StartPoint::Known(s2p) = s2 else {
+        panic!("known start 2")
+    };
+    assert_eq!(
+        s2p.a.as_ref().map(|n| n.value()),
+        Some(90.0),
+        "старт = слоты конца предыдущего опа"
+    );
+    assert_eq!(
+        e2.a.as_ref().map(|n| n.value()),
+        Some(0.0),
+        "чисто-rotary ход — слот слова (kept, не zero-length §3 v0.22)"
+    );
+    let (_, e3) = motions.next().expect("третий ход");
+    assert_eq!(
+        e3.a.as_ref().map(|n| n.value()),
+        Some(0.0),
+        "кадр без A — end.a унаследован (machine-модальность, аналог feed)"
+    );
+}
+
+/// Негатив §5: G65 с A-словом — АРГУМЕНТ вызова Macro B (существующий
+/// dispatch — Raw-носитель кадра), НЕ поза: слоты не строятся, модальность
+/// углов вызовом не устанавливается.
+#[test]
+fn spec_5_fanuc_g65_arg_not_slot_v022() {
+    let src = "G92 X0 Y0 Z0\nG1 X1. F100.\nG65 P9010 A5. B2.\nG1 X2.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSyntax,
+                ..
+            }
+        )),
+        "G65-кадр — Raw-носитель (существующий dispatch): {:?}",
+        p.ops
+    );
+    // Ни один ходовой оп не несёт слоты — аргументы вызова не поза.
+    let no_slots = p.ops.iter().all(|op| match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => {
+            end.a.is_none() && end.b.is_none() && end.c.is_none()
+        }
+        _ => true,
+    });
+    assert!(no_slots, "G65-аргументы не создают слотов");
+}
+
+/// Негатив §6: дуга с ротационным словом — прежний носитель (ротационная
+/// дуга вне канона v0.4): слот НЕ строится, строка целиком Raw.
+#[test]
+fn spec_6_fanuc_rot_arc_carrier_v022() {
+    let src = "G92 X0 Y0 Z0\nG1 X0. Y0. F100.\nG2 X10. I5. A45.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "дуга с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops.iter().any(|op| matches!(op, Op::Arc { .. })),
+        "ротационная дуга НЕ строит Arc-оп"
+    );
+}
+
+/// Негатив §7: цикл с ротационным словом — прежний носитель (существующая
+/// развёртка §7.7; A/B/C туда не добавляются).
+#[test]
+fn spec_7_fanuc_rot_cycle_carrier_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X0. Y0. Z5.\nG81 X10. Z-5. R2. A5. F100.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "цикл с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops
+            .iter()
+            .any(|op| matches!(op, Op::Rapid { sub: Some(_), .. })),
+        "развёртка не выполняется — носитель вместо неё"
+    );
+}
+
+/// Round-trip v0.22: parse → emit (A/B/C-слова DPB-формата) → parse — AST
+/// стабилен (semantic_diff 0).
+#[test]
+fn spec_1_2_fanuc_rot_roundtrip_ast_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X10. A90. B5.\nG1 X20. F100.\nM30\n";
+    let a = FanucAdapter::new();
+    let p1 = a.parse(src, "rt.ngc").expect("parse #1").program;
+    let text = a.emit(&p1).expect("emit").text;
+    assert!(
+        text.contains("G0 X10.0000 Y0.0000 Z0.0000 A90.0000 B5.0000"),
+        "эмиссия пишет A/B/C-слова (DPB decimal-point-always): {text:?}"
+    );
+    assert!(
+        text.contains("G1 X20.0000 Y0.0000 Z0.0000 A90.0000 B5.0000"),
+        "рестейт унаследованных слотов (модальность НЕ оптимизируется): {text:?}"
+    );
+    let p2 = a.parse(&text, "rt2.ngc").expect("reparse").program;
+    let d = eid_harness::diff::semantic_diff(&p1, &p2, &eid_harness::diff::DiffConfig::default());
+    // Документированное исключение (зеркало fanuc_emit.rs roundtrip): path_mode
+    // ExactPath→ExactStop — Fanuc value shift G61 (COVERAGE §5.1/§2.2);
+    // ротационные слоты в диффе участвуют — их расхождений нет.
+    let d: Vec<_> = d
+        .into_iter()
+        .filter(|x| {
+            !matches!(
+                x,
+                eid_harness::diff::Divergence::MetaField { field: "path_mode" }
+                if matches!(p1.path_mode, eid_core::ast::PathMode::ExactPath)
+                    && matches!(p2.path_mode, eid_core::ast::PathMode::ExactStop)
+            )
+        })
+        .collect();
+    assert!(
+        d.is_empty(),
+        "round-trip AST стабилен (rotary-слоты): {d:?}"
+    );
 }

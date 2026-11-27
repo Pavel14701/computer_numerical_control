@@ -53,7 +53,7 @@
 //!    вне G76 (класс #13), не задет;
 //!  * R-слово дуги имеет приоритет над IJK при одновременном задании.
 
-use crate::canonicalize::{self, num_snap, p3_snap, to_f64, ArcError, Plane};
+use crate::canonicalize::{self, num_snap, p3_snap, p3_snap_rot, to_f64, ArcError, Plane};
 use crate::lexer::{code_num, lex_program, word_num, LineData, LineTok, Word, MAX_OPS_PER_PROGRAM};
 use eid_core::ast::{
     Dir, Frame, Num, Op, PathMode, Program, SrcSpan, StartPoint, State, Units, Wcs,
@@ -156,11 +156,17 @@ enum PathKind {
 }
 
 /// Предыдущий motion — для связывания стартов (EQUIVALENCE §1.3).
-#[derive(Debug, Clone, Copy)]
+/// `rot` — resolved rotary-слоты КОНЦА предыдущего опа (v0.4 §1.2, SPEC
+/// v0.22): Rapid/Linear — модальные углы кадра; ARC — всегда (None,None,None)
+/// (ротационная дуга вне канона — §6, конец слотов не несёт; старт следующего
+/// хода наследует ровно слоты предыдущего конца — core-verify p3_full_eq).
+/// НЕ machine-modal углы (те — [`St::rot`], переживают дугу).
+#[derive(Debug, Clone)]
 struct LastMotion {
     end: [f64; 3],
     frame: Frame,
     wcs: Wcs,
+    rot: eid_core::parser::RotarySlots,
 }
 
 struct St {
@@ -187,6 +193,14 @@ struct St {
     feed_inverse: bool, // G93 / G94
     wcs: Wcs,
     feed: Option<Num>,
+    /// Machine-модальные ротационные углы (v0.4 §1.2, SPEC v0.22) — аналог
+    /// feed: A/B/C-слово кадра обновляет, унаследованная модальность
+    /// персистентна между кадрами (машина-модальность — НЕ per-WCS), None =
+    /// угол не установлен ни разу. Отличать от `last_motion.rot` (слоты
+    /// КОНЦА предыдущего опа: после дуги — None, модальные углы — нет).
+    /// Абсорбция — в секции «Состояние кадра» (до raw-ветки, правило §8.5/6 —
+    /// строка в Raw поглощает frame-level state, зеркально feed).
+    rot: eid_core::parser::RotarySlots,
     /// Провенанс: F-слово было в кадре-источнике текущей строки (v0.2
     /// волна 3, §2.4); сброс/установка — в секции «Состояние кадра» хода
     /// строки; в снапшот — через snapshot() (производные развёртки 2..n —
@@ -367,6 +381,8 @@ pub fn parse_program(src: &str, file: &str) -> Result<ParseOut, Vec<Diagnostic>>
         feed_inverse: false,
         wcs: Wcs::G54,
         feed: None,
+        // Первый ход после якоря — None (якорь углы не устанавливает).
+        rot: (None, None, None),
         feed_restated: false,
         positional_frame_op: false,
         reading_unknown: false,
@@ -488,7 +504,11 @@ fn parse_block(
     let mut r_word: Option<f64> = None;
     let mut ijk: [Option<f64>; 3] = [None; 3];
     let mut axes: [Option<(f64, String)>; 3] = [const { None }; 3]; // (f64-зеркало, verbatim)
-    let mut extra_axes: Vec<char> = Vec::new(); // A/B/C/U/V/W
+                                                                    // Ротационные слова A/B/C (v0.4 §1.2, SPEC v0.22): на motion-кадрах
+                                                                    // G0/G1 (явных или модальных) — resolved rotary-слоты конца хода; на
+                                                                    // дугах/циклах/прочих — прежняя диспозиция-носитель (Raw, COVERAGE §4).
+    let mut abc: [Option<(f64, String)>; 3] = [const { None }; 3];
+    let mut extra_axes: Vec<char> = Vec::new(); // U/V/W (+ A/B/C вне слот-диспозиции)
     let mut has_t = false;
     let mut has_m6 = false;
     let mut has_e = false; // E-слово: легально ТОЛЬКО в кадре G76
@@ -681,7 +701,21 @@ fn parse_block(
                 })?;
                 axes[idx] = Some((v, w.number.clone()));
             }
-            'A' | 'B' | 'C' | 'U' | 'V' | 'W' => extra_axes.push(w.letter),
+            'A' | 'B' | 'C' => {
+                let idx = match w.letter {
+                    'A' => 0,
+                    'B' => 1,
+                    _ => 2,
+                };
+                let v = word_num(&w.number).ok_or_else(|| {
+                    fl!(
+                        ErrorCode::InvalidInput,
+                        format!("bad {} value `{}`", w.letter, w.number)
+                    )
+                })?;
+                abc[idx] = Some((v, w.number.clone()));
+            }
+            'U' | 'V' | 'W' => extra_axes.push(w.letter),
             // H/D — параметры G43*/G41* (кадр уходит в line-level raw целиком);
             // значения сохраняются для полноты лексики, диспозицией несут кадры.
             'H' | 'D' => {}
@@ -719,6 +753,18 @@ fn parse_block(
     // Локальные конструкции: не искажают интерпретацию последующих опов
     // (правило двух классов, CORPUS §1.2 v0.5; SPEC §8.5).
     let mut raw_reason: Option<(String, ErrorCode)> = None;
+    // Развёртываемый цикл кадра — нужен уже здесь: ротационное слово в кадре
+    // цикла → носитель (v0.22 §5; диспозиция ниже), развёртка — раздел 3.5.
+    let cycle_kind = gs.iter().find_map(|&(maj, min)| match (maj, min) {
+        (81, 0) => Some(CycleKind::Drill),
+        (82, 0) => Some(CycleKind::DrillDwell),
+        (83, 0) => Some(CycleKind::Peck),
+        (73, 0) => Some(CycleKind::ChipBreak),
+        (85, 0) => Some(CycleKind::BoreFeedOut),
+        (86, 0) => Some(CycleKind::BoreStop),
+        (89, 0) => Some(CycleKind::BoreDwell),
+        _ => None,
+    });
     let gname = |maj: i64, min: u32| -> String {
         if min == 0 {
             format!("G{maj}")
@@ -914,6 +960,34 @@ fn parse_block(
             }
         }
     }
+    // v0.4 §1.2 (SPEC v0.22): ротационные слова A/B/C — слоты конца хода
+    // ТОЛЬКО на motion-кадрах G0/G1 (явных или модальных); на дугах (§6 —
+    // ротационная дуга вне канона), циклах (существующая развёртка §7) и
+    // прочих кадрах — прежняя диспозиция-носитель (line-level Raw). U/V/W —
+    // вне-скоуп оси всегда (машино-зависимые, ruling ревью-5).
+    let explicit_rot_arc = gs
+        .iter()
+        .any(|&(maj, min)| min == 0 && (maj == 2 || maj == 3));
+    let explicit_linear = gs
+        .iter()
+        .any(|&(maj, min)| min == 0 && (maj == 0 || maj == 1));
+    let has_abc = abc.iter().any(|a| a.is_some());
+    let abc_slots_ok = !explicit_rot_arc
+        && cycle_kind.is_none()
+        && (explicit_linear
+            || (matches!(st.motion, Some(MotionKind::G0) | Some(MotionKind::G1))
+                && (axes.iter().any(|a| a.is_some()) || has_abc)));
+    if raw_reason.is_none() && (has_abc && !abc_slots_ok) {
+        let carried = ('A'..='C')
+            .filter(|l| abc[(*l as u8 - b'A') as usize].is_some())
+            .collect::<String>();
+        raw_reason = Some((
+            format!(
+                "ротационное слово {carried} вне слот-диспозиции (дуга/цикл/не-ходовой кадр) — прежний носитель (COVERAGE §4; SPEC v0.22 §5/§6)"
+            ),
+            ErrorCode::UnsupportedSemantics,
+        ));
+    }
     if raw_reason.is_none() && !extra_axes.is_empty() {
         raw_reason = Some((
             format!(
@@ -951,6 +1025,20 @@ fn parse_block(
         // F-слово было в кадре (restated-F, SPEC §7.4a): маркер кадра важен
         // независимо от того, изменилось ли ЗНАЧЕНИЕ модального feed.
         st.feed_restated = true;
+    }
+    // Ротационная модальность (v0.4 §1.2, SPEC v0.22) — аналог feed: A/B/C
+    // слова кадра обновляют machine-модальные углы ДО raw-ветки (§8.5/6:
+    // строка, уходящая в Raw, обязана абсорбировать frame-level state —
+    // иначе следующий кадр парсится в потерянной модальности). Углы —
+    // машина-модальность (НЕ per-WCS), персистентны между кадрами; None =
+    // не установлен ни разу (первый ход после якоря — None). Слоты конца
+    // хода строятся в build_motion из этой же модальности.
+    if has_abc {
+        for (i, w) in abc.iter().enumerate() {
+            if let Some((v, _)) = w {
+                *rot_slot_mut(&mut st.rot, i) = Some(num_snap(*v));
+            }
+        }
     }
     if let Some(s) = s_word.clone() {
         match st.spindle {
@@ -1118,10 +1206,18 @@ fn parse_block(
                         _ => None, // чтение неизвестно — цепочку не продвигаем
                     };
                     if let Some(end) = end {
+                        // rot наследуется прежним концом (углы units-конверсии
+                        // не подлежат — конвертируются только линейные координаты).
+                        let prev_rot = st
+                            .last_motion
+                            .as_ref()
+                            .map(|lm| lm.rot.clone())
+                            .unwrap_or((None, None, None));
                         st.last_motion = Some(LastMotion {
                             end,
                             frame: Frame::Wcs,
                             wcs: st.wcs,
+                            rot: prev_rot,
                         });
                         st.saw_motion = true;
                         st.reading_unknown = false;
@@ -1203,7 +1299,7 @@ fn parse_block(
             // старт — конвергентно (оба отказывают, grbl gcode.c:561);
             // mid — расхождение пиннуто df5ed90 (grbl: Raw no-op ради
             // PrusaSlicer) — linuxcnc конвергентен со СВОЕЙ истиной (rs274).
-            if axes.iter().all(|a| a.is_none()) && extra_axes.is_empty() && !has_e {
+            if axes.iter().all(|a| a.is_none()) && extra_axes.is_empty() && !has_abc && !has_e {
                 return Err(fl!(
                     ErrorCode::InvalidInput,
                     "All axes missing with g52 or g92 (rs274 probe1/probe2 target/probe/g92bare: G92 без осевых слов — жёсткий отказ в любой позиции, исполнение обрывается; легален минимум один осевой, частичная ≥1 ось XYZ — v0.21 fresa-класс)",
@@ -1241,10 +1337,19 @@ fn parse_block(
                 }
                 if new_reading.iter().all(|o| o.is_some()) {
                     let end = new_reading.map(|o| o.unwrap_or(0.0));
+                    // G92 углы не трогает (машина-модальность персистентна);
+                    // rot = слоты конца предыдущего опа — их и наследует
+                    // следующий Known-старт (end слотов не меняется).
+                    let prev_rot = st
+                        .last_motion
+                        .as_ref()
+                        .map(|lm| lm.rot.clone())
+                        .unwrap_or((None, None, None));
                     st.last_motion = Some(LastMotion {
                         end,
                         frame: Frame::Wcs,
                         wcs: st.wcs,
+                        rot: prev_rot,
                     });
                     st.reading_unknown = false;
                     if raw_reason.is_none() {
@@ -1418,16 +1523,7 @@ fn parse_block(
     }
 
     // --- 3.5 Циклы LinuxCNC (SPEC §7): разворачивание в явные ходы ----------
-    let cycle_kind = gs.iter().find_map(|&(maj, min)| match (maj, min) {
-        (81, 0) => Some(CycleKind::Drill),
-        (82, 0) => Some(CycleKind::DrillDwell),
-        (83, 0) => Some(CycleKind::Peck),
-        (73, 0) => Some(CycleKind::ChipBreak),
-        (85, 0) => Some(CycleKind::BoreFeedOut),
-        (86, 0) => Some(CycleKind::BoreStop),
-        (89, 0) => Some(CycleKind::BoreDwell),
-        _ => None,
-    });
+    // (cycle_kind вычислен выше, раздел 2 — нужен диспозиции ротационных слов)
     if let Some(kind) = cycle_kind {
         expand_cycle(
             st,
@@ -1563,20 +1659,22 @@ fn parse_block(
     let motion_block = (has_axis_words || explicit_arc_with_data) && !frame_took_axes;
     if motion_block {
         match st.motion {
-            Some(kind) => match build_motion(st, kind, g53, &axes, ijk, r_word, line_no, line)? {
-                MotionBuilt::Op(op) => pending.push(op),
-                MotionBuilt::Dropped(op, kind_, msg) => {
-                    // Zero-sweep дуга (§10.6 v0.12, CORPUS #13): op не попадает
-                    // в список; notice с записью отброшенного.
-                    let idx = (st.ops.len() + pending.len()) as u32;
-                    st.notices.push(Notice {
-                        kind: kind_,
-                        message: msg,
-                        op_index: idx as usize,
-                        op,
-                    });
+            Some(kind) => {
+                match build_motion(st, kind, g53, &axes, &abc, ijk, r_word, line_no, line)? {
+                    MotionBuilt::Op(op) => pending.push(op),
+                    MotionBuilt::Dropped(op, kind_, msg) => {
+                        // Zero-sweep дуга (§10.6 v0.12, CORPUS #13): op не попадает
+                        // в список; notice с записью отброшенного.
+                        let idx = (st.ops.len() + pending.len()) as u32;
+                        st.notices.push(Notice {
+                            kind: kind_,
+                            message: msg,
+                            op_index: idx as usize,
+                            op,
+                        });
+                    }
                 }
-            },
+            }
             None => {
                 return Err(fl!(
                     ErrorCode::InvalidInput,
@@ -1789,17 +1887,19 @@ fn current_reading_wcs(st: &St) -> [Option<f64>; 3] {
         return [None; 3];
     }
     let known = |v: [f64; 3]| [Some(v[0]), Some(v[1]), Some(v[2])];
-    match st.last_motion {
+    match &st.last_motion {
         Some(LastMotion {
             end,
             frame: Frame::Wcs,
             wcs,
-        }) if wcs == st.wcs => known(end),
+            ..
+        }) if *wcs == st.wcs => known(*end),
         Some(LastMotion {
             end,
             frame: Frame::Wcs,
             wcs,
-        }) => match (st.origin_of(wcs), st.origin_of(st.wcs)) {
+            ..
+        }) => match (st.origin_of(*wcs), st.origin_of(st.wcs)) {
             (Some(a), Some(b)) => known([
                 end[0] + a[0] - b[0],
                 end[1] + a[1] - b[1],
@@ -2016,17 +2116,18 @@ fn link_start(
                 "machine-frame ход при активном wcs_set_here — SPEC §5.3(a)",
             ));
         }
-        return Ok(match st.last_motion {
+        return Ok(match &st.last_motion {
             Some(LastMotion {
                 end,
                 frame: Frame::Machine,
                 ..
-            }) => Linked::Known(end),
+            }) => Linked::Known(*end),
             Some(LastMotion {
                 end,
                 frame: Frame::Wcs,
                 wcs,
-            }) => match st.origin_of(wcs) {
+                ..
+            }) => match st.origin_of(*wcs) {
                 Some(o) => Linked::Known([end[0] + o[0], end[1] + o[1], end[2] + o[2]]),
                 None => {
                     return Err(fl!(
@@ -2058,7 +2159,7 @@ fn link_start(
         // отрезок, SPEC §2).
         return Ok(Linked::UnknownRequired);
     }
-    Ok(match st.last_motion {
+    Ok(match &st.last_motion {
         None => {
             // Точка разрыва (a): первый motion-оп — якоря пресетки.
             let sh = st.l20_of(st.wcs);
@@ -2102,13 +2203,14 @@ fn link_start(
             end,
             frame: Frame::Wcs,
             wcs: prev_wcs,
+            ..
         }) => {
-            if prev_wcs == st.wcs {
-                Linked::Known(end)
+            if *prev_wcs == st.wcs {
+                Linked::Known(*end)
             } else {
                 // Точка разрыва (b): критерий разности origin'ов (SPEC §2
                 // v0.10, вопрос A2) — нужны define ОБЕИХ систем.
-                match (st.origin_of(prev_wcs), st.origin_of(st.wcs)) {
+                match (st.origin_of(*prev_wcs), st.origin_of(st.wcs)) {
                     (Some(op_), Some(on)) => Linked::Known([
                         end[0] + op_[0] - on[0],
                         end[1] + op_[1] - on[1],
@@ -2131,12 +2233,18 @@ enum MotionBuilt {
 
 /// Построение motion-опа (вызывается только при наличии координатных слов
 /// либо явного G2/G3 с I/J/K/R — полный круг, SPEC §6 v0.12).
+/// v0.4 §1.2 (SPEC v0.22): конец хода несёт resolved rotary-слоты — A/B/C
+/// слово кадра → Some(число), отсутствие → унаследованная machine-модальный
+/// угол (None, если не установлен ни разу); старт = слоты конца предыдущего
+/// опа (`last_motion.rot`; после дуги — None — §6; первый ход после якоря —
+/// None).
 #[allow(clippy::too_many_arguments)]
 fn build_motion(
     st: &mut St,
     kind: MotionKind,
     g53: bool,
     axes: &[Option<(f64, String)>; 3],
+    abc: &[Option<(f64, String)>; 3],
     ijk: [Option<f64>; 3],
     r_word: Option<f64>,
     line_no: usize,
@@ -2197,10 +2305,33 @@ fn build_motion(
         }
     };
 
+    // Стартовые rotary-слоты (v0.4 §1.2): Known-старт наследует слоты КОНЦА
+    // предыдущего опа (resolved linking, SPEC §2 v0.22); первый ход после
+    // якоря/G92-пресетки — None (якорь углы не устанавливает); unknown-старт
+    // слотов не несёт (StartPoint::Unknown).
+    let start_rot = match start {
+        Linked::Known(_) => st
+            .last_motion
+            .as_ref()
+            .map(|lm| lm.rot.clone())
+            .unwrap_or((None, None, None)),
+        Linked::UnknownRequired => (None, None, None),
+    };
     let start_point = match start {
-        Linked::Known(v) => StartPoint::Known(p3_snap(v)),
+        Linked::Known(v) => StartPoint::Known(p3_snap_rot(v, &start_rot)),
         Linked::UnknownRequired => StartPoint::Unknown,
     };
+
+    // end-слоты: слово кадра → Some(значение слова), отсутствие → modal
+    // (machine-модальность — абсорбирована в секции 3). Модальность НЕ
+    // оптимизируется на эмиссии — все Some пишутся (рестейт легален).
+    let mut end_rot = st.rot.clone();
+    for (i, w) in abc.iter().enumerate() {
+        if let Some((v, _)) = w {
+            *rot_slot_mut(&mut end_rot, i) = Some(num_snap(*v));
+        }
+    }
+    st.rot = end_rot.clone();
 
     let op = match kind {
         MotionKind::G0 => {
@@ -2208,7 +2339,7 @@ fn build_motion(
             let src = st.src(line_no, line);
             Op::Rapid {
                 start: start_point,
-                end: p3_snap(end),
+                end: p3_snap_rot(end, &end_rot),
                 state,
                 src,
                 sub: None,
@@ -2239,7 +2370,7 @@ fn build_motion(
             let src = st.src(line_no, line);
             Op::Linear {
                 start: start_point,
-                end: p3_snap(end),
+                end: p3_snap_rot(end, &end_rot),
                 state,
                 src,
                 sub: None,
@@ -2326,6 +2457,9 @@ fn build_motion(
                         end,
                         frame,
                         wcs: st.wcs,
+                        // Дуга-конец слотов не несёт (§6) — старт следующего
+                        // хода наследует (None,None,None) (resolved linking).
+                        rot: (None, None, None),
                     });
                     st.saw_motion = true;
                     return Ok(MotionBuilt::Dropped(op, NoticeKind::ZeroLengthArc, msg));
@@ -2365,11 +2499,21 @@ fn build_motion(
         }
     };
 
-    // last_motion: end нового опа (связывание следующего, SPEC §2 v0.9).
+    // last_motion: end нового опа (связывание следующего, SPEC §2 v0.9);
+    // rot — слоты КОНЦА опа: Rapid/Linear — модальные углы кадра (end_rot);
+    // ARC — всегда (None,None,None): ротационная дуга вне канона (§6), конец
+    // дуги слотов не несёт — старт следующего хода наследует None
+    // (core-verify p3_full_eq сверяет со слотами предыдущего конца).
+    let lm_rot = if matches!(kind, MotionKind::G2 | MotionKind::G3) {
+        (None, None, None)
+    } else {
+        end_rot
+    };
     st.last_motion = Some(LastMotion {
         end,
         frame,
         wcs: st.wcs,
+        rot: lm_rot,
     });
     st.saw_motion = true;
     Ok(MotionBuilt::Op(op))
@@ -2381,28 +2525,57 @@ fn eps_pos(a: &[f64; 3], b: &[f64; 3]) -> f64 {
     (0.001_f64).max(1e-7 * l)
 }
 
+/// Mutable-слот тройки rotary по индексу (0=A, 1=B, 2=C).
+fn rot_slot_mut(
+    rot: &mut eid_core::parser::RotarySlots,
+    idx: usize,
+) -> &mut Option<eid_core::ast::Num> {
+    match idx {
+        0 => &mut rot.0,
+        1 => &mut rot.1,
+        _ => &mut rot.2,
+    }
+}
+
 // ===========================================================================
 // Циклы LinuxCNC — разворачивание в явные ходы (SPEC §7, правила 1–6)
 // ===========================================================================
 
 /// Производный ход развёртки (SPEC §11): src исходного блока + sub=<i>.
 /// §7.7: каждый ход несёт полный resolved-state (feed — модальный).
-fn m_rapid(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
+/// v0.4 §1.2 (SPEC v0.22): развёртка не двигает углы — start/end несут слоты
+/// machine-модали циклового кадра (`st.rot`; слово на кадре цикла ушло бы в
+/// носитель — сюда приходят только кадры без ротационных слов).
+fn m_rapid(
+    st: &St,
+    from: [f64; 3],
+    from_rot: &eid_core::parser::RotarySlots,
+    to: [f64; 3],
+    src: SrcSpan,
+    sub: u32,
+) -> Op {
     let mut state = st.snapshot(Frame::Wcs);
     // Флаг кадра несёт только первый производный (sub == 1).
     if sub != 1 {
         state.feed_restated = false;
     }
     Op::Rapid {
-        start: StartPoint::Known(p3_snap(from)),
-        end: p3_snap(to),
+        start: StartPoint::Known(p3_snap_rot(from, from_rot)),
+        end: p3_snap_rot(to, &st.rot),
         state,
         src,
         sub: Some(sub),
     }
 }
 
-fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op {
+fn m_linear(
+    st: &St,
+    from: [f64; 3],
+    from_rot: &eid_core::parser::RotarySlots,
+    to: [f64; 3],
+    src: SrcSpan,
+    sub: u32,
+) -> Op {
     let mut state = st.snapshot(Frame::Wcs);
     // Флаг кадра несёт только первый производный (sub == 1).
     if sub != 1 {
@@ -2418,8 +2591,8 @@ fn m_linear(st: &St, from: [f64; 3], to: [f64; 3], src: SrcSpan, sub: u32) -> Op
         }
     }
     Op::Linear {
-        start: StartPoint::Known(p3_snap(from)),
-        end: p3_snap(to),
+        start: StartPoint::Known(p3_snap_rot(from, from_rot)),
+        end: p3_snap_rot(to, &st.rot),
         state,
         src,
         sub: Some(sub),
@@ -2607,10 +2780,24 @@ fn expand_cycle(
 
         // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
         //    с подходом запрещён).
-        pending.push(m_rapid(st, [fx, fy, cz], [cx, cy, cz], src.clone(), sub));
+        pending.push(m_rapid(
+            st,
+            [fx, fy, cz],
+            &st.rot,
+            [cx, cy, cz],
+            src.clone(),
+            sub,
+        ));
         sub += 1;
         // 2. подход к R-плоскости — отдельный оп (§7.7 #2).
-        pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+        pending.push(m_rapid(
+            st,
+            [cx, cy, cz],
+            &st.rot,
+            [cx, cy, r_cur],
+            src.clone(),
+            sub,
+        ));
         sub += 1;
         cz = r_cur;
 
@@ -2624,6 +2811,7 @@ fn expand_cycle(
                 pending.push(m_linear(
                     st,
                     [cx, cy, cz],
+                    &st.rot,
                     [cx, cy, z_bottom],
                     src.clone(),
                     sub,
@@ -2672,7 +2860,14 @@ fn expand_cycle(
                 let clr = approach_clearance(units);
                 for k in 1..=n {
                     let d = (r_cur - k as f64 * q).max(z_bottom);
-                    pending.push(m_linear(st, [cx, cy, cz], [cx, cy, d], src.clone(), sub));
+                    pending.push(m_linear(
+                        st,
+                        [cx, cy, cz],
+                        &st.rot,
+                        [cx, cy, d],
+                        src.clone(),
+                        sub,
+                    ));
                     sub += 1;
                     cz = d;
                     if k == n {
@@ -2680,7 +2875,14 @@ fn expand_cycle(
                     }
                     if kind == CycleKind::Peck {
                         // G83: полный отвод на R (SPEC §7.4a)
-                        pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, r_cur], src.clone(), sub));
+                        pending.push(m_rapid(
+                            st,
+                            [cx, cy, cz],
+                            &st.rot,
+                            [cx, cy, r_cur],
+                            src.clone(),
+                            sub,
+                        ));
                         sub += 1;
                         cz = r_cur;
                     }
@@ -2688,7 +2890,14 @@ fn expand_cycle(
                     // глубиной (≤ R); для G73 — единственный промежуточный
                     // отвод; для G83 — второй ход после отвода на R.
                     let appr = (d + clr).min(r_cur);
-                    pending.push(m_rapid(st, [cx, cy, cz], [cx, cy, appr], src.clone(), sub));
+                    pending.push(m_rapid(
+                        st,
+                        [cx, cy, cz],
+                        &st.rot,
+                        [cx, cy, appr],
+                        src.clone(),
+                        sub,
+                    ));
                     sub += 1;
                     cz = appr;
                 }
@@ -2704,6 +2913,7 @@ fn expand_cycle(
                 pending.push(m_linear(
                     st,
                     [cx, cy, cz],
+                    &st.rot,
                     [cx, cy, retract],
                     src.clone(),
                     sub,
@@ -2715,6 +2925,7 @@ fn expand_cycle(
                 pending.push(m_rapid(
                     st,
                     [cx, cy, cz],
+                    &st.rot,
                     [cx, cy, retract],
                     src.clone(),
                     sub,
@@ -2726,6 +2937,7 @@ fn expand_cycle(
                 pending.push(m_rapid(
                     st,
                     [cx, cy, cz],
+                    &st.rot,
                     [cx, cy, retract],
                     src.clone(),
                     sub,
@@ -2736,11 +2948,14 @@ fn expand_cycle(
         cz = retract;
     }
 
-    // last_motion: конечная позиция развёртки (связывание следующего опа).
+    // last_motion: конечная позиция развёртки (связывание следующего опа);
+    // rot = machine-модальные углы циклового кадра (слоты конца производных
+    // Rapid/Linear — развёртка углы не двигает).
     st.last_motion = Some(LastMotion {
         end: [cx, cy, cz],
         frame: Frame::Wcs,
         wcs: st.wcs,
+        rot: st.rot.clone(),
     });
     st.saw_motion = true;
     Ok(())

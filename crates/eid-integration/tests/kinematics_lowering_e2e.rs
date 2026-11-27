@@ -10,13 +10,14 @@
 //! * `eid_l2::lowering::lower` — ходы с полной TCP-позой опускаются в
 //!   L1-опы machine-осей (TCP→joints, оракул trtfuncs);
 //! * **оракул kinematics.rs-круга на КОРПУСЕ**: независимый Off-прогон тех
-//!   же файлов даёт TCP-геометрию (линейные кадры — TCP-опы; ротационные —
-//!   payload-носители с разрешёнными интерпретатором значениями слов,
-//!   включая макро-переменные) и отслеженные углы; каждый trt-оп проверяется
-//!   forward(joints, rot) ≈ TCP (круговой инвариант forward∘inverse на
-//!   живых данных, 4dp-допуск);
-//! * негатив: Triv-профиль (секция отсутствует) → ротационные кадры =
-//!   Raw-носители «как прежде» (12.2), rtcp_active = false.
+//!   же файлов даёт TCP-геометрию и отслеженные углы (v0.4 / SPEC v0.22:
+//!   ротационные кадры — lowered pass-through-опы, углы читаются из
+//!   resolved-слотов концов — слова/наследование, включая макро-
+//!   переменные); каждый trt-оп проверяется forward(joints, rot) ≈ TCP
+//!   (круговой инвариант forward∘inverse на живых данных, 4dp-допуск);
+//! * негатив: Triv-профиль (секция отсутствует) → v0.4: ротационные кадры =
+//!   lowered pass-through со слотами (rtcp_active = false — кинематики не
+//!   было; носители Off — только arc-граница 12.2).
 //!
 //! Файлы — 5 мишеней ABC/RTCP-цензов инвентаря
 //! (`corpus/tier_b/_l2_targets.md` §5): ncm_g434 (RTCP G43.4, ротационных
@@ -116,43 +117,16 @@ fn assert_straight_line(program: &L2Program, name: &str) {
     );
 }
 
-/// payload-hex носителя → текст кадра (обратимо: lowering::payload_hex).
-fn payload_text(op: &Op) -> String {
-    let Op::Raw { payload_hex, .. } = op else {
-        panic!("expected Raw carrier");
-    };
-    let bytes: Vec<u8> = (0..payload_hex.len() / 2)
-        .map(|i| u8::from_str_radix(&payload_hex[i * 2..i * 2 + 2], 16).unwrap())
-        .collect();
-    String::from_utf8(bytes).unwrap()
-}
-
-/// Слова кадра из payload-текста: `G0 X241.781 Y286.\n` → [(X, 241.781), …]
-/// (кодовые буквы отфильтрованы — нужны только координаты/углы).
-fn payload_words(op: &Op) -> Vec<(char, f64)> {
-    let mut out = Vec::new();
-    for tok in payload_text(op).split_whitespace() {
-        let mut ch = tok.chars();
-        let (Some(letter), rest) = (ch.next(), ch.as_str()) else {
-            continue;
-        };
-        let letter = letter.to_ascii_uppercase();
-        if matches!(
-            letter,
-            'G' | 'F' | 'M' | 'N' | 'O' | 'H' | 'S' | 'T' | 'D' | 'P' | 'L'
-        ) {
-            continue;
-        }
-        if let Ok(v) = rest.parse::<f64>() {
-            out.push((letter, v));
-        }
+/// Resolved rotary-слоты конца motion-опа (v0.4 / SPEC v0.22) → (A, C) в
+/// градусах; None = угол не установлен (наследование/домашнее допущение).
+fn op_rot_slots(op: &Op) -> (Option<f64>, Option<f64>) {
+    match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => (
+            end.a.as_ref().map(|n| n.value()),
+            end.c.as_ref().map(|n| n.value()),
+        ),
+        _ => panic!("expected motion op"),
     }
-    out
-}
-
-/// Значение слова по букве.
-fn word_of(words: &[(char, f64)], letter: char) -> Option<f64> {
-    words.iter().find(|(l, _)| *l == letter).map(|(_, v)| *v)
 }
 
 fn op_end_xyz(op: &Op) -> [f64; 3] {
@@ -167,11 +141,13 @@ fn op_end_xyz(op: &Op) -> [f64; 3] {
 /// Полный прогон одного файла: профиль → L2Config → lowering (Trt + Off) →
 /// структурные пины + оракул kinematics-круга на КАЖДОМ trt-опе.
 ///
-/// Оракул: независимый Off-прогон даёт TCP-геометрию (линейные кадры —
-/// TCP-опы; ротационные — payload-носители с разрешёнными значениями
-/// слов) и отслеженные углы (A/C из payload'ов, модальность). Проверка:
-/// каждый trt-оп machine-осей forward(joints, rot) ≈ TCP-позиция кадра
-/// (круговой инвариант forward∘inverse на данных корпуса).
+/// Оракул: независимый Off-прогон даёт TCP-геометрию и углы — v0.4
+/// (SPEC v0.22): ВСЕ не-arc ходы Off — lowered pass-through-опы; TCP из
+/// xyz, углы из resolved-слотов концов (слово/наследование — тот же
+/// resolved-трекинг, что у lowering: A/C-слот Some обновляет, None
+/// наследует). Проверка: каждый trt-оп machine-осей forward(joints, rot) ≈
+/// TCP-позиция кадра (круговой инвариант forward∘inverse на данных
+/// корпуса).
 fn run_file_circle_oracle(rel: &str, params: &TrtParams, name: &str) {
     let src = corpus(rel);
     let program = parse_fanuc(&src, name);
@@ -292,12 +268,13 @@ fn run_file_circle_oracle(rel: &str, params: &TrtParams, name: &str) {
         }
         L2Stmt::Move { kind, target, .. } => {
             let arc = matches!(kind, MoveKind::Arc { .. });
-            let rotary = is_rotary(target);
             let foreign_b = target.b.is_some();
-            // --- Off-прогон: TCP ground truth + углы ---
+            // --- Off-прогон: TCP ground truth + углы (v0.4: из ОПОВ) ---
             if arc {
                 // Дуга в Off: lowered (Op::Arc, pos_prog = end) ИЛИ честный
-                // носитель (геометрия не выводима) — позиция не обновляется.
+                // носитель (геометрия не выводима / ротационное слово —
+                // «rotary arc outside canon v0.4») — позиция не обновляется
+                // в носителе геометрии.
                 let is_arc_op = off_ops
                     .clone()
                     .next()
@@ -309,38 +286,19 @@ fn run_file_circle_oracle(rel: &str, params: &TrtParams, name: &str) {
                     let carrier = off_carriers.next().expect("{name}: off carriers");
                     assert_eq!(carrier.marker, RawMarker::ArcUnlowered);
                 }
-            } else if rotary {
-                let carrier = off_carriers.next().expect("{name}: off carriers");
-                assert_eq!(
-                    carrier.marker,
-                    RawMarker::RotaryAxis,
-                    "{name}: off rotary carrier"
-                );
-                let words = payload_words(&carrier.op);
-                if let Some(x) = word_of(&words, 'X') {
-                    tcp[0] = x;
-                }
-                if let Some(y) = word_of(&words, 'Y') {
-                    tcp[1] = y;
-                }
-                if let Some(z) = word_of(&words, 'Z') {
-                    tcp[2] = z;
-                }
-                // Углы: СВОИ A/C-слова носителя (чужой B-кадр семантики
-                // профиля не задаёт — углы не трогает, как и lowering).
-                if !foreign_b {
-                    rot = (
-                        word_of(&words, 'A').unwrap_or(rot.0),
-                        word_of(&words, 'C').unwrap_or(rot.1),
-                    );
-                }
             } else {
+                // v0.4: ВСЕ не-arc ходы lowered pass-through (ротационные —
+                // со слотами). TCP из xyz; углы из resolved-слотов (Some —
+                // слово, None — наследование; тот же resolved-трекинг, что
+                // у lowering: чужой B-кадр не трогает A/C-слоты).
                 let op = off_ops.next().expect("{name}: off ops");
                 assert!(
                     matches!(op, Op::Rapid { .. } | Op::Linear { .. }),
-                    "{name}: off linear op"
+                    "{name}: off motion op"
                 );
                 tcp = op_end_xyz(op);
+                let (a, c) = op_rot_slots(op);
+                rot = (a.unwrap_or(rot.0), c.unwrap_or(rot.1));
             }
             // --- Trt-прогон: joints-оп или честный носитель ---
             if arc || foreign_b {
@@ -468,9 +426,11 @@ fn e2e_kinematics_5_inventory_rtcp_files_circle_oracle() {
     run_file_structural("inbox/gce_full_industrial_lathe.g", "gce_full");
 }
 
-/// Негатив (Triv): ротационные кадры — Raw-носители «как прежде» (12.2),
-/// rtcp_active = false; дуги опускаются TCP-опами; payload носителя —
-/// дословный кадр с подставленными значениями (T4).
+/// Негатив (Triv): v0.4 / SPEC v0.22 — ротационные кадры (`A0 C0` ×4) —
+/// lowered pass-through-опы с resolved-слотами (углы = слова A/C verbatim),
+/// rtcp_active = false (кинематики не было — понижение Off не маркируется);
+/// дуги опускаются TCP-опами; носители Off — только arc-граница 12.2
+/// (ROTARYAXIS-носителей больше нет).
 #[test]
 fn e2e_kinematics_triv_negative_rotary_raw_as_before() {
     let src = corpus("local/ncm_g41_d_2d5_milling.nc");
@@ -480,27 +440,59 @@ fn e2e_kinematics_triv_negative_rotary_raw_as_before() {
     let cfg = lowering_cfg(&triv);
     assert_eq!(cfg.rtcp_mode, RtcpMode::Off);
     let res = eid_l2::lowering::lower(&program, cfg).unwrap();
-    // Ротационные кадры (`A0 C0` ×4) → носители RotaryAxis «как прежде»;
-    // rtcp_active = false. (3 arc-geometry-носителя в файле — Off-граница
-    // 12.2, режим не зависит.)
+    // Кадр-цензус AST: 4 ротационных кадра `A0 C0`; каждый Move/L1Op/Rtcp
+    // кадр — РОВНО один исход.
+    let mut rotary_frames = 0usize;
+    let mut outcomes_expected = 0usize;
+    walk_moves(&program.stmts, &mut |s| match s {
+        L2Stmt::Move { target, .. } => {
+            outcomes_expected += 1;
+            if is_rotary(target) {
+                rotary_frames += 1;
+            }
+        }
+        L2Stmt::L1Op(_) | L2Stmt::RtcpMode { .. } => outcomes_expected += 1,
+        _ => {}
+    });
+    assert_eq!(rotary_frames, 4, "цензус: `A0 C0` ×4 в файле");
+    assert_eq!(
+        res.l1_ops.len() + res.raw_tail.len(),
+        outcomes_expected,
+        "every frame yields exactly one outcome"
+    );
+    // Ротационных носителей БОЛЬШЕ НЕТ (v0.4: слоты вместо T4).
     assert_eq!(
         res.raw_tail
             .iter()
             .filter(|i| i.marker == RawMarker::RotaryAxis)
             .count(),
-        4
+        0,
+        "ротационный кадр lowered (v0.4), носитель — честная граница"
     );
     assert!(!res.rtcp_active);
-    // Payload носителя — дословный кадр с подставленными значениями (T4).
-    assert_eq!(payload_text(&res.raw_tail[0].op), "G0 A0.0000 C0.0000\n");
+    // Первый ротационный кадр lowered pass-through: слоты = слова A/C=0
+    // (verbatim); до него углы не установлены — это первый оп с Some.
+    let first_rotary_op = res
+        .l1_ops
+        .iter()
+        .find(|op| matches!(op, Op::Rapid { end, .. } | Op::Linear { end, .. } if end.a.is_some()))
+        .expect("ротационный кадр lowered со слотом A");
+    match first_rotary_op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => {
+            assert_eq!(end.a.as_ref().map(|n| n.value()), Some(0.0));
+            assert_eq!(end.c.as_ref().map(|n| n.value()), Some(0.0));
+        }
+        _ => unreachable!(),
+    }
     // Дуги под Triv опускаются TCP-опами (прежнее поведение).
     assert!(res.l1_ops.iter().any(|op| matches!(op, Op::Arc { .. })));
 }
 
 /// Ручной golden на живом корпусе: ncm_g434 — первый кадр с НЕнулевым
 /// углом: joints trt-прогона ≠ TCP (пивот example-профиля −345 мм), круг
-/// forward(joints, углы из Off-носителя) замыкается в TCP. Макро-переменные
-/// файла разрешены интерпретатором в обоих прогонах — сверка значений.
+/// forward(joints, углы из Off-слотов v0.4) замыкается в TCP.
+/// Макро-переменные файла разрешены интерпретатором в обоих прогонах —
+/// сверка значений.
 #[test]
 fn e2e_kinematics_ncm_g434_first_nonzero_rotary_golden() {
     let profile = xyzac_profile();
@@ -554,27 +546,20 @@ fn e2e_kinematics_ncm_g434_first_nonzero_rotary_golden() {
                     trt_carriers.next().unwrap(); // trt: дуга → носитель
                     return;
                 }
+                // v0.4 (Off): ВСЕ не-arc ходы lowered pass-through — TCP и
+                // углы (resolved-слоты: слово/наследование) из ОПА.
+                let op = off_ops.next().unwrap();
+                assert!(
+                    matches!(op, Op::Rapid { .. } | Op::Linear { .. }),
+                    "off motion op"
+                );
+                tcp = op_end_xyz(op);
+                let (a, c) = op_rot_slots(op);
+                rot = (a.unwrap_or(rot.0), c.unwrap_or(rot.1));
                 if !rotary {
-                    let op = off_ops.next().unwrap();
-                    tcp = op_end_xyz(op);
                     let _ = trt_ops.next().unwrap();
                     return;
                 }
-                let carrier = off_carriers.next().unwrap();
-                let words = payload_words(&carrier.op);
-                if let Some(x) = word_of(&words, 'X') {
-                    tcp[0] = x;
-                }
-                if let Some(y) = word_of(&words, 'Y') {
-                    tcp[1] = y;
-                }
-                if let Some(z) = word_of(&words, 'Z') {
-                    tcp[2] = z;
-                }
-                rot = (
-                    word_of(&words, 'A').unwrap_or(rot.0),
-                    word_of(&words, 'C').unwrap_or(rot.1),
-                );
                 if foreign_b {
                     trt_carriers.next().unwrap();
                 } else {

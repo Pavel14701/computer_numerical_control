@@ -463,6 +463,25 @@ fn to_f64(p: &eid_core::ast::Point3) -> [f64; 3] {
     [p.x.value(), p.y.value(), p.z.value()]
 }
 
+/// Слова ротационных слотов конца хода (v0.4 §1.2, SPEC v0.22): каждый Some —
+/// слово A/B/C (канонический порядок X Y Z A B C), число — DPB 4dp
+/// (decimal-point-always — домен адресов Haas, зеркало X/Y/Z). Каждый Some
+/// пишется ВСЕГДА (рестейт легален, модальность НЕ оптимизируется);
+/// стартовые слоты Known-старта воспроизводятся linking'ом (старт = конец
+/// предыдущего опа — его слова уже в потоке; первый ход после якоря — None,
+/// слова нет). Все None — пустая строка (3-осевой вывод байт-идентичен).
+fn rot_words(end: &eid_core::ast::Point3) -> String {
+    let mut s = String::new();
+    for (letter, slot) in [("A", &end.a), ("B", &end.b), ("C", &end.c)] {
+        if let Some(n) = slot {
+            s.push(' ');
+            s.push_str(letter);
+            s.push_str(&fmt_num(n.value()));
+        }
+    }
+    s
+}
+
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
     Diagnostic {
         code,
@@ -1039,11 +1058,17 @@ impl<'a> Writer<'a> {
                     (Op::Rapid { .. }, _) => "G0",
                     (_, _) => "G1",
                 };
+                // v0.4 §1.2 (SPEC v0.22): resolved rotary-слоты конца — слова
+                // A/B/C (канонический порядок, DPB-формат зеркален X/Y/Z);
+                // рестейт легален — модальность НЕ оптимизируется. Все None
+                // (3-осевой оп) — пусто, байт-идентично прежнему. Дуга не
+                // пишет A/B/C никогда (ротационная дуга вне канона §6).
                 self.line(format!(
-                    "{g} X{} Y{} Z{}{f}",
+                    "{g} X{} Y{} Z{}{}{f}",
                     fmt_num(end.x.value()),
                     fmt_num(end.y.value()),
-                    fmt_num(end.z.value())
+                    fmt_num(end.z.value()),
+                    rot_words(end)
                 ));
                 Ok(())
             }

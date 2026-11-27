@@ -301,6 +301,7 @@ fn legality_table_complete() {
     let all = [
         Cond::ToolChange,
         Cond::WcsOutsideG54G59,
+        Cond::RotarySlotsOutsideDictionary,
         Cond::MotionFeedNone,
         Cond::ArcUnknownStart,
         Cond::ArcNormalNonCanonical,
@@ -1156,4 +1157,64 @@ fn mround_grbl_duplicate_program_end_rejected() {
         panic!("дубликат program_end обязан быть отклонён")
     };
     assert!(d.iter().any(|x| x.message.contains("duplicate")), "{d:?}");
+}
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): EMIT-гейт — rotary-слоты вне
+// словаря GRBL 1.1. Чек-лист «правило → тест»:
+//   §5 v0.22: оп с Some-слотами (end или Known-start) → отказ эмиссии
+//       E_UNSUPPORTED_SYNTAX через LegalityCondition
+//       (RotarySlotsOutsideDictionary) — не молча-потеря углов →
+//       spec_5_grbl_rot_emit_gate_refuses_v022
+//   §5 v0.22: 3-осевые опы (слоты None) — байт-идентичны v0.3 →
+//       spec_5_grbl_rot_none_slots_byte_identical_v022
+//   Путь: живой eid-l1 текст v0.22 (rot=/srot= — grammar v0.5) →
+//       EidTextAdapter.parse → GrblAdapter.emit (настоящий кросс-AST путь).
+// ===========================================================================
+
+/// Негатив: eid-l1 программа с rot= (A-слот) → grbl emit-гейт отказывает
+/// (typed-condition RotarySlotsOutsideDictionary, E_UNSUPPORTED_SYNTAX).
+#[test]
+fn spec_5_grbl_rot_emit_gate_refuses_v022() {
+    let eid_src = concat!(
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\n",
+        "FRAME_PRESET G92 X0.0000 Y0.0000 Z0.0000 WCS G54\n",
+        "OP 001 RAPID start=0.0000,0.0000,0.0000 end=10.0000,0.0000,0.0000 ",
+        "rot=A=90.0000 src=1.1-1.1 feed=none spindle=off coolant=none ",
+        "tool=none frame=wcs wcs=G54\nOP 002 PEND\nEND\n",
+    );
+    let eid_program = EidTextAdapter::new()
+        .parse(eid_src, "rot.eid")
+        .expect("eid-l1 parse v0.22 ok")
+        .program;
+    let ad = GrblAdapter::new();
+    let Err(diags) = ad.emit(&eid_program) else {
+        panic!("rotary-слоты на grbl — emit-гейт обязан отказать")
+    };
+    assert!(
+        diags.iter().any(|d| d.code == ErrorCode::UnsupportedSyntax
+            && d.message.contains("rotary_slots_outside_grbl_dictionary")),
+        "typed-condition отказ: {diags:?}"
+    );
+}
+
+/// Позитив: тот же eid-l1 текст БЕЗ rot= → grbl emit легален; 3-осевой
+/// текст байт-идентичен v0.3 (нет rot=/srot= — grammar v0.5 superset).
+#[test]
+fn spec_5_grbl_rot_none_slots_byte_identical_v022() {
+    let eid_src = concat!(
+        "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\n",
+        "FRAME_PRESET G92 X0.0000 Y0.0000 Z0.0000 WCS G54\n",
+        "OP 001 RAPID start=0.0000,0.0000,0.0000 end=10.0000,0.0000,0.0000 ",
+        "src=1.1-1.1 feed=none spindle=off coolant=none tool=none frame=wcs ",
+        "wcs=G54\nOP 002 PEND\nEND\n",
+    );
+    let eid_program = EidTextAdapter::new()
+        .parse(eid_src, "no_rot.eid")
+        .expect("eid-l1 parse ok")
+        .program;
+    let ad = GrblAdapter::new();
+    let text = ad.emit(&eid_program).expect("3-осевой emit легален").text;
+    assert!(!text.contains("rot="), "grbl не пишет слоты: {text:?}");
+    assert!(text.contains("X10"), "ход в эмиссии: {text:?}");
 }

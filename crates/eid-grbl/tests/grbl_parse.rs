@@ -2522,3 +2522,50 @@ fn v021_chain_restores_after_full_end_move() {
         other => panic!("цепочка восстановлена, получен {other:?}"),
     }
 }
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): PARSE — СЛОВАРЬ GRBL 1.1 БЕЗ A/B/C.
+// Чек-лист «правило → тест» (трассируемость правило↔тест):
+//   §5 v0.22 parse-поведение НЕ ИЗМЕНИЛОСЬ: A/B/C-слова — прежняя
+//       диспозиция (Raw-носитель «rotary/4th-axis words … outside L1»),
+//       слоты НЕ строятся → spec_5_grbl_rot_parse_pin_unchanged_v022
+//   EMIT-гейт v0.22 → grbl_emit.rs (typed-condition + legality-таблица).
+// ===========================================================================
+
+#[test]
+fn spec_5_grbl_rot_parse_pin_unchanged_v022() {
+    // Пин: парсер GRBL 1.1 не знает ротационных осей — слово на ходовом
+    // кадре уходит в прежний Raw-носитель (SEMANTICS), слоты конца хода
+    // НЕ строятся (эталон семантики — eid-core spec_obligations v0.22:
+    // адаптеры С осями в словаре поднимают слоты, grbl — нет).
+    let p = parse("G21 G90 G94\nG1 X10. A90. F100.\nM2\n").expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(op,
+            Op::Raw { code: ErrorCode::UnsupportedSemantics, reason, .. }
+            if reason.contains("rotary/4th-axis words")
+        )),
+        "A-слово — прежний Raw-носитель: {:?}",
+        p.ops
+    );
+    let no_slots = p.ops.iter().all(|op| match op {
+        Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => {
+            let start_none = match start {
+                StartPoint::Known(pt) => pt.a.is_none() && pt.b.is_none() && pt.c.is_none(),
+                StartPoint::Unknown => true,
+            };
+            start_none && end.a.is_none() && end.b.is_none() && end.c.is_none()
+        }
+        _ => true,
+    });
+    assert!(no_slots, "словарь GRBL без A/B/C — слоты не строятся");
+    // Модальность углов тоже не появляется: повторный ход без A после
+    // ротационного носителя — прежний исход (позиция unknown после
+    // носителя-кадра → RuntimeState; до v0.22 идентично — парсер не менялся).
+    let p2 = parse("G21 G90 G94\nG1 X10. A90. F100.\nG1 X20. F100.\nM2\n")
+        .expect_err("unchanged: unknown start after carrier → RuntimeState (pre-v0.22 same)");
+    assert!(
+        p2.iter().any(|d| d.code == ErrorCode::RuntimeState
+            && d.message.contains("partial end with unknown reading")),
+        "unchanged parse behavior: {p2:?}"
+    );
+}

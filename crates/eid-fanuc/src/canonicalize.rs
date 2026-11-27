@@ -315,6 +315,19 @@ struct Ctx {
     file: Arc<str>,
     modal: ModalState,
     feed: Option<Num>, // модальный F (переживает G0, SPEC §4)
+    /// Machine-модальные ротационные углы (v0.4 §1.2, SPEC v0.22) — аналог
+    /// feed: A/B/C-слово кадра обновляет (абсорбция в absorb_frame_state —
+    /// до raw-возвратов, правило §8.6/6), персистентны между кадрами,
+    /// машина-модальность (НЕ per-WCS), G92/WCS-смены не сбрасывают; None =
+    /// угол не установлен ни разу. Исключение — кадры вызовов (G65/G66/
+    /// M98): буквы — АРГУМЕНТЫ вызова, НЕ поза (существующий dispatch).
+    rot: eid_core::parser::RotarySlots,
+    /// Resolved rotary-слоты КОНЦА последнего motion-опа (v0.4 §1.2):
+    /// Rapid/Linear — модальные углы кадра; ARC — всегда (None,None,None)
+    /// (ротационная дуга вне канона §6 — конец слотов не несёт). Старт
+    /// следующего Known-хода наследует ровно их (core-verify p3_full_eq —
+    /// включая rotary-слоты).
+    prev_rot: eid_core::parser::RotarySlots,
     /// Провенанс: F-слово было в кадре-источнике текущего блока (v0.2
     /// волна 3, §2.4). Сброс — на начале absorb_frame_state; установка —
     /// при абсорбции F-слова; в снапшот — через state()/state_with_frame
@@ -717,6 +730,9 @@ pub fn canonicalize_with_notices(src: &str, file: &str) -> Result<ParseOut, Vec<
         file: file.clone(),
         modal: ModalState::default(),
         feed: None,
+        // Первый ход после якоря — None (якорь углы не устанавливает).
+        rot: (None, None, None),
+        prev_rot: (None, None, None),
         feed_restated: false,
         spindle: Spindle::Off,
         coolant: Coolant::default(),
@@ -1035,6 +1051,9 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         || b.word('J').is_some()
         || b.word('K').is_some()
         || b.word('R').is_some();
+    // Ротационные слова (v0.4 §1.2, SPEC v0.22): чисто-rotary ходовой кадр
+    // (`G1 A90.`) — движение (§3 v0.22: сравнение полное, XYZ + слоты).
+    let has_rot_words = b.word('A').is_some() || b.word('B').is_some() || b.word('C').is_some();
     let explicit_motion = b.motion();
     let explicit_cycle = b.g_codes.iter().copied().find_map(CycleKind::from_gcode);
     // Триппер сверления (анализ §5.1): G90 — X/Y-слово; G91 — X/Y/Z (Z-шаг
@@ -1056,7 +1075,7 @@ fn process_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
             repeat: repeat_trigger,
         }
     } else if explicit_motion.is_some()
-        || (ctx.modal.motion.is_some() && (has_axis || has_arc_words))
+        || (ctx.modal.motion.is_some() && (has_axis || has_arc_words || has_rot_words))
     {
         Plan::Motion
     } else if has_axis || has_arc_words {
@@ -1346,6 +1365,18 @@ fn modal_group_is_motion(g: GCode) -> bool {
     )
 }
 
+/// Кадр вызова Macro B (G65/G66/G66.1 — raw-таблица, шаг (5); M98/M198 —
+/// шаг (6)): буквенные слова A/B/C — аргументы вызова, НЕ поза — модальную
+/// ротационную модальность НЕ трогают (SPEC v0.22 §5, существующий dispatch).
+fn is_macro_call_block(b: &Block) -> bool {
+    b.unsupported_words
+        .iter()
+        .any(|w| w.letter == 'G' && matches!(w.num.value, 65.0 | 66.0 | 66.1))
+        || b.m_codes
+            .iter()
+            .any(|m| matches!(m, MCode::SubCall | MCode::SubCallExt))
+}
+
 // ---------------------------------------------------------------------------
 // Модальная абсорбция на RAW-строках (SPEC §8.6 правило 6, v0.17 — аудит #33)
 // ---------------------------------------------------------------------------
@@ -1460,6 +1491,28 @@ fn absorb_frame_state(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                 Spindle::Off => ctx.last_s = Some(num),
                 Spindle::Cw(_) => ctx.spindle = Spindle::Cw(num),
                 Spindle::Ccw(_) => ctx.spindle = Spindle::Ccw(num),
+            }
+        }
+    }
+
+    // (d2) Ротационная модальность (v0.4 §1.2, SPEC v0.22) — аналог feed:
+    // A/B/C слова кадра обновляют machine-модальные углы. Исключение —
+    // кадры вызовов (G65/G66/G66.1, M98/M198): буквы — АРГУМЕНТЫ вызова
+    // Macro B, НЕ поза (существующий dispatch в (5)/(6); модальность
+    // углов вызовом не устанавливается). Слот-диспозиция кадра (ходовой/
+    // дуга/цикл) решается ниже в (14)/(21) — модальность абсорбируется
+    // независимо от неё (дуга/цикл несут слово в носителе, но углы
+    // машины после такого кадра = слово; зеркально F на RAW-кадре).
+    if !is_macro_call_block(b) {
+        for (i, letter) in ['A', 'B', 'C'].into_iter().enumerate() {
+            if let Some(w) = b.word(letter) {
+                let num = ctx.dpi_num(letter, w);
+                let slot = match i {
+                    0 => &mut ctx.rot.0,
+                    1 => &mut ctx.rot.1,
+                    _ => &mut ctx.rot.2,
+                };
+                *slot = Some(num);
             }
         }
     }
@@ -1705,6 +1758,12 @@ fn unused_word_diagnostic(
             consumed.extend(['X', 'Y', 'Z']);
             if matches!(motion_mode, Some(GCode::ArcCw) | Some(GCode::ArcCcw)) {
                 consumed.extend(['I', 'J', 'K', 'R']);
+            } else {
+                // v0.4 §1.2 (SPEC v0.22): A/B/C на ходовом G0/G1-кадре —
+                // resolved rotary-слоты конца хода. Дуга — прежний носитель
+                // (ротационная дуга вне канона §6: IJK/R выше, A/B/C →
+                // per-letter диспозиция ниже).
+                consumed.extend(['A', 'B', 'C']);
             }
         }
         Plan::Noop => {}
@@ -1905,7 +1964,10 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         || b.word('J').is_some()
         || b.word('K').is_some()
         || b.word('R').is_some();
-    if !has_axis && !has_arc_words {
+    // Чисто-rotary кадр (`G1 A90.`) — движение (SPEC §3 v0.22: чисто-rotary
+    // ход XYZ-равными не является).
+    let has_rot_words = b.word('A').is_some() || b.word('B').is_some() || b.word('C').is_some();
+    if !has_axis && !has_arc_words && !has_rot_words {
         return Ok(()); // кадр без целевых слов — движения нет (`G53;` — no-op)
     }
 
@@ -1944,8 +2006,22 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         }
         Linked::UnknownRequired => None,
     };
+    // Стартовые rotary-слоты (v0.4 §1.2, SPEC v0.22): Known-старт наследует
+    // слоты КОНЦА предыдущего опа (resolved linking); первый ход после якоря
+    // (G92-пресетка) — None; unknown-старт слотов не несёт.
+    let start_rot = match linked {
+        Linked::Known(_) => ctx.prev_rot.clone(),
+        _ => (None, None, None),
+    };
     let start_point = match linked {
-        Linked::Known(v) => StartPoint::Known(p3(v)),
+        Linked::Known(v) => StartPoint::Known(Point3::pose(
+            num_f64(v[0]),
+            num_f64(v[1]),
+            num_f64(v[2]),
+            start_rot.0,
+            start_rot.1,
+            start_rot.2,
+        )),
         _ => StartPoint::Unknown,
     };
 
@@ -1955,12 +2031,19 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         return arc_block(ctx, b, mode, base);
     }
 
-    let end = resolve_end(ctx, b, base, machine)?;
+    let mut end = resolve_end(ctx, b, base, machine)?;
+    // end-слоты = machine-модальные углы (v0.4 §1.2, SPEC v0.22): слово кадра
+    // ИЛИ унаследованная модальность — абсорбированы в absorb_frame_state
+    // (шаг (3a), до raw-возвратов). None = угол не установлен ни разу.
+    end.a = ctx.rot.0.clone();
+    end.b = ctx.rot.1.clone();
+    end.c = ctx.rot.2.clone();
     let frame = if machine { Frame::Machine } else { Frame::Wcs };
 
-    // zero-length (start == end) → drop + notice (SPEC §3).
+    // zero-length (start == end) → drop + notice (SPEC §3; v0.22: сравнение
+    // ПОЛНОЕ — XYZ + слоты; чисто-rotary ход XYZ-равными не является).
     if let StartPoint::Known(s) = &start_point {
-        if len3(&sub3(&end, s)) < 1e-9 {
+        if len3(&sub3(&end, s)) < 1e-9 && end.rotary_eq(s) {
             let op = if mode == GCode::Rapid {
                 Op::Rapid {
                     start: start_point.clone(),
@@ -1988,6 +2071,9 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                 frame,
                 wcs: ctx.modal.wcs,
             });
+            // rot-слоты конца: предикат drop гарантирует rotary_eq(start,end)
+            // — значения равны прежним (no-op, но пишем единообразно).
+            ctx.prev_rot = ctx.rot.clone();
             // SPEC §3 v0.20 chaining: end записан УЖЕ в пост-G92 reading-
             // фрейме — накопленный g92_shift сбрасывается (зеркало update_pos).
             ctx.g92_shift = [0.0; 3];
@@ -2055,6 +2141,9 @@ fn motion_block(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
         frame,
         wcs: ctx.modal.wcs,
     });
+    // rot-слоты конца хода (v0.4 §1.2): модальные углы кадра — их наследует
+    // старт следующего Known-хода.
+    ctx.prev_rot = ctx.rot.clone();
     // SPEC §3 v0.20 chaining: end записан УЖЕ в пост-G92 reading-фрейме —
     // накопленный g92_shift сбрасывается (зеркало update_pos).
     ctx.g92_shift = [0.0; 3];
@@ -2243,6 +2332,8 @@ fn arc_block(
             frame: Frame::Wcs,
             wcs: ctx.modal.wcs,
         });
+        // Дуга drop: в verify-цепочке prev = последний ВЫЖИВШИЙ оп —
+        // prev_rot НЕ трогаем (слоты его конца; дуга в цепочку не попала).
         // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
         ctx.g92_shift = [0.0; 3];
         ctx.saw_motion = true;
@@ -2338,6 +2429,11 @@ fn arc_block(
         frame: Frame::Wcs,
         wcs: ctx.modal.wcs,
     });
+    // rot-слоты конца дуги — ВСЕГДА (None,None,None) (v0.4 §1.2/§6: ротационная
+    // дуга вне канона, конец слотов не несёт); старт следующего Known-хода
+    // наследует ровно их (core-verify p3_full_eq). Machine-модальные углы
+    // (ctx.rot) дугой не меняются — A/B/C на дуговом кадре уходит в носитель.
+    ctx.prev_rot = (None, None, None);
     // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
     ctx.g92_shift = [0.0; 3];
     ctx.saw_motion = true;
@@ -2548,6 +2644,13 @@ fn unroll_cycle(
     let spindle_before = ctx.spindle.clone(); // рестарт G86 (Q9)
     let units = ctx.modal.units;
     let mut est_total = 0usize; // guard blowup развёртки (COVERAGE §1.2)
+                                // rot-слоты развёртки (v0.4 §1.2, SPEC v0.22): старт ПЕРВОЙ производной =
+                                // слоты конца последнего опа (prev_rot, resolved linking); концы всех
+                                // производных и старты последующих = machine-модальные углы cycle-кадра
+                                // (ctx.rot — развёртка углы не двигает; слово на кадре цикла ушло бы в
+                                // носитель, но модальная абсорбция (3a) уже включила его в ctx.rot).
+    let base_rot = ctx.prev_rot.clone();
+    let cycle_rot = ctx.rot.clone();
 
     for _ in 0..k {
         let (fx, fy) = (cx, cy); // позиция ДО шага — оттуда traverse
@@ -2577,24 +2680,28 @@ fn unroll_cycle(
 
         // 1. traverse к отверстию НА ТЕКУЩЕМ Z (один оп; §7.7 #1 — merge
         //    с подходом запрещён); нулевой (повтор той же X/Y) → drop.
-        let traverse = Op::Rapid {
-            start: StartPoint::Known(pt(fx, fy, cz)),
-            end: pt(cx, cy, cz),
-            state: ctx.state_derived(sub),
-            src: src.clone(),
-            sub: Some(sub),
-        };
+        let traverse = cyc_rapid(
+            ctx,
+            [fx, fy, cz],
+            &base_rot,
+            [cx, cy, cz],
+            &cycle_rot,
+            src.clone(),
+            sub,
+        );
         push_cycle_move(ctx, traverse.clone());
         sub += 1;
         // 2. подход к R-плоскости — отдельный оп (§7.7 #2); при cz == r_cur
         // (после отвода предыдущего отверстия) — zero-length → drop+notice.
-        let approach = Op::Rapid {
-            start: StartPoint::Known(pt(cx, cy, cz)),
-            end: pt(cx, cy, r_cur),
-            state: ctx.state_derived(sub),
-            src: src.clone(),
-            sub: Some(sub),
-        };
+        let approach = cyc_rapid(
+            ctx,
+            [cx, cy, cz],
+            &cycle_rot,
+            [cx, cy, r_cur],
+            &cycle_rot,
+            src.clone(),
+            sub,
+        );
         push_cycle_move(ctx, approach);
         sub += 1;
         cz = r_cur;
@@ -2611,7 +2718,9 @@ fn unroll_cycle(
                     cyc_linear(
                         ctx,
                         [cx, cy, cz],
+                        &cycle_rot,
                         [cx, cy, z_bottom],
+                        &cycle_rot,
                         &feed,
                         src.clone(),
                         sub,
@@ -2677,7 +2786,16 @@ fn unroll_cycle(
                     let d = (r_cur - kk as f64 * q).max(z_bottom);
                     push_cycle_move(
                         ctx,
-                        cyc_linear(ctx, [cx, cy, cz], [cx, cy, d], &feed, src.clone(), sub),
+                        cyc_linear(
+                            ctx,
+                            [cx, cy, cz],
+                            &cycle_rot,
+                            [cx, cy, d],
+                            &cycle_rot,
+                            &feed,
+                            src.clone(),
+                            sub,
+                        ),
                     );
                     sub += 1;
                     cz = d;
@@ -2688,13 +2806,15 @@ fn unroll_cycle(
                     // единственный промежуточный ход — подход ниже;
                     // «de-retract min(R, d+Q)» в интерпретаторе не существует.
                     if cyc.kind == CycleKind::Peck {
-                        let op = Op::Rapid {
-                            start: StartPoint::Known(pt(cx, cy, cz)),
-                            end: pt(cx, cy, r_cur),
-                            state: ctx.state_derived(sub),
-                            src: src.clone(),
-                            sub: Some(sub),
-                        };
+                        let op = cyc_rapid(
+                            ctx,
+                            [cx, cy, cz],
+                            &cycle_rot,
+                            [cx, cy, r_cur],
+                            &cycle_rot,
+                            src.clone(),
+                            sub,
+                        );
                         push_cycle_move(ctx, op);
                         sub += 1;
                         cz = r_cur;
@@ -2703,13 +2823,15 @@ fn unroll_cycle(
                     // глубиной (≤ R); для G73 — единственный промежуточный
                     // отвод; для G83 — второй ход после отвода на R.
                     let appr = (d + clr).min(r_cur);
-                    let op = Op::Rapid {
-                        start: StartPoint::Known(pt(cx, cy, cz)),
-                        end: pt(cx, cy, appr),
-                        state: ctx.state_derived(sub),
-                        src: src.clone(),
-                        sub: Some(sub),
-                    };
+                    let op = cyc_rapid(
+                        ctx,
+                        [cx, cy, cz],
+                        &cycle_rot,
+                        [cx, cy, appr],
+                        &cycle_rot,
+                        src.clone(),
+                        sub,
+                    );
                     push_cycle_move(ctx, op);
                     sub += 1;
                     cz = appr;
@@ -2733,7 +2855,9 @@ fn unroll_cycle(
                     cyc_linear(
                         ctx,
                         [cx, cy, cz],
+                        &cycle_rot,
                         [cx, cy, retract],
+                        &cycle_rot,
                         &feed,
                         src.clone(),
                         sub,
@@ -2743,25 +2867,29 @@ fn unroll_cycle(
             }
             CycleKind::BoreStop => {
                 ctx.spindle = Spindle::Off;
-                let op = Op::Rapid {
-                    start: StartPoint::Known(pt(cx, cy, cz)),
-                    end: pt(cx, cy, retract),
-                    state: ctx.state_derived(sub),
-                    src: src.clone(),
-                    sub: Some(sub),
-                };
+                let op = cyc_rapid(
+                    ctx,
+                    [cx, cy, cz],
+                    &cycle_rot,
+                    [cx, cy, retract],
+                    &cycle_rot,
+                    src.clone(),
+                    sub,
+                );
                 push_cycle_move(ctx, op);
                 sub += 1;
                 ctx.spindle = spindle_before.clone(); // рестарт — в state последующих опов
             }
             _ => {
-                let op = Op::Rapid {
-                    start: StartPoint::Known(pt(cx, cy, cz)),
-                    end: pt(cx, cy, retract),
-                    state: ctx.state_derived(sub),
-                    src: src.clone(),
-                    sub: Some(sub),
-                };
+                let op = cyc_rapid(
+                    ctx,
+                    [cx, cy, cz],
+                    &cycle_rot,
+                    [cx, cy, retract],
+                    &cycle_rot,
+                    src.clone(),
+                    sub,
+                );
                 push_cycle_move(ctx, op);
                 sub += 1;
             }
@@ -2769,12 +2897,14 @@ fn unroll_cycle(
         cz = retract;
     }
 
-    // last: конечная позиция развёртки (связывание следующего опа).
+    // last: конечная позиция развёртки (связывание следующего опа);
+    // rot-слоты конца = machine-модальные углы cycle-кадра (v0.4 §1.2).
     ctx.prev = Some(Reading {
         pos: [cx, cy, cz],
         frame: Frame::Wcs,
         wcs: ctx.modal.wcs,
     });
+    ctx.prev_rot = cycle_rot;
     // SPEC §3 v0.20 chaining: shift сбрасывается — end в пост-G92 фрейме.
     ctx.g92_shift = [0.0; 3];
     ctx.saw_motion = true;
@@ -2786,6 +2916,8 @@ fn unroll_cycle(
 /// отсекает; найдено смоук-этапа 3: подход G82 после отвода G83 на ту же
 /// R-плоскость даёт нулевой ход → drop + notice, не оп).
 fn push_cycle_move(ctx: &mut Ctx, op: Op) {
+    // v0.22 (§3): сравнение ПОЛНОЕ — XYZ + resolved rotary-слоты; чисто-rotary
+    // ход производной (теоретически: слово на кадре цикла) XYZ-равным не является.
     let zero = match &op {
         Op::Rapid {
             start: StartPoint::Known(s),
@@ -2799,7 +2931,7 @@ fn push_cycle_move(ctx: &mut Ctx, op: Op) {
         } => {
             let sv = e3(s);
             let ev = e3(end);
-            sv.iter().zip(ev.iter()).all(|(a, b)| (a - b).abs() < 1e-9)
+            sv.iter().zip(ev.iter()).all(|(a, b)| (a - b).abs() < 1e-9) && end.rotary_eq(s)
         }
         _ => false,
     };
@@ -2816,7 +2948,20 @@ fn push_cycle_move(ctx: &mut Ctx, op: Op) {
 
 /// LINEAR-оп цикла: feed кадра цикла активен для ВСЕХ производных опов
 /// (§7.7 v0.15.1); G93 — разрешение feed = len·F (вертикальный ход).
-fn cyc_linear(ctx: &Ctx, from: [f64; 3], to: [f64; 3], feed: &Num, src: SrcSpan, sub: u32) -> Op {
+/// v0.4 §1.2 (SPEC v0.22): from/to несут resolved rotary-слоты.
+/// (allow: 8 параметров — сигнатура повторяет структуру производного хода
+/// развёртки, как в haas-зеркале.)
+#[allow(clippy::too_many_arguments)]
+fn cyc_linear(
+    ctx: &Ctx,
+    from: [f64; 3],
+    from_rot: &eid_core::parser::RotarySlots,
+    to: [f64; 3],
+    to_rot: &eid_core::parser::RotarySlots,
+    feed: &Num,
+    src: SrcSpan,
+    sub: u32,
+) -> Op {
     let mut st = ctx.state_derived(sub);
     if ctx.modal.feed_inverse {
         let len = (to[2] - from[2]).abs();
@@ -2825,9 +2970,42 @@ fn cyc_linear(ctx: &Ctx, from: [f64; 3], to: [f64; 3], feed: &Num, src: SrcSpan,
         st.feed = Some(feed.clone());
     }
     Op::Linear {
-        start: StartPoint::Known(pt(from[0], from[1], from[2])),
-        end: pt(to[0], to[1], to[2]),
+        start: StartPoint::Known(pose_rot(from, from_rot)),
+        end: pose_rot(to, to_rot),
         state: st,
+        src,
+        sub: Some(sub),
+    }
+}
+
+/// Точка с resolved rotary-слотами (v0.4 §1.2, SPEC v0.22) — производные
+/// ходы развёртки (углы cycle-кадра; развёртка углы не двигает).
+fn pose_rot(v: [f64; 3], rot: &eid_core::parser::RotarySlots) -> Point3 {
+    Point3::pose(
+        num_f64(v[0]),
+        num_f64(v[1]),
+        num_f64(v[2]),
+        rot.0.clone(),
+        rot.1.clone(),
+        rot.2.clone(),
+    )
+}
+
+/// Производный rapid развёртки со слотами (v0.4 §1.2, SPEC v0.22).
+#[allow(clippy::too_many_arguments)]
+fn cyc_rapid(
+    ctx: &Ctx,
+    from: [f64; 3],
+    from_rot: &eid_core::parser::RotarySlots,
+    to: [f64; 3],
+    to_rot: &eid_core::parser::RotarySlots,
+    src: SrcSpan,
+    sub: u32,
+) -> Op {
+    Op::Rapid {
+        start: StartPoint::Known(pose_rot(from, from_rot)),
+        end: pose_rot(to, to_rot),
+        state: ctx.state_derived(sub),
         src,
         sub: Some(sub),
     }

@@ -31,20 +31,24 @@
 //!   трекингом позиции (start Known/Unknown — точки разрыва SPEC §2);
 //! * дуги IJK/R → [`Op::Arc`] (канон eid-core: sweep (0°,360°], нормаль
 //!   +axis плоскости, pitch = внеплоскостная компонента хода);
-//! * ротационные оси (A/B/C) → [`Op::Raw`] с payload-кадром
-//!   `G0 X15.0000 A15.0000\n` (T4 ДОСЛОВНО, hex с терминатором), код
-//!   E_UNSUPPORTED_SEMANTICS (§3 строка 5) — режим [`RtcpMode::Off`];
-//!   12.5.3/12.5.4 (фаза 12.5, MachineKinematics-профиль): при
-//!   kinematics-профиле (все шесть топологий [`RtcpMode`] — trt/tdr/
-//!   trsrn/maxkins/5axis, оракулы LinuxCNC — ядра `crate::kinematics*`)
-//!   ходы с ПОЛНОЙ TCP-позой опускаются в L1-опы machine-осей: XYZ =
-//!   inverse-кинематика топологии, ротационные слова = joints
-//!   pass-through (table-table trt/tdr; head-table maxkins; gantry
-//!   5axis) ИЛИ через angle-solver (head-head trsrn: B/C — ориентация
-//!   инструмента → `trsrn_angles_from_tool_axis` → joints; таблица
-//!   «pass-through vs solver» — док [`RtcpMode`]); носитель остаётся
-//!   только на честных границах (неполная поза, чужое ротационное
-//!   слово, дуги);
+//! * ротационные оси (A/B/C), L1 v0.4 / SPEC v0.22 (resolved-слоты
+//!   Point3 a/b/c — ревизия заголовка «not representable in L1»:
+//!   ПРЕДСТАВИМЫ): кадр с СВОИМИ ротационными словами lowered
+//!   pass-through — конец Rapid/Linear несёт resolved-слоты
+//!   (слово кадра ИЛИ унаследованная модальность; None = не установлен).
+//!   [`RtcpMode::Off`] (Triv): программные углы verbatim (rtcp_active =
+//!   false — кинематики не было); 12.5.3/12.5.4 (MachineKinematics-профиль,
+//!   все шесть топологий [`RtcpMode`] — trt/tdr/trsrn/maxkins/5axis,
+//!   оракулы LinuxCNC — ядра `crate::kinematics*`): ходы с ПОЛНОЙ
+//!   TCP-позой опускаются в L1-опы machine-осей: XYZ = inverse-кинематика
+//!   топологии, слоты = программные углы pass-through (table-table trt/
+//!   tdr; head-table maxkins; gantry 5axis) ИЛИ решённые solver-углы
+//!   (head-head trsrn: B/C — ориентация инструмента →
+//!   `trsrn_angles_from_tool_axis` → joints в слотах; таблица
+//!   «pass-through vs solver» — док [`RtcpMode`]). Носители остаются
+//!   только на честных границах: ЧУЖОЕ ротационное слово (буква вне
+//!   топологии профиля), НЕПОЛНАЯ поза, дуга с ротационным словом
+//!   («rotary arc outside canon v0.4» — ARC-слоты запрещены §6);
 //! * G43.4/G49 RTCP, G68.2 TWP → Raw с подставленными переменными
 //!   (§3 строка 6; TWP-тело подавлено);
 //! * G31 / чтение SkipPos/AbsMachinePos/WorkPos → останов
@@ -102,13 +106,20 @@ use std::collections::{BTreeMap, HashMap};
 /// RTCP-профиль Pass-1 lowering (12.5.2/12.5.3/12.5.4, фаза 12.5): как
 /// интерпретатор обращается с ротационными словами (A/B/C) и TCP-позой.
 ///
-/// РЕЖИМ OFF (дефолт = `MachineKinematics::Triv`, поведение 12.2/12.5.2):
-/// кадр с ротационными словами НЕ опускается в L1-опы — ход по X/Y/Z+A/C
-/// без пересчёта joints изменил бы TCP-геометрию (поворот стола двигает
-/// TCP), поэтому ротационный кадр остаётся [`Op::Raw`]-носителем T4 с
-/// ПОДСТАВЛЕННЫМИ значениями (переменные A/C-слов разрешаются так же,
-/// как линейные — [`ResolvedPose`]); линейная компонента трекается
-/// ([`Self::update_pos_prog`]). [`LoweringResult::rtcp_active`] = `false`.
+/// РЕЖИМ OFF (дефолт = `MachineKinematics::Triv`; v0.4 / SPEC v0.22 —
+/// понижение вместо носителя): ротационные слова pass-through verbatim —
+/// кадр с СВОИМИ ротационными словами (под Triv все A/B/C свои) опускается
+/// в L1-оп по ветке 4-5 (inherit_axes + слова, xform), конец несёт
+/// resolved-слоты = слово кадра / унаследованная модальность (программные
+/// углы verbatim: source-программа говорит TCP + A/B/C; L1 v0.4 несёт 6
+/// чисел). Переменные A/C-слов разрешаются так же, как линейные
+/// ([`ResolvedPose`]); линейная компонента трекается
+/// ([`Self::update_pos_prog`]). Носители Off — только честные границы:
+/// неполная поза ([`RawMarker::IncompletePose`]), дуга с ротационным
+/// словом ([`RawMarker::ArcUnlowered`], «rotary arc outside canon v0.4» —
+/// ARC-слоты запрещены §6). [`LoweringResult::rtcp_active`] = `false`
+/// (кинематики не было — понижение не меняет геометрию, маркировка
+/// machine-осей не нужна).
 ///
 /// АКТИВНЫЕ РЕЖИМЫ (программа говорит TCP-координатами — семантика
 /// RTCP-контура станка; lowering переводит ходы в MACHINE-ОСИ):
@@ -117,7 +128,8 @@ use std::collections::{BTreeMap, HashMap};
 ///   X/Y/Z = joints (machine-координаты осей) из inverse-кинематики ядра
 ///   (`crate::kinematics*` — оракулы LinuxCNC, круговой инвариант
 ///   forward∘inverse ≡ identity — `tests/kinematics_tests.rs` +
-///   `tests/kinematics_topologies_tests.rs`);
+///   `tests/kinematics_topologies_tests.rs`), слоты = программные углы
+///   pass-through / решённые solver-углы (таблица ниже);
 /// * НЕ полный ход → честный носитель (см. [`RawMarker`]);
 /// * дуги: TCP-дуга при активной кинематике НЕ аффинно отображается в
 ///   machine-оси (5-осевая интерполяция) → честный носитель [`RawMarker::ArcUnlowered`]
@@ -153,10 +165,11 @@ use std::collections::{BTreeMap, HashMap};
 /// [`LoweringResult::rtcp_active`] и per-op диагностикой, «не молча»).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RtcpMode {
-    /// Дефолт (MachineKinematics::Triv): RTCP-кинематика НЕ задана —
-    /// поведение 12.2: ротационный кадр → [`Op::Raw`]-носитель с
-    /// подставленными значениями (T4); [`LoweringResult::rtcp_active`]
-    /// остаётся `false`.
+    /// Дефолт (MachineKinematics::Triv): RTCP-кинематика НЕ задана — v0.4:
+    /// ротационный кадр lowered pass-through (L1-оп с resolved-слотами =
+    /// слова/модальность, программные углы verbatim); носители — неполная
+    /// поза / ротационная дуга; [`LoweringResult::rtcp_active`] остаётся
+    /// `false`.
     Off,
     /// XYZAC table-rotary-tilting профиль (геометрия станка —
     /// [`TrtParams`], ядро kinematics.rs @94cbe11): ходы с полной
@@ -272,10 +285,11 @@ impl TrtProfile {
         }
     }
 
-    /// Обновление трекинга углов словами кадра (модальность ротационных
-    /// осей trt-семейства — кортеж «стол, ротор» — см. [`RtcpMode::update_rot`]).
-    pub fn update_rot(&self, cur: [f64; 3], rp: &ResolvedPose) -> [f64; 3] {
-        let w = |word: Option<f64>, keep: f64| word.unwrap_or(keep);
+    /// Обновление трекинга углов словами кадра (resolved-модальность
+    /// ротационных осей trt-семейства — кортеж «стол, ротор»: слово Some →
+    /// Some(значение), отсутствующее — наследуется; см. [`RtcpMode::update_rot`]).
+    pub fn update_rot(&self, cur: [Option<f64>; 3], rp: &ResolvedPose) -> [Option<f64>; 3] {
+        let w = |word: Option<f64>, keep: Option<f64>| word.or(keep);
         match self.family {
             TrtFamily::Xyzac => [w(rp.a, cur[0]), cur[1], w(rp.c, cur[2])],
             TrtFamily::Xyzbc => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
@@ -391,15 +405,18 @@ impl RtcpMode {
         }
     }
 
-    /// Обновить трекинг углов словами кадра (модальность ротационных осей:
-    /// слово Some → новое значение; None → прежний угол держится; home-
-    /// допущение [0,0,0] — см. [`L2Evaluator::rot`]).
+    /// Обновить трекинг углов словами кадра (resolved-модальность
+    /// `[Option<f64>;3]`: слово Some → Some(значение); отсутствующее слово
+    /// — наследуется (None = угол программой НЕ установлен; inverse
+    /// применяет home-допущение 0.0 — см. `rot_unwrapped`)).
     ///
     /// Трекается СОСТОЯНИЕ ПРОГРАММНЫХ УГЛОВ (для Trsrn — программная
     /// ориентация: joints решаются из неё на каждом ходе —
-    /// [`Self::kins_inverse`]; для остальных программные углы = joints).
-    fn update_rot(self, cur: [f64; 3], rp: &ResolvedPose) -> [f64; 3] {
-        let w = |word: Option<f64>, keep: f64| word.unwrap_or(keep);
+    /// [`Self::kins_inverse`]; для pass-through-топологий программные углы
+    /// = joints). Под [`Self::Off`] СВОИ слова = ВСЕ три буквы (Triv не
+    /// сужает словарь) — трекинг питает слоты Off-pass-through.
+    fn update_rot(self, cur: [Option<f64>; 3], rp: &ResolvedPose) -> [Option<f64>; 3] {
+        let w = |word: Option<f64>, keep: Option<f64>| word.or(keep);
         match self {
             Self::XyzacTrt { .. } => [w(rp.a, cur[0]), cur[1], w(rp.c, cur[2])],
             Self::XyzbcTrt { .. } => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
@@ -408,30 +425,43 @@ impl RtcpMode {
                 [w(rp.a, cur[0]), w(rp.b, cur[1]), w(rp.c, cur[2])]
             }
             Self::FiveAxis { .. } => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
-            Self::Off => cur,
+            Self::Off => [w(rp.a, cur[0]), w(rp.b, cur[1]), w(rp.c, cur[2])],
         }
     }
 
     /// Inverse-кинематика топологии: TCP-поза (базовая СК) + углы
-    /// (трекинг [`L2Evaluator::rot`]) → machine-оси X/Y/Z.
-    /// `None` — ориентация недостижима (только Trsrn: конус нутации;
-    /// defensive-путь — из programmed углов решатель всегда достигаем).
-    fn kins_inverse(self, xyz_base: [f64; 3], rot: [f64; 3]) -> Option<[f64; 3]> {
+    /// (resolved-трекинг [`L2Evaluator::rot`]) → (machine-оси X/Y/Z,
+    /// resolved rotary-слоты опа). `None` — ориентация недостижима
+    /// (только Trsrn: конус нутации; defensive-путь — из programmed углов
+    /// решатель всегда достигаем).
+    ///
+    /// Слоты опа (L1 v0.4): pass-through-топологии — программные углы
+    /// verbatim (Some/None как в трекинге: программное A/B/C = joint
+    /// source-машины, НЕ пересчитывается); Trsrn B/C — РЕШАННЫЕ solver-
+    /// углы ([`crate::kinematics_trsrn::trsrn_angles_from_tool_axis`],
+    /// всегда Some — joints конкретны), A — программный pass-through.
+    /// Числовые углы для формул — `rot_unwrapped` (None → home 0.0).
+    fn kins_inverse(
+        self,
+        xyz_base: [f64; 3],
+        rot: &[Option<f64>; 3],
+    ) -> Option<([f64; 3], [Option<f64>; 3])> {
+        let r = rot_unwrapped(rot);
         match self {
             Self::XyzacTrt { params } => {
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], 0.0, rot[2]);
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], r[0], 0.0, r[2]);
                 let j = xyzac_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], *rot))
             }
             Self::XyzbcTrt { params } => {
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], 0.0, rot[1], rot[2]);
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], 0.0, r[1], r[2]);
                 let j = xyzbc_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], *rot))
             }
             Self::XyzabTdr { params } => {
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], rot[1], 0.0);
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], r[0], r[1], 0.0);
                 let j = tdr_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], *rot))
             }
             Self::Trsrn { params } => {
                 // SOLVER-путь (НЕ pass-through): programmed ориентация
@@ -439,19 +469,13 @@ impl RtcpMode {
                 // (3-й столбец R = Rz(C)·Rs(ν,B)·Rz(tc=0); tc на ось не
                 // влияет) → решатель углов (главные ветви) → machine
                 // joints (b=θ2, c=θ1) → TCP-inverse линейной части.
-                let r = tool_rotation(params.nut_angle, rot[2], rot[1], 0.0);
-                let kz = [r[0][2], r[1][2], r[2][2]];
+                // Слоты = РЕШАННЫЕ joints (не программные слова).
+                let rr = tool_rotation(params.nut_angle, r[2], r[1], 0.0);
+                let kz = [rr[0][2], rr[1][2], rr[2][2]];
                 let (theta1, theta2) = trsrn_angles_from_tool_axis(params.nut_angle, kz)?;
-                let pose = Pose6::new(
-                    xyz_base[0],
-                    xyz_base[1],
-                    xyz_base[2],
-                    rot[0],
-                    theta2,
-                    theta1,
-                );
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], r[0], theta2, theta1);
                 let j = trsrn_tcp_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], [rot[0], Some(theta2), Some(theta1)]))
             }
             Self::Maxkins { params } => {
                 // Порядок букв оракула maxkins.c «joints 0..8 = X Y Z A B C
@@ -461,15 +485,15 @@ impl RtcpMode {
                     x: xyz_base[0],
                     y: xyz_base[1],
                     z: xyz_base[2],
-                    a: rot[0],
-                    b: rot[1],
-                    c: rot[2],
+                    a: r[0],
+                    b: r[1],
+                    c: r[2],
                     u: 0.0,
                     v: 0.0,
                     w: 0.0,
                 };
                 let j = maxkins_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], *rot))
             }
             Self::FiveAxis { params } => {
                 // XYZBCW: W — виртуальная ось вдоль инструмента; joint
@@ -478,12 +502,12 @@ impl RtcpMode {
                     x: xyz_base[0],
                     y: xyz_base[1],
                     z: xyz_base[2],
-                    b: rot[1],
-                    c: rot[2],
+                    b: r[1],
+                    c: r[2],
                     w: 0.0,
                 };
                 let j = fiveaxis_inverse(&params, &pose);
-                Some([j.x, j.y, j.z])
+                Some(([j.x, j.y, j.z], *rot))
             }
             Self::Off => None,
         }
@@ -675,7 +699,10 @@ impl Modals {
 pub enum RawMarker {
     /// ЛЕГАТ 12.1 (D0 полный: параметрика разрешается). Не конструируется.
     Parametric,
-    /// Ротационная ось A/B/C в кадре (§3 строка 5, T4-payload).
+    /// Ротационная ось на честной границе (v0.4-ревизия «§3 строка 5,
+    /// T4-payload»: СВОЙ ротационный кадр lowered — pass-through/слоты;
+    /// носитель остаётся для чужого слова / неполной позы под
+    /// kinematics-профилем / недостижимой ориентации Trsrn).
     RotaryAxis,
     /// Дуга не lowered (геометрия не задана/позиция неизвестна).
     ArcUnlowered,
@@ -878,9 +905,47 @@ fn inherit_axes(words: [Option<f64>; 3], cur: Option<[f64; 3]>) -> Option<[f64; 
 }
 
 fn pt3(p: [f64; 3]) -> Point3 {
-    // v0.4-.Stage1: слоты None (механический перевод; заполнение resolved
-    // углов — Stage-2 lowering-ветки, §15.4 REPORT).
+    // Слоты None — не-позовые применения (arc center/normal/start, якоря):
+    // инвариант §1.2 v0.4.
     Point3::xyz(mk_num4(p[0]), mk_num4(p[1]), mk_num4(p[2]))
+}
+
+/// Конец/старт хода с resolved rotary-слотами (L1 v0.4 / SPEC v0.22):
+/// Some(угол) → 4dp-Num (слово кадра ИЛИ унаследованная модальность);
+/// None (не установлен) → None (эмиссия молчит — 3-осевой текст
+/// байт-идентичен v0.3, goldens живы).
+fn pt3_rot(p: [f64; 3], rot: &[Option<f64>; 3]) -> Point3 {
+    Point3::pose(
+        mk_num4(p[0]),
+        mk_num4(p[1]),
+        mk_num4(p[2]),
+        rot[0].map(mk_num4),
+        rot[1].map(mk_num4),
+        rot[2].map(mk_num4),
+    )
+}
+
+/// Развернуть resolved-трекинг углов в числовые значения для inverse-
+/// формул: None (угол программой не установлен) → home 0.0.
+///
+/// ДОПУЩЕНИЕ (v0.4, документировано — место решения None-в-inverse):
+/// неустановленный ротационный угол = machine на home 0 — тот же класс
+/// допущений, что [`L2Config::initial_pos`] для линейных осей и rot-home
+/// rs274-сим (трекинг до v0.4 был `[f64;3]` с home [0,0,0] — поведение
+/// полного-TCP lowering сохранено байт-в-байт: пин
+/// t8_rtcp_trt_without_rotary_words_full_tcp_identity_at_zero_params,
+/// круг-оракул e2e стартует с home (0,0)). Inverse «не знать» угол не
+/// может: ходы с НЕИЗВЕСТНЫМ XYZ отсекаются раньше (IncompletePose-
+/// носитель), а неизвестный УГОЛ при полной XYZ-позе опускается на
+/// home-допущении (12.5.3 полный-TCP: любой ход с полной позой lowered).
+/// Слоты при этом ЧЕСТНЫЕ: None не переписывается на Some(0.0) —
+/// «не установлен» видно потребителю, home-подмену делает только inverse.
+fn rot_unwrapped(rot: &[Option<f64>; 3]) -> [f64; 3] {
+    [
+        rot[0].unwrap_or(0.0),
+        rot[1].unwrap_or(0.0),
+        rot[2].unwrap_or(0.0),
+    ]
 }
 
 // ===========================================================================
@@ -943,16 +1008,17 @@ pub struct L2Evaluator {
     /// Программная позиция (значения адресных слов; наследование осей).
     /// Базовая СК = `xform.apply_point(pos_prog)` (трансформации §3).
     pos_prog: Option<[f64; 3]>,
-    /// Трекинг ротационных углов (12.5.3/12.5.4, под kinematics-профилем):
-    /// `[A, B, C]` программных углов (используются компоненты СВОИХ букв
-    /// топологии; Trsrn хранит программную ориентацию — joints решаются
-    /// из неё на каждом ходе, см. [`RtcpMode::kins_inverse`]).
-    /// Home-допущение [0, 0, 0] — тот же класс допущений, что
-    /// [`L2Config::initial_pos`] для линейных осей (rs274-сим: home 0,
-    /// сверки trace-тестов); ротационные слова кадров обновляют
-    /// компоненты по отдельности (модальность ротационных осей: угол
-    /// держится до следующего слова).
-    rot: [f64; 3],
+    /// Трекинг ротационных углов — РЕШЁННАЯ МОДАЛЬНОСТЬ (v0.4, L1 v0.4 /
+    /// SPEC v0.22): `[A, B, C]` программных углов, `Some` = слово кадра
+    /// ИЛИ унаследованная модальность, `None` = угол программой НЕ
+    /// установлен. Слова кадров обновляют СВОИ слоты по отдельности
+    /// (используются компоненты СВОИХ букв топологии; под Off — все три;
+    /// Trsrn хранит программную ориентацию — joints решаются из неё на
+    /// каждом ходе, см. [`RtcpMode::kins_inverse`]). Home-допущение
+    /// (None → 0.0) применяется ТОЛЬКО внутри inverse-формул
+    /// (`rot_unwrapped`) — слоты опов остаются честными (None виден
+    /// потребителю).
+    rot: [Option<f64>; 3],
     /// Позиция MACHINE-осей X/Y/Z (12.5.3, только под trt-профилем):
     /// end последнего trt-опа. Start-point следующего joints-опа. None —
     /// machine-позиция неизвестна (до первого trt-опа; ПОСЛЕ носителя
@@ -984,7 +1050,7 @@ impl L2Evaluator {
             config,
             env,
             pos_prog: None,
-            rot: [0.0; 3],
+            rot: [None; 3],
             pos_joints: None,
             modals: Modals::new(),
             xform: Affine3::identity(),
@@ -1018,7 +1084,7 @@ impl L2Evaluator {
         env.set_budget(self.config.max_eval_steps);
         self.env = env;
         self.pos_prog = self.config.initial_pos;
-        self.rot = [0.0; 3];
+        self.rot = [None; 3];
         self.pos_joints = None;
         self.modals = Modals::new();
         self.xform = Affine3::identity();
@@ -1123,10 +1189,13 @@ impl L2Evaluator {
             .unwrap_or_default()
     }
 
-    /// Базовая СК-позиция как StartPoint для lowered хода.
+    /// Базовая СК-позиция как StartPoint для lowered хода: слоты = текущий
+    /// resolved-трекинг ([`Self::rot`] ДО слов кадра — вызов до обновления)
+    /// — resolved-state непрерывность: start наследует слоты предыдущего
+    /// конца (SPEC §2 v0.9; v0.22 — включая rotary-слоты).
     fn pos_start(&self) -> StartPoint {
         match self.pos_prog {
-            Some(p) => StartPoint::Known(pt3(self.xform.apply_point(p))),
+            Some(p) => StartPoint::Known(pt3_rot(self.xform.apply_point(p), &self.rot)),
             None => StartPoint::Unknown,
         }
     }
@@ -1465,7 +1534,9 @@ impl L2Evaluator {
                         inherit_axes([rp.x, rp.y, rp.z], self.pos_prog)
                             .unwrap_or_else(|| self.pos_prog.unwrap_or([0.0; 3])),
                     );
-                    let Some(joints_end) = self.config.rtcp_mode.kins_inverse(end_base, rot) else {
+                    let Some((joints_end, joint_slots)) =
+                        self.config.rtcp_mode.kins_inverse(end_base, &rot)
+                    else {
                         // Trsrn: ориентация недостижима (конус нутации) —
                         // честный носитель вместо молчаливого pass.
                         let mut words = frame_words(&rp);
@@ -1491,14 +1562,21 @@ impl L2Evaluator {
                         .src()
                         .cloned()
                         .unwrap_or_else(crate::ast::placeholder_span);
+                    // start: machine-позиция + слоты resolved-состояния ДО
+                    // слов кадра (наследование предыдущего конца, v0.22);
+                    // end: слоты = ИСХОДНЫЕ программные углы (pass-through:
+                    // программные A/B/C = joint-значения source-машины,
+                    // НЕ пересчитываются) / решённые solver-углы у Trsrn
+                    // B/C — [`RtcpMode::kins_inverse`].
                     let start = match self.pos_joints {
-                        Some(j) => StartPoint::Known(pt3(j)),
+                        Some(j) => StartPoint::Known(pt3_rot(j, &self.rot)),
                         None => StartPoint::Unknown,
                     };
+                    let end = pt3_rot(joints_end, &joint_slots);
                     let op = if *kind == MoveKind::Rapid {
                         Op::Rapid {
                             start,
-                            end: pt3(joints_end),
+                            end,
                             state,
                             src,
                             sub: None,
@@ -1506,7 +1584,7 @@ impl L2Evaluator {
                     } else {
                         Op::Linear {
                             start,
-                            end: pt3(joints_end),
+                            end,
                             state,
                             src,
                             sub: None,
@@ -1553,28 +1631,21 @@ impl L2Evaluator {
                         )?;
                         return Ok(Flow::Normal);
                     }
-                    // Off (MachineKinematics::Triv) → носитель T4: кадр с
-                    // подставленными значениями, слова Null опущены (2.1) —
-                    // поведение 12.2/12.5.2 БЕЗ trt-профиля («Raw как прежде»).
-                    let mut words = frame_words(&rp);
-                    if let Some(f) = feed_v {
-                        words.push(('F', f));
-                    }
-                    let text = format_frame(gcode, &words);
-                    self.out.push_raw(
-                        RawMarker::RotaryAxis,
-                        ErrorCode::UnsupportedSemantics,
-                        Some(text),
-                        stmt,
-                        "rotary axis A/B/C not representable in L1 (§3 partial lowering, T4 payload)",
-                    );
-                    self.update_pos_prog(&rp);
-                    return Ok(Flow::Normal);
+                    // Off (MachineKinematics::Triv), v0.4 / SPEC v0.22 —
+                    // РЕВИЗИЯ «not representable in L1»: ротационный кадр
+                    // (СВОИ слова — под Triv все A/B/C свои) — lowered
+                    // pass-through, НЕ носитель T4: падение в ветку 4-5
+                    // ниже (xyz = inherit_axes + слова, xform), конец несёт
+                    // resolved-слоты = слова/модальность (программные углы
+                    // verbatim). Носитель остаётся только при неполной
+                    // позе (IncompletePose в ветке 4).
                 }
-                // 3) Кадр без ротационных слов: под trt-профилем программа
-                //    говорит TCP-координатами (семантика RTCP-контура) — ход
-                //    опускается joints-опом на ТЕКУЩИХ углах (трекинг `rot`);
-                //    неполная поза → прежний IncompletePose-носитель.
+                // 3) trt-профиль: кадр БЕЗ ротационных слов (кадры С
+                //    ротационными словами вышли выше через exec_trt_move) —
+                //    программа говорит TCP-координатами (семантика
+                //    RTCP-контура) — ход опускается joints-опом на ТЕКУЩИХ
+                //    углах (трекинг `rot`); неполная поза → Ok(false),
+                //    падение на IncompletePose-носитель ветки 4.
                 if let Some(profile) = trt {
                     if self.exec_trt_move(
                         program,
@@ -1591,13 +1662,20 @@ impl L2Evaluator {
                 // 4) Наследование: слово отсутствует/Null → координата без
                 //    изменения (модальные оси); неизвестная позиция +
                 //    отсутствующее слово → носитель (E_RUNTIME_STATE —
-                //    зависит от состояния станка).
+                //    зависит от состояния станка). Сюда доходят и
+                //    Off-ротационные кадры с неполной позой (v0.4: честная
+                //    граница — pass-through требует полной xyz).
                 let cur = self.pos_prog;
                 let end_prog = inherit_axes([rp.x, rp.y, rp.z], cur);
                 if let Some(ep) = end_prog {
                     // 5) D0-полный: константный И параметрический ход lowered
                     //    (§3 строка 1); координаты — базовая СК (G68/G51).
+                    //    v0.4: конец — resolved-слоты (слово/модальность;
+                    //    Off — программные углы verbatim, rtcp_active не
+                    //    ставится); start наследует слоты предыдущего конца
+                    //    ([`Self::pos_start`]).
                     let end_base = self.xform.apply_point(ep);
+                    let rot_after = self.config.rtcp_mode.update_rot(self.rot, &rp);
                     let feed_num = feed_v.map(mk_num4);
                     let state = l1_default_state(feed_num, feed_v.is_some());
                     let src = stmt
@@ -1607,14 +1685,14 @@ impl L2Evaluator {
                     let op = match kind {
                         MoveKind::Rapid => Op::Rapid {
                             start: self.pos_start(),
-                            end: pt3(end_base),
+                            end: pt3_rot(end_base, &rot_after),
                             state,
                             src,
                             sub: None,
                         },
                         _ => Op::Linear {
                             start: self.pos_start(),
-                            end: pt3(end_base),
+                            end: pt3_rot(end_base, &rot_after),
                             state,
                             src,
                             sub: None,
@@ -1622,6 +1700,7 @@ impl L2Evaluator {
                     };
                     self.out.push_l1(op);
                     self.pos_prog = Some(ep);
+                    self.rot = rot_after;
                     self.modals.set_motion(match kind {
                         MoveKind::Rapid => 0,
                         _ => 1,
@@ -1641,7 +1720,13 @@ impl L2Evaluator {
                         stmt,
                         "target position unknown: missing/Null axis word with unknown current position (address-word semantics, table 2.1)",
                     );
-                    // Позиция не обновляется: ход не lowered.
+                    // Позиция не обновляется: ход не lowered. Слова
+                    // ротационных осей кадра трекаются в resolved-слоты
+                    // (машина исполняет слова носителя — модальность для
+                    // последующих lowered-опов; Off — все буквы свои;
+                    // под trt-профилем сюда доходят кадры без ротационных
+                    // слов — обновление no-op).
+                    self.rot = self.config.rtcp_mode.update_rot(self.rot, &rp);
                 }
                 Ok(Flow::Normal)
             }
@@ -1671,6 +1756,31 @@ impl L2Evaluator {
                     self.pos_joints = None;
                     return Ok(Flow::Normal);
                 }
+                // v0.4 (Off): дуга с ротационным словом — ВНЕ канона
+                // (ARC-слоты запрещены §6: TCP-дуга не аффинна в
+                // machine-осях, rot-поле на ARC грамматикой v0.5
+                // отвергается) → честный носитель с ИМЕНОВАННОЙ причиной.
+                // До v0.4 ротационное слово дуги молча терялось в Op::Arc —
+                // граница названа («rotary arc outside canon v0.4»).
+                // Линейная компонента и слова дуги трекаются (конвенция
+                // «линейная компонента трекается в RAW-ходе» + машина
+                // исполняет ротационное слово — модальность для последующих
+                // слотов); rtcp_active не ставится (Off = FALSE).
+                if matches!(self.config.rtcp_mode, RtcpMode::Off)
+                    && (rp.a.is_some() || rp.b.is_some() || rp.c.is_some())
+                {
+                    let words = arc_frame_words(&rp, feed_v);
+                    self.out.push_raw(
+                        RawMarker::ArcUnlowered,
+                        ErrorCode::UnsupportedSemantics,
+                        Some(format_frame("G2", &words)),
+                        stmt,
+                        "rotary arc outside canon v0.4: arc with A/B/C word is not representable as Op::Arc (rotary slots forbidden on ARC, §6) — honest carrier",
+                    );
+                    self.update_pos_prog(&rp);
+                    self.rot = self.config.rtcp_mode.update_rot(self.rot, &rp);
+                    return Ok(Flow::Normal);
+                }
                 self.exec_arc(program, stmt, ijk, r, *dir, &rp, feed_v)
             }
         }
@@ -1688,9 +1798,11 @@ impl L2Evaluator {
     /// * неполная TCP-поза без ротационных слов → `Ok(false)` — падение на
     ///   прежний IncompletePose-носитель вызывающего (семантика не менялась);
     /// * иначе — joints-оп machine-осей: X/Y/Z = inverse(TCP-поза, углы),
-    ///   ротационные слова = joints pass-through + трекинг
-    ///   ([`Self::rot`]); start = [`Self::pos_joints`]. per-op диагностика
-    ///   («не молча») называет профиль и спец-семантику machine-осей.
+    ///   слоты = ИСХОДНЫЕ программные углы (pass-through: программные A/B/C
+    ///   = joint-значения source-машины, НЕ пересчитываются; v0.4), start =
+    ///   [`Self::pos_joints`] + слоты resolved-состояния до слов кадра.
+    ///   per-op диагностика («не молча») называет профиль и спец-семантику
+    ///   machine-осей.
     ///
     /// (allow: 8 параметров — сигнатура повторяет структуру кадра хода,
     /// как в [`Self::exec_arc`].)
@@ -1757,27 +1869,31 @@ impl L2Evaluator {
             // вызывающего (падение сквозь — семантика кадра сохранена).
             return Ok(false);
         };
-        // Углы: слова кадра обновляют трекинг (модальность ротационных осей).
+        // Углы: слова кадра обновляют resolved-трекинг (модальность
+        // ротационных осей).
         let rot = profile.update_rot(self.rot, rp);
         // TCP-поза в базовой СК (G68/G51-трансформации применяются к
         // линейной части; ротационные углы проходят verbatim — 2D-поворот
         // детали не моделирует ротационные оси).
         let pose_end_base = self.xform.apply_point(ep);
-        let joints_end = Self::trt_inverse(profile, pose_end_base, rot);
+        let joints_end = Self::trt_inverse(profile, pose_end_base, rot_unwrapped(&rot));
         let feed_num = feed_v.map(mk_num4);
         let state = l1_default_state(feed_num, feed_v.is_some());
         let src = stmt
             .src()
             .cloned()
             .unwrap_or_else(crate::ast::placeholder_span);
+        // start: machine-позиция + слоты resolved-состояния ДО слов кадра
+        // (наследование предыдущего конца, v0.22).
         let start = match self.pos_joints {
-            Some(j) => StartPoint::Known(pt3(j)),
+            Some(j) => StartPoint::Known(pt3_rot(j, &self.rot)),
             None => StartPoint::Unknown,
         };
+        let end = pt3_rot(joints_end, &rot);
         let op = if rapid {
             Op::Rapid {
                 start,
-                end: pt3(joints_end),
+                end,
                 state,
                 src,
                 sub: None,
@@ -1785,7 +1901,7 @@ impl L2Evaluator {
         } else {
             Op::Linear {
                 start,
-                end: pt3(joints_end),
+                end,
                 state,
                 src,
                 sub: None,
@@ -1821,6 +1937,8 @@ impl L2Evaluator {
     /// (стол, ротор) → joints machine-осей X/Y/Z. Формулы —
     /// [`crate::kinematics`] (оракул trtfuncs.c; круговой инвариант
     /// forward∘inverse ≡ identity — `tests/kinematics_tests.rs`).
+    /// Углы — развёрнутый трекинг (`rot_unwrapped`: None → home 0.0,
+    /// home-допущение документировано там же).
     fn trt_inverse(profile: TrtProfile, xyz_base: [f64; 3], rot: [f64; 3]) -> [f64; 3] {
         match profile.family {
             TrtFamily::Xyzac => {
@@ -2621,13 +2739,22 @@ mod tests {
         assert_eq!(res.raw_tail[0].marker, RawMarker::IncompletePose);
     }
 
-    // ---------- T4: частичный lowering ротационной оси (ДОСЛОВНО) ----------
+    // ---------- T4 / v0.4: ротационный кадр — lowered pass-through ----------
+
+    /// Слот resolved-угла конца опа (значение, канонический 4dp-текст).
+    fn slot_val(slot: &Option<Num>) -> (f64, &str) {
+        let n = slot.as_ref().expect("rotary slot must be resolved");
+        (n.value(), n.text.as_str())
+    }
 
     #[test]
-    fn t4_partial_lowering_rotary_payload_verbatim() {
-        // Чек-лист T4: #100 = 15; G0 X#100 A#100 → Op::Raw с payload
-        // «G0 X15.0000 A15.0000\n» (hex, с терминатором), код
-        // E_UNSUPPORTED_SEMANTICS (§3 строка 5).
+    fn t4_rotary_frame_lowers_passthrough_slots() {
+        // v0.4 (Stage 2, SPEC v0.22): ротационный кадр под Off — НЕ носитель
+        // T4, а lowered pass-through: #100 = 15; G0 X#100 Y0 Z0 A#100 →
+        // Op::Rapid xyz (15,0,0), конец несёт resolved-слоты a=Some(15.0000)
+        // (слово кадра), b/c None. rtcp_active = false (кинематики не было
+        // — понижение Off не маркируется), диагностик нет (pass-through).
+        // Носитель остаётся на неполной позе — следующий тест.
         let program = L2Program::new(
             vec![
                 assign(100, Expr::num(15.0)),
@@ -2635,8 +2762,8 @@ mod tests {
                     MoveKind::Rapid,
                     ExprPose {
                         x: Some(Expr::var(100)),
-                        y: None,
-                        z: None,
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(0.0)),
                         a: Some(Expr::var(100)),
                         b: None,
                         c: None,
@@ -2648,26 +2775,77 @@ mod tests {
         );
         let mut e = ev();
         let res = e.run(&program).unwrap();
-        assert!(res.l1_ops.is_empty());
+        assert!(res.raw_tail.is_empty(), "ротационный кадр lowered (v0.4)");
+        assert!(res.diagnostics.is_empty());
+        assert!(!res.rtcp_active);
+        assert_eq!(res.l1_ops.len(), 1);
+        match &res.l1_ops[0] {
+            Op::Rapid { end, start, .. } => {
+                assert_eq!(
+                    (end.x.value(), end.y.value(), end.z.value()),
+                    (15.0, 0.0, 0.0)
+                );
+                assert_eq!(slot_val(&end.a), (15.0, "15.0000"));
+                assert!(end.b.is_none() && end.c.is_none());
+                assert!(matches!(start, StartPoint::Unknown));
+            }
+            _ => panic!("expected lowered Rapid"),
+        }
+    }
+
+    #[test]
+    fn t4_rotary_incomplete_pose_stays_honest_carrier() {
+        // Честная граница v0.4: ротационный кадр с НЕПОЛНОЙ позой (Y/Z
+        // отсутствуют, позиция неизвестна) — IncompletePose-носитель
+        // (E_RUNTIME_STATE), payload дословный (наследие T4-пина):
+        // «G0 X15.0000 A15.0000\n». Слова кадра трекаются в resolved-слоты
+        // (машина исполняет слова носителя): следующий полный ход несёт
+        // a=Some(15) — НАСЛЕДОВАННАЯ модальность.
+        let program = L2Program::new(
+            vec![
+                move_stmt(
+                    MoveKind::Rapid,
+                    ExprPose {
+                        x: Some(Expr::num(15.0)),
+                        y: None,
+                        z: None,
+                        a: Some(Expr::num(15.0)),
+                        b: None,
+                        c: None,
+                    },
+                    None,
+                ),
+                move_stmt(MoveKind::Rapid, target_const(15.0, 5.0, 0.0), None),
+            ],
+            Vec::new(),
+        );
+        let res = ev().run(&program).unwrap();
         assert_eq!(res.raw_tail.len(), 1);
-        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::IncompletePose);
         match &res.raw_tail[0].op {
-            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::UnsupportedSemantics),
+            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::RuntimeState),
             _ => panic!("carrier must be Raw"),
         }
         assert_eq!(
             decode_payload(&res.raw_tail[0].op),
             "G0 X15.0000 A15.0000\n"
         );
-        // Диагностика носителя со спаном оператора (§2.4).
-        assert_eq!(res.diagnostics.len(), 1);
-        assert!(res.diagnostics[0].src.is_some());
+        assert!(!res.rtcp_active);
+        assert_eq!(res.l1_ops.len(), 1);
+        if let Op::Rapid { end, .. } = &res.l1_ops[0] {
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (15.0, 5.0, 0.0)
+            );
+            assert_eq!(slot_val(&end.a).0, 15.0, "A-слово носителя трекается");
+        }
     }
 
     #[test]
-    fn t4_linear_rotary_payload_and_pos_update() {
-        // G1-носитель + линейная компонента обновляет позицию: следующий
-        // ход наследует X из RAW-хода.
+    fn t4_linear_rotary_lowers_slots_and_pos_update() {
+        // v0.4: ротационный G1-кадр lowered pass-through со слотами;
+        // линейная компонента трекается: третий ход наследует X=20 из
+        // lowered ротационного хода; слот a наследуется модальностью.
         let program = L2Program::new(
             vec![
                 move_stmt(MoveKind::Rapid, target_const(10.0, 0.0, 0.0), None),
@@ -2699,26 +2877,45 @@ mod tests {
             Vec::new(),
         );
         let res = ev().run(&program).unwrap();
-        assert_eq!(res.l1_ops.len(), 2); // первый и третий ходы
-        assert_eq!(res.raw_tail.len(), 1);
-        assert_eq!(
-            decode_payload(&res.raw_tail[0].op),
-            "G1 X20.0000 Y0.0000 Z0.0000 A90.0000 F300.0000\n"
-        );
-        // Третий ход: X наследуется 20 (обновлено RAW-ходом), Y=5, Z → 0.
-        if let Op::Rapid { end, .. } = &res.l1_ops[1] {
+        assert_eq!(res.l1_ops.len(), 3); // ВСЕ три хода lowered (v0.4)
+        assert!(res.raw_tail.is_empty());
+        // op1: слоты все None (углы программой не установлены).
+        if let Op::Rapid { end, .. } = &res.l1_ops[0] {
+            assert!(end.a.is_none() && end.b.is_none() && end.c.is_none());
+        }
+        // op2 (G1 ... A90 F300): слот a=Some(90) — слово кадра; feed.
+        if let Op::Linear { end, state, .. } = &res.l1_ops[1] {
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (20.0, 0.0, 0.0)
+            );
+            assert_eq!(slot_val(&end.a).0, 90.0);
+            assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(300.0));
+            assert!(state.feed_restated);
+        }
+        // op3: X=20 наследуется (трекинг позиции), Y=5, Z → 0; слот
+        // a=Some(90) — унаследованная модальность (resolved-state).
+        if let Op::Rapid { end, start, .. } = &res.l1_ops[2] {
             assert_eq!(
                 (end.x.value(), end.y.value(), end.z.value()),
                 (20.0, 5.0, 0.0)
             );
+            assert_eq!(slot_val(&end.a).0, 90.0);
+            // start наследует слоты предыдущего конца (SPEC §2 v0.22).
+            match start {
+                StartPoint::Known(p) => assert_eq!(slot_val(&p.a).0, 90.0),
+                StartPoint::Unknown => panic!("start must be known"),
+            }
         }
     }
 
     /// 12.4-роут: носитель МЕЖДУ ходами — [`LoweringResult::into_ordered_ops`]
     /// восстанавливает порядок исполнения (конкатенация `l1_ops ++ raw_tail`
     /// переупорядочила бы: носитель уехал в конец ПОСЛЕ последующих ходов).
-    /// Программа — как в `t4_linear_rotary_payload_and_pos_update` (ход;
-    /// ротационный кадр-носитель; ход): полный поток = [Rapid, Raw, Rapid].
+    /// v0.4: interleave-кейс пересоздан на ДРУГОМ честном носителе — ЧУЖОЕ
+    /// слово B под XyzacTrt (топология не моделирует ось; свой ротационный
+    /// кадр с тех пор lowered — слоты); механика ленты прежняя: полный
+    /// поток = [Rapid, Raw, Rapid].
     #[test]
     fn into_ordered_ops_merges_interleaved_carriers() {
         let program = L2Program::new(
@@ -2730,8 +2927,8 @@ mod tests {
                         x: Some(Expr::num(20.0)),
                         y: Some(Expr::num(0.0)),
                         z: Some(Expr::num(0.0)),
-                        a: Some(Expr::num(90.0)),
-                        b: None,
+                        a: None,
+                        b: Some(Expr::num(45.0)),
                         c: None,
                     },
                     Some(Expr::num(300.0)),
@@ -2751,9 +2948,10 @@ mod tests {
             ],
             Vec::new(),
         );
-        let res = ev().run(&program).unwrap();
+        let res = L2Evaluator::new(cfg_trt()).run(&program).unwrap();
         assert_eq!(res.l1_ops.len(), 2);
         assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
         let ops = res.into_ordered_ops();
         assert_eq!(ops.len(), 3, "2 хода + 1 носитель");
         assert!(matches!(ops[0], Op::Rapid { .. }), "первый ход — Rapid");
@@ -2801,15 +2999,22 @@ mod tests {
     }
 
     #[test]
-    fn t8_rtcp_off_rotary_var_resolved_into_raw_pin() {
-        // ПИН 12.2: rtcp=Off (дефолт) — переменная ротационного слова
-        // разрешается в T4-носитель с подставленным значением
-        // («G0 A15.0000\n»); rtcp_active = false (маркировки нет).
+    fn t8_rtcp_off_rotary_var_incomplete_pose_carrier() {
+        // СДВИГ пина 12.2 (v0.4 Stage 2): rtcp=Off (дефолт) — переменная
+        // ротационного слова разрешается (значение подставлено, payload
+        // дословный «G0 A15.0000\n»), НО кадр `G0 A15` без XYZ при
+        // неизвестной позиции — IncompletePose-носитель (E_RUNTIME_STATE:
+        // адресная семантика 2.1), НЕ T4-UnsupportedSemantics;
+        // rtcp_active = false (маркировки нет).
         let res = ev().run(&rotary_var_program()).unwrap();
         assert!(res.l1_ops.is_empty());
         assert_eq!(res.raw_tail.len(), 1);
-        assert_eq!(res.raw_tail[0].marker, RawMarker::RotaryAxis);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::IncompletePose);
         assert_eq!(decode_payload(&res.raw_tail[0].op), "G0 A15.0000\n");
+        match &res.raw_tail[0].op {
+            Op::Raw { code, .. } => assert_eq!(*code, ErrorCode::RuntimeState),
+            _ => panic!("carrier must be Raw"),
+        }
         assert!(!res.rtcp_active);
     }
 
@@ -2853,12 +3058,14 @@ mod tests {
     }
 
     #[test]
-    fn t8_rtcp_trt_t4_mixed_frame_verbatim_both_modes() {
-        // T4 ДОСЛОВНО в обоих режимах: #100 = 15; G0 X#100 A#100 →
-        // payload «G0 X15.0000 A15.0000\n». Линейная часть НЕ опускается в
-        // L1-оп даже под XyzacTrt (ход X/Y/Z+A/C без пересчёта joints
-        // изменил бы TCP-геометрию — граница 12.5.3); различие режимов —
-        // ТОЛЬКО флаг rtcp_active.
+    fn t8_rtcp_rotary_carrier_verbatim_both_modes() {
+        // T4 ДОСЛОВНО на честной границе в обоих режимах: #100 = 15;
+        // G0 X#100 A#100 при неизвестной позиции (Y/Z отсутствуют) →
+        // payload «G0 X15.0000 A15.0000\n» в обоих. Маркер/код честные по
+        // режиму: Off = IncompletePose/RuntimeState (поза неполна — v0.4
+        // pass-through не опускает), XyzacTrt = RotaryAxis/
+        // UnsupportedSemantics (inverse требует полной позы, 12.5.3).
+        // Различие режимов также во флаге rtcp_active.
         let program = L2Program::new(
             vec![
                 assign(100, Expr::num(15.0)),
@@ -2887,6 +3094,8 @@ mod tests {
                 "G0 X15.0000 A15.0000\n"
             );
         }
+        assert_eq!(off.raw_tail[0].marker, RawMarker::IncompletePose);
+        assert_eq!(trt.raw_tail[0].marker, RawMarker::RotaryAxis);
         assert!(!off.rtcp_active);
         assert!(trt.rtcp_active);
     }
@@ -2968,35 +3177,57 @@ mod tests {
             assert!(approx(j.1, 5.0), "jy = {j:?}");
             assert!(approx(j.2, 0.0), "jz = {j:?}");
             assert_eq!(j.3, Some(300.0)); // feed пронаследован lowering'ом
+                                          // v0.4 слоты: pass-through — программный C=30 (слово кадра) в
+                                          // слоте; A/B не установлены (None).
+            assert_eq!(slot_val(&end.c), (30.0, "30.0000"));
+            assert!(end.a.is_none() && end.b.is_none());
         } else {
             panic!("expected lowered Linear");
         }
-        if let Op::Rapid { end, .. } = &trt.l1_ops[1] {
+        if let Op::Rapid { end, start, .. } = &trt.l1_ops[1] {
             let j = (end.x.value(), end.y.value(), end.z.value());
             let approx = |a: f64, b: f64| (a - b).abs() < 5e-5;
             assert!(approx(j.0, 5.1603), "jx = {j:?}");
             assert!(approx(j.1, 11.0622), "jy = {j:?}");
             assert!(approx(j.2, 0.0), "jz = {j:?}");
+            // v0.4 слоты: pass-through — программный C=30 в конце (кадр без
+            // C-слова — УНАСЛЕДОВАННАЯ модальность) и на start (resolved-
+            // state непрерывность, SPEC §2 v0.22).
+            assert_eq!(slot_val(&end.c).0, 30.0);
+            match start {
+                StartPoint::Known(p) => assert_eq!(slot_val(&p.c).0, 30.0),
+                StartPoint::Unknown => panic!("start must be known"),
+            }
         } else {
             panic!("expected lowered Rapid");
         }
-        // Off-режим (MachineKinematics::Triv): «Raw как прежде» — ротационный
-        // кадр носитель, линейный кадр TCP-оп (12.2-семантика).
+        // Off-режим (MachineKinematics::Triv), v0.4: ротационный кадр —
+        // lowered pass-through со слотами (XYZ — TCP-опы как прежде):
+        // op1 = Linear (10,0,0) со слотом c=Some(30) (слово кадра);
+        // op2 = Rapid (10,7,0) со слотом c=Some(30) — наследование.
+        // rtcp_active = false (кинематики не было).
         let off = L2Evaluator::new(mk(RtcpMode::Off)).run(&program).unwrap();
         assert!(!off.rtcp_active);
-        assert_eq!(off.l1_ops.len(), 1);
-        assert_eq!(off.raw_tail.len(), 1);
-        assert_eq!(off.raw_tail[0].marker, RawMarker::RotaryAxis);
-        assert_eq!(
-            decode_payload(&off.raw_tail[0].op),
-            "G1 X10.0000 C30.0000 F300.0000\n"
-        );
-        if let Op::Rapid { end, .. } = &off.l1_ops[0] {
-            // TCP-координаты (не joints): наследование X=10 из носителя.
+        assert_eq!(off.l1_ops.len(), 2);
+        assert_eq!(off.raw_tail.len(), 0);
+        if let Op::Linear { end, state, .. } = &off.l1_ops[0] {
+            // TCP-координаты (не joints) — Off-семантика прежняя.
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (10.0, 0.0, 0.0)
+            );
+            assert_eq!(slot_val(&end.c), (30.0, "30.0000"));
+            assert!(end.a.is_none() && end.b.is_none());
+            assert_eq!(state.feed.as_ref().map(|f| f.value()), Some(300.0));
+        } else {
+            panic!("expected TCP Linear");
+        }
+        if let Op::Rapid { end, .. } = &off.l1_ops[1] {
             assert_eq!(
                 (end.x.value(), end.y.value(), end.z.value()),
                 (10.0, 7.0, 0.0)
             );
+            assert_eq!(slot_val(&end.c).0, 30.0);
         } else {
             panic!("expected TCP Rapid");
         }
@@ -3131,6 +3362,10 @@ mod tests {
             assert!((back.x - 10.0).abs() < 5e-5, "back.x = {}", back.x);
             assert!((back.y - 20.0).abs() < 5e-5, "back.y = {}", back.y);
             assert!((back.z - 30.0).abs() < 5e-5, "back.z = {}", back.z);
+            // v0.4 слоты: pass-through — программные A/B в слотах (C не задан).
+            assert_eq!(slot_val(&end.a).0, 30.0);
+            assert_eq!(slot_val(&end.b).0, 0.0);
+            assert!(end.c.is_none());
         } else {
             panic!("expected lowered Linear");
         }
@@ -3161,6 +3396,52 @@ mod tests {
         assert!(!res.l1_ops.is_empty());
         // «Не молча»: per-op диагностика называет профиль Trsrn.
         assert!(res.diagnostics.iter().any(|d| d.message.contains("Trsrn")));
+    }
+
+    #[test]
+    fn v04_trsrn_solver_angles_in_slots_not_program_words() {
+        // v0.4 (SPEC v0.22): Trsrn — слоты = РЕШАННЫЕ solver-углы (joints
+        // B/C из trsrn_angles_from_tool_axis), НЕ программные слова.
+        // Ориентация ВНЕ главной ветви (C=170° > 90°) канонизируется
+        // решателем до той же оси инструмента (θ1∈[−90,90], θ2∈[0,180]) —
+        // слоты несут канонизированные joints; A не установлен (стол не
+        // задан) — слот None (pass-through verbatim).
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Linear,
+                ExprPose {
+                    x: Some(Expr::num(10.0)),
+                    y: Some(Expr::num(0.0)),
+                    z: Some(Expr::num(20.0)),
+                    a: None,
+                    b: Some(Expr::num(45.0)),
+                    c: Some(Expr::num(170.0)),
+                },
+                Some(Expr::num(300.0)),
+            )],
+            Vec::new(),
+        );
+        let res = L2Evaluator::new(cfg_trsrn(90.0)).run(&program).unwrap();
+        assert!(res.rtcp_active);
+        assert_eq!(res.l1_ops.len(), 1);
+        let Op::Linear { end, .. } = &res.l1_ops[0] else {
+            panic!("expected lowered Linear");
+        };
+        // Оракул = те же публичные функции ядра (провенанс solver, не
+        // pass-through программных слов).
+        let r = tool_rotation(90.0, 170.0, 45.0, 0.0);
+        let kz = [r[0][2], r[1][2], r[2][2]];
+        let (theta1, theta2) = trsrn_angles_from_tool_axis(90.0, kz).expect("main branch");
+        assert!(end.a.is_none(), "A не установлен — слот None");
+        let approx = |p: f64, q: f64| (p - q).abs() < 5e-5; // слоты — 4dp-канон
+        assert!(approx(slot_val(&end.b).0, theta2), "слот B = решённый θ2");
+        assert!(approx(slot_val(&end.c).0, theta1), "слот C = решённый θ1");
+        // Канонизация произошла: θ1 в главной ветви ≠ программное 170
+        // (решатель «не молча» — per-op диагностика называет solver).
+        assert!((theta1 - 170.0).abs() > 1e-9, "θ1 = {theta1} вне ветви");
+        // ПИН провенанса: если бы слоты были pass-through программных слов,
+        // C-слот был бы 170; фактически — решённый θ1 (главная ветвь).
+        assert!((slot_val(&end.c).0 - 170.0).abs() > 1.0);
     }
 
     #[test]
@@ -3280,6 +3561,12 @@ mod tests {
         assert!(approx(end.x.value(), 15.0));
         assert!(approx(end.y.value(), -5.0), "jy = {}", end.y.value());
         assert!(approx(end.z.value(), 10.0), "jz = {}", end.z.value());
+        // v0.4 слоты: pass-through — программные углы в слотах (A=90 и C=0
+        // — слова кадра; B не установлен). Слоты НЕ joints-X/Y/Z: joint
+        // ротационной оси = программный угол source-машины verbatim.
+        assert_eq!(slot_val(&end.a), (90.0, "90.0000"));
+        assert_eq!(slot_val(&end.c).0, 0.0);
+        assert!(end.b.is_none());
         // Оракул-круг: forward(inverse(pose)) == pose (kinematics-ядро).
         let fwd = xyzac_forward(
             &crate::kinematics::TrtParams::default(),
@@ -3601,6 +3888,66 @@ mod tests {
         assert!(!off.rtcp_active);
         assert_eq!(off.l1_ops.len(), 1);
         assert!(matches!(off.l1_ops[0], Op::Arc { .. }));
+    }
+
+    /// v0.4 (Off): дуга с ротационным словом — вне канона (ARC-слоты
+    /// запрещены §6) — честный носитель с ИМЕНОВАННОЙ причиной; до v0.4
+    /// A-слово дуги молча терялось в Op::Arc. Линейная компонента и слова
+    /// дуги трекаются: следующий ход наследует позицию и A-модальность в
+    /// слоте. Дуга БЕЗ ротационных слов опускается как прежде (там же).
+    #[test]
+    fn v04_off_rotary_arc_named_carrier() {
+        let arc_stmt = L2Stmt::Move {
+            kind: MoveKind::Arc {
+                ijk: [Some(Expr::num(-5.0)), Some(Expr::num(0.0)), None],
+                r: None,
+                dir: eid_core::ast::Dir::Ccw,
+            },
+            target: ExprPose {
+                x: Some(Expr::num(5.0)),
+                y: Some(Expr::num(5.0)),
+                z: Some(Expr::num(2.0)),
+                a: Some(Expr::num(30.0)),
+                b: None,
+                c: None,
+            },
+            feed: None,
+            spindle: None,
+            src: placeholder_span(),
+        };
+        let program = L2Program::new(
+            vec![
+                arc_stmt,
+                move_stmt(MoveKind::Linear, target_const(5.0, 7.0, 2.0), None),
+            ],
+            Vec::new(),
+        );
+        let cfg = L2Config {
+            initial_pos: Some([10.0, 0.0, 2.0]), // старт дуги известен
+            ..cfg()
+        };
+        let res = L2Evaluator::new(cfg).run(&program).unwrap();
+        assert!(!res.rtcp_active, "Off: rtcp_active = FALSE");
+        assert_eq!(res.raw_tail.len(), 1);
+        assert_eq!(res.raw_tail[0].marker, RawMarker::ArcUnlowered);
+        assert!(res
+            .diagnostics
+            .iter()
+            .any(|d| { d.message.contains("rotary arc outside canon v0.4") }));
+        // Payload дословный (слово A подставлено).
+        assert_eq!(
+            decode_payload(&res.raw_tail[0].op),
+            "G2 X5.0000 Y5.0000 Z2.0000 A30.0000\n"
+        );
+        // Дуга НЕ опустилась; следующий ход lowered со слотом-наследством.
+        assert_eq!(res.l1_ops.len(), 1);
+        if let Op::Linear { end, .. } = &res.l1_ops[0] {
+            assert_eq!(
+                (end.x.value(), end.y.value(), end.z.value()),
+                (5.0, 7.0, 2.0)
+            );
+            assert_eq!(slot_val(&end.a).0, 30.0, "A-слово дуги трекается");
+        }
     }
 
     // ---------- D1: кадры, глубина 9, M99/Return, G66 ----------

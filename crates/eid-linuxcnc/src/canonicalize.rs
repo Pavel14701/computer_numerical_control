@@ -47,6 +47,20 @@ pub fn p3_snap(v: [f64; 3]) -> Point3 {
     Point3::xyz(num_snap(v[0]), num_snap(v[1]), num_snap(v[2]))
 }
 
+/// Конец хода с resolved rotary-слотами (v0.4 §1.2, SPEC v0.22): XYZ
+/// квантуется как обычно (num_snap), слоты — Some/None как пришли
+/// (значения уже num_snap-нуты на стороне parser.rs).
+pub fn p3_snap_rot(v: [f64; 3], rot: &eid_core::parser::RotarySlots) -> Point3 {
+    Point3::pose(
+        num_snap(v[0]),
+        num_snap(v[1]),
+        num_snap(v[2]),
+        rot.0.clone(),
+        rot.1.clone(),
+        rot.2.clone(),
+    )
+}
+
 /// Num-точка → [f64; 3] (f64-зеркало verbatim-значений).
 pub fn to_f64(p: &Point3) -> [f64; 3] {
     [p.x.value, p.y.value, p.z.value]

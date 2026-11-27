@@ -2633,3 +2633,200 @@ fn g4_does_not_cancel_cycle() {
         .count();
     assert_eq!(dwells, 1, "G4 между отверстиями — один Dwell-оп");
 }
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): resolved rotary-слоты Point3.
+// Чек-лист «правило → тест» (трассируемость правило↔тест):
+//   §1.2 v0.22 слово на ходовом кадре → слот конца + machine-модальное
+//       наследование (A/B на G1; A/B/C на G0; чисто-rotary кадр — движение)
+//       → spec_1_2_haas_rot_slot_modal_link_v022
+//   §1.2 v0.22 первый ход после якоря — старт None
+//       → spec_1_2_haas_rot_first_move_start_none_v022 (в связке выше)
+//   §2.1 v0.22 C в G01 — фаска, прежний носитель (Haas-специфика; НЕ слот)
+//       → spec_2_1_haas_c_word_chamfer_carrier_v022
+//   §5 v0.22 G65/M97 буквенные слова — АРГУМЕНТЫ вызова, НЕ слот
+//       → spec_5_haas_macro_args_not_slot_v022
+//   §6 v0.22 дуга с A/B/C — прежний носитель
+//       → spec_6_haas_rot_arc_carrier_v022
+//   §7 v0.22 цикл с A/B/C — прежний носитель
+//       → spec_7_haas_rot_cycle_carrier_v022
+//   R1 v0.22 round-trip parse→emit→parse AST-стабилен
+//       → spec_1_2_haas_rot_roundtrip_ast_v022
+//   3-осевые опы (все None) — байт-идентичны прежним: существующие goldens
+//       (haas_emit.rs) — доказательство без регенерации.
+// ===========================================================================
+
+/// Позитив: A/B на G1-кадре → слоты; C на G0 → слот (ротационная ось вне
+/// G01-фаски); кадр без слов → унаследованная модальность; старт = слоты
+/// конца предыдущего опа.
+#[test]
+fn spec_1_2_haas_rot_slot_modal_link_v022() {
+    let src = "G92 X0 Y0 Z0\nG1 X10. A90. B5. F100.\nG0 C180.\nG1 X20.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    let mut motions = p.ops.iter().filter_map(|op| match op {
+        Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => Some((start, end)),
+        _ => None,
+    });
+    let (s1, e1) = motions.next().expect("первый ход");
+    let StartPoint::Known(s1p) = s1 else {
+        panic!("known start")
+    };
+    assert!(
+        s1p.a.is_none() && s1p.b.is_none() && s1p.c.is_none(),
+        "первый ход после G92-якоря — старт None"
+    );
+    assert_eq!(e1.a.as_ref().map(|n| n.value()), Some(90.0));
+    assert_eq!(e1.b.as_ref().map(|n| n.value()), Some(5.0));
+    let (_, e2) = motions.next().expect("второй ход (чисто-rotary G0 C180.)");
+    assert_eq!(
+        e2.c.as_ref().map(|n| n.value()),
+        Some(180.0),
+        "C на G0 — ротационный слот (kept, §3 v0.22: не zero-length)"
+    );
+    let (s3, e3) = motions.next().expect("третий ход");
+    let StartPoint::Known(s3p) = s3 else {
+        panic!("known start 3")
+    };
+    assert_eq!(
+        s3p.c.as_ref().map(|n| n.value()),
+        Some(180.0),
+        "старт = слоты конца предыдущего опа (C180 жив после G0-C-хода)"
+    );
+    assert_eq!(
+        e3.a.as_ref().map(|n| n.value()),
+        Some(90.0),
+        "кадр без A — end.a унаследован (machine-модальность)"
+    );
+}
+
+/// Негатив §2.1: C в G01 — фаска угла (Haas-специфика) — прежний носитель,
+/// НЕ ротационный слот (словарь C двухсмысленный: фаска старше).
+#[test]
+fn spec_2_1_haas_c_word_chamfer_carrier_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X0. Y0.\nG1 X10. C1. F100.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "C в G01 — прежний фаска-носитель: {:?}",
+        p.ops
+    );
+    let no_c_slot = p.ops.iter().all(|op| match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => end.c.is_none(),
+        _ => true,
+    });
+    assert!(no_c_slot, "C в G01 не создаёт слот (фаска, не ось)");
+}
+
+/// Негатив §5: G65/M97 с буквенными словами — АРГУМЕНТЫ вызова
+/// (существующий dispatch — Raw-носитель), НЕ поза: слоты не строятся,
+/// модальность углов вызовом не устанавливается.
+#[test]
+fn spec_5_haas_macro_args_not_slot_v022() {
+    let src = "G92 X0 Y0 Z0\nG1 X1. F100.\nG65 P9010 A5. B2.\nM97 P10 A7.\nG1 X2.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    let raws = p
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::Raw { .. }))
+        .count();
+    assert!(raws >= 2, "G65 и M97 — Raw-носители: {:?}", p.ops);
+    let no_slots = p.ops.iter().all(|op| match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => {
+            end.a.is_none() && end.b.is_none() && end.c.is_none()
+        }
+        _ => true,
+    });
+    assert!(no_slots, "аргументы вызовов не создают слотов");
+}
+
+/// Негатив §6: дуга с ротационным словом — прежний носитель (ротационная
+/// дуга вне канона v0.4).
+#[test]
+fn spec_6_haas_rot_arc_carrier_v022() {
+    let src = "G92 X0 Y0 Z0\nG1 X0. Y0. F100.\nG2 X10. I5. A45.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "дуга с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops.iter().any(|op| matches!(op, Op::Arc { .. })),
+        "ротационная дуга НЕ строит Arc-оп"
+    );
+}
+
+/// Негатив §7: цикл с ротационным словом — прежний носитель (существующая
+/// развёртка §7.7).
+#[test]
+fn spec_7_haas_rot_cycle_carrier_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X0. Y0. Z5.\nG81 X10. Z-5. R2. A5. F100.\nM30\n";
+    let p = parse(src).expect("parse ok");
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "цикл с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops
+            .iter()
+            .any(|op| matches!(op, Op::Rapid { sub: Some(_), .. })),
+        "развёртка не выполняется — носитель вместо неё"
+    );
+}
+
+/// Round-trip v0.22: parse → emit (A/B/C-слова DPB-формата) → parse — AST
+/// стабилен (semantic_diff 0, кроме документированного path_mode value shift).
+#[test]
+fn spec_1_2_haas_rot_roundtrip_ast_v022() {
+    let src = "G92 X0 Y0 Z0\nG0 X10. A90. B5.\nG1 X20. F100.\nM30\n";
+    let a = HaasAdapter::new();
+    let p1 = a.parse(src, "rt.ngc").expect("parse #1").program;
+    let text = a.emit(&p1).expect("emit").text;
+    assert!(
+        text.contains("G0 X10.0000 Y0.0000 Z0.0000 A90.0000 B5.0000"),
+        "эмиссия пишет A/B/C-слова (DPB decimal-point-always): {text:?}"
+    );
+    assert!(
+        text.contains("G1 X20.0000 Y0.0000 Z0.0000 A90.0000 B5.0000"),
+        "рестейт унаследованных слотов (модальность НЕ оптимизируется): {text:?}"
+    );
+    let p2 = a.parse(&text, "rt2.ngc").expect("reparse").program;
+    let d = eid_harness::diff::semantic_diff(&p1, &p2, &eid_harness::diff::DiffConfig::default());
+    // Документированное исключение (зеркало haas_emit.rs): path_mode
+    // ExactPath→ExactStop — Haas value shift G61; ротационные слоты в
+    // диффе участвуют — их расхождений нет.
+    let d: Vec<_> = d
+        .into_iter()
+        .filter(|x| {
+            !matches!(
+                x,
+                eid_harness::diff::Divergence::MetaField { field: "path_mode" }
+                if matches!(p1.path_mode, eid_core::ast::PathMode::ExactPath)
+                    && matches!(p2.path_mode, eid_core::ast::PathMode::ExactStop)
+            )
+        })
+        .collect();
+    assert!(
+        d.is_empty(),
+        "round-trip AST стабилен (rotary-слоты): {d:?}"
+    );
+}

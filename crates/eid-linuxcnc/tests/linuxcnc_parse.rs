@@ -4599,3 +4599,158 @@ fn v022_g92_bare_cross_dialect_grbl_linuxcnc() {
         gr_mid.program.ops
     );
 }
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): resolved rotary-слоты Point3.
+// Чек-лист «правило → тест» (трассируемость правило↔тест, зеркало
+// eid-core/tests/spec_obligations.rs):
+//   §1.2 v0.22 слово на G0/G1-кадре → слот конца + machine-модальное
+//       наследование (кадр без слова → унаследованный modal; Known-старт =
+//       конец предыдущего опа) → spec_1_2_linuxcnc_rot_slot_modal_link_v022
+//   §1.2 v0.22 первый ход после якоря — старт None (якорь углы не ставит)
+//       → spec_1_2_linuxcnc_rot_first_move_start_none_v022
+//   §6 v0.22 дуга с A/B/C — прежний носитель (ротационная дуга вне канона)
+//       → spec_6_linuxcnc_rot_arc_carrier_v022
+//   §7 v0.22 цикл с A/B/C — прежний носитель (существующая развёртка)
+//       → spec_7_linuxcnc_rot_cycle_carrier_v022
+//   COVERAGE §4 U/V/W — вне-скоуп носитель нетронут (не-ABC причины)
+//       → spec_4_linuxcnc_uvw_carrier_unchanged_v022
+//   R1 v0.22 round-trip parse→emit→parse AST-стабилен (эмиссия пишет
+//       A/B/C-слова в диалектном формате) → spec_1_2_linuxcnc_rot_roundtrip_ast_v022
+//   3-осевые опы (все None) — байт-идентичны прежним: существующие goldens
+//       (linuxcnc_emit.rs) — доказательство без регенерации.
+// ===========================================================================
+
+/// Позитив: слово на ходовом кадре → слот; второй кадр БЕЗ слова →
+/// унаследованная модальность; старт = слоты конца предыдущего опа.
+#[test]
+fn spec_1_2_linuxcnc_rot_slot_modal_link_v022() {
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG92 X0. Y0. Z0.\nG0 X10. A90.\nG1 X20. F100.\nM2\n";
+    let p = a.parse(src, "rot.ngc").expect("parse ok").program;
+    let mut motions = p.ops.iter().filter_map(|op| match op {
+        Op::Rapid { start, end, .. } | Op::Linear { start, end, .. } => Some((start, end)),
+        _ => None,
+    });
+    let (s1, e1) = motions.next().expect("первый ход");
+    // Первый ход после G92-якоря: старт без слотов (якорь углы не ставит).
+    let StartPoint::Known(s1p) = s1 else {
+        panic!("known start")
+    };
+    assert!(
+        s1p.a.is_none() && s1p.b.is_none() && s1p.c.is_none(),
+        "первый ход после якоря — старт None"
+    );
+    assert_eq!(e1.a.as_ref().map(|n| n.value()), Some(90.0), "слово → слот");
+    assert!(e1.b.is_none() && e1.c.is_none(), "sparse: только A");
+    let (s2, e2) = motions.next().expect("второй ход");
+    // Known-старт = конец предыдущего опа (resolved linking, §2 v0.22).
+    let StartPoint::Known(s2p) = s2 else {
+        panic!("known start 2")
+    };
+    assert_eq!(
+        s2p.a.as_ref().map(|n| n.value()),
+        Some(90.0),
+        "старт = слоты конца предыдущего опа"
+    );
+    // Кадр без A-слова → унаследованная machine-модальность (аналог feed).
+    assert_eq!(
+        e2.a.as_ref().map(|n| n.value()),
+        Some(90.0),
+        "второй кадр без A — end.a унаследован"
+    );
+}
+
+/// Негатив: дуга с ротационным словом — прежний носитель (ротационная дуга
+/// вне канона v0.4, §6): слот НЕ строится, строка целиком Raw.
+#[test]
+fn spec_6_linuxcnc_rot_arc_carrier_v022() {
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG1 X0. Y0. F100.\nG2 X10. I5. A45.\nM2\n";
+    let p = a.parse(src, "rotarc.ngc").expect("parse ok").program;
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "дуга с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops.iter().any(|op| matches!(op, Op::Arc { .. })),
+        "ротационная дуга НЕ строит Arc-оп"
+    );
+    // Слот-носитель не поднимает углы ни в один оп.
+    let no_slots = p.ops.iter().all(|op| match op {
+        Op::Rapid { end, .. } | Op::Linear { end, .. } => {
+            end.a.is_none() && end.b.is_none() && end.c.is_none()
+        }
+        _ => true,
+    });
+    assert!(no_slots, "носитель не создаёт слотов");
+}
+
+/// Негатив: развёртываемый цикл с ротационным словом — прежний носитель
+/// (циклы — существующая развёртка §7; A/B/C туда не добавляются).
+#[test]
+fn spec_7_linuxcnc_rot_cycle_carrier_v022() {
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG1 X0. Y0. Z5. F100.\nG81 X10. Z-5. R2. A5.\nM2\n";
+    let p = a.parse(src, "rotcycle.ngc").expect("parse ok").program;
+    assert!(
+        p.ops.iter().any(|op| matches!(
+            op,
+            Op::Raw {
+                code: ErrorCode::UnsupportedSemantics,
+                ..
+            }
+        )),
+        "цикл с A — Raw-носитель: {:?}",
+        p.ops
+    );
+    assert!(
+        !p.ops
+            .iter()
+            .any(|op| matches!(op, Op::Rapid { sub: Some(_), .. })),
+        "развёртка не выполняется — носитель вместо неё"
+    );
+}
+
+/// Не-ABC носители нетронуты: U/V/W остаются вне-скоуп носителем (rule 6).
+#[test]
+fn spec_4_linuxcnc_uvw_carrier_unchanged_v022() {
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG1 X10. U5. F100.\nM2\n";
+    let p = a.parse(src, "uvw.ngc").expect("parse ok").program;
+    assert!(
+        p.ops
+            .iter()
+            .any(|op| matches!(op, Op::Raw { reason, .. } if reason.contains("вне-скоуп оси"))),
+        "U/V/W — прежний вне-скоуп носитель: {:?}",
+        p.ops
+    );
+}
+
+/// Round-trip v0.22: parse → emit (A/B/C-слова в диалектном формате) →
+/// parse — AST стабилен (semantic_diff 0).
+#[test]
+fn spec_1_2_linuxcnc_rot_roundtrip_ast_v022() {
+    let a = LinuxCncAdapter::new();
+    let src = "G21 G90 G94 G17\nG92 X0. Y0. Z0.\nG0 X10. A90. B5. C-15.\nG1 X20. F100.\nM2\n";
+    let p1 = a.parse(src, "rt.ngc").expect("parse #1").program;
+    let text = a.emit(&p1).expect("emit").text;
+    assert!(
+        text.contains("G0 X10.0000 Y0.0000 Z0.0000 A90.0000 B5.0000 C-15.0000"),
+        "эмиссия пишет A/B/C-слова в диалектном формате: {text:?}"
+    );
+    assert!(
+        text.contains("G1 X20.0000 Y0.0000 Z0.0000 A90.0000 B5.0000 C-15.0000"),
+        "рестейт унаследованных слотов (модальность НЕ оптимизируется): {text:?}"
+    );
+    let p2 = a.parse(&text, "rt2.ngc").expect("reparse").program;
+    let d = semantic_diff(&p1, &p2, &DiffConfig::default());
+    assert!(d.is_empty(), "round-trip AST стабилен: {d:?}");
+}

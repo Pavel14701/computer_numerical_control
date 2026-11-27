@@ -169,6 +169,12 @@ pub enum GrblEmissionCondition {
     ToolChange,
     /// `wcs_outside_g54_g59` — G59.x вне словаря GRBL.
     WcsOutsideG54G59,
+    /// `rotary_slots_outside_grbl_dictionary` — resolved rotary-слоты позы
+    /// (v0.4 §1.2, SPEC v0.22) на end или Known-start хода: словарь GRBL 1.1
+    /// НЕ содержит ротационных осей A/B/C (парсер их никогда не поднимает —
+    /// existing-диспозиция; гейт честного кросс-AST: hand-built/EID-text AST
+    /// с Some-слотами не эмитится, а не молча теряет углы).
+    RotarySlotsOutsideDictionary,
     /// `motion_feed_none` — канон-форма §3/§4.
     MotionFeedNone,
     /// `arc_unknown_start` — IJK требует числового старта.
@@ -193,6 +199,9 @@ impl GrblEmissionCondition {
         match self {
             GrblEmissionCondition::ToolChange => "tool_change",
             GrblEmissionCondition::WcsOutsideG54G59 => "wcs_outside_g54_g59",
+            GrblEmissionCondition::RotarySlotsOutsideDictionary => {
+                "rotary_slots_outside_grbl_dictionary"
+            }
             GrblEmissionCondition::MotionFeedNone => "motion_feed_none",
             GrblEmissionCondition::ArcUnknownStart => "arc_unknown_start",
             GrblEmissionCondition::ArcNormalNonCanonical => "arc_normal_non_canonical",
@@ -211,7 +220,8 @@ impl GrblEmissionCondition {
         match self {
             GrblEmissionCondition::ToolChange => SYN, // M6 вне словаря GRBL (#27)
             GrblEmissionCondition::WcsOutsideG54G59 => SYN, // G59.x вне словаря GRBL
-            GrblEmissionCondition::MotionFeedNone => INVAL, // канон-форма §3/§4
+            GrblEmissionCondition::RotarySlotsOutsideDictionary => SYN, // A/B/C вне словаря GRBL 1.1 (SPEC v0.22 §5)
+            GrblEmissionCondition::MotionFeedNone => INVAL,             // канон-форма §3/§4
             GrblEmissionCondition::ArcUnknownStart => INVAL, // IJK требует числового старта
             GrblEmissionCondition::ArcNormalNonCanonical => INVAL, // нормаль не +ось (§6)
             GrblEmissionCondition::RawPayloadNotHex => INVAL, // grammar D9 v0.3
@@ -539,16 +549,28 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
                 "tool_change: M6 outside GRBL 1.1 dictionary (COVERAGE §5; vector #27 r4_expect)",
                 Some(src.clone()),
             )),
-            Op::Linear { state, src, .. } => {
+            Op::Linear {
+                start,
+                end,
+                state,
+                src,
+                ..
+            } => {
+                check_rotary_slots(&mut v, start, end, src);
                 check_motion_state(table, &mut v, state, src, true);
             }
             Op::Arc {
                 start,
+                end,
                 normal,
                 state,
                 src,
                 ..
             } => {
+                // v0.22 §5: ротационные слоты вне словаря GRBL — отказ через
+                // таблицу (ARC-конец инвариантно None; Known-start проверяется
+                // defensive — согласие с Rapid/Linear-гейтом).
+                check_rotary_slots(&mut v, start, end, src);
                 check_motion_state(table, &mut v, state, src, true);
                 if matches!(start, StartPoint::Unknown) {
                     v.push(err(
@@ -566,7 +588,16 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
                     ));
                 }
             }
-            Op::Rapid { state, src, .. } => check_motion_state(table, &mut v, state, src, false),
+            Op::Rapid {
+                start,
+                end,
+                state,
+                src,
+                ..
+            } => {
+                check_rotary_slots(&mut v, start, end, src);
+                check_motion_state(table, &mut v, state, src, false);
+            }
             Op::Raw {
                 payload_hex, src, ..
             } => {
@@ -624,6 +655,30 @@ fn validate_grbl(table: &EmissionLegality, program: &Program) -> Vec<Diagnostic>
         }
     }
     v
+}
+
+/// Гейт ротационных слотов (v0.4 §1.2, SPEC v0.22; COVERAGE §5 GRBL-колонка):
+/// ход с has_rotary() (end ИЛИ Known-start) — отказ E_UNSUPPORTED_SYNTAX.
+/// Словарь GRBL 1.1 не содержит A/B/C — слот некуда писать; 3-осевые ходы
+/// (все None) проходят без изменений (байт-идентично прежнему). Код —
+/// тотальная функция условия; согласие с таблицей — legality_table_complete.
+fn check_rotary_slots(
+    v: &mut Vec<Diagnostic>,
+    start: &StartPoint,
+    end: &Point3,
+    src: &eid_core::ast::SrcSpan,
+) {
+    let start_rotary = match start {
+        StartPoint::Known(p) => p.has_rotary(),
+        StartPoint::Unknown => false,
+    };
+    if start_rotary || end.has_rotary() {
+        v.push(err(
+            GrblEmissionCondition::RotarySlotsOutsideDictionary.code(),
+            "rotary_slots_outside_grbl_dictionary: rotary slots outside GRBL 1.1 dictionary — the GRBL word dictionary has no rotary axes (A/B/C); resolved pose slots cannot be emitted (SPEC v0.22 §5)",
+            Some(src.clone()),
+        ));
+    }
 }
 
 fn check_motion_state(

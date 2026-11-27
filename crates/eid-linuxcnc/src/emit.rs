@@ -27,6 +27,13 @@
 //!     при неизменном значении (SPEC §7.4a v0.18: rs274 ассертит
 //!     SET_FEED_RATE на каждом кадре с F-словом — каноническое сравнение
 //!     1:1 теряло ассерт);
+//!     v0.4 §1.2 (SPEC v0.22) — resolved rotary-слоты конца: слова A/B/C
+//!     на каждом Some (канонический порядок, формат зеркален X/Y/Z,
+//!     рестейт легален — модальность не оптимизируется); все None
+//!     (3-осевой оп) — пусто, текст байт-идентичен прежнему; дуга A/B/C не
+//!     пишет (ротационная дуга вне канона §6); стартовые слоты Known-старта
+//!     воспроизводятся linking'ом (старт = конец предыдущего опа — его
+//!     слова уже в потоке; первый ход после якоря — None, слова нет);
 //!  7. TOOL_CHANGE → `T<n> M6` одной строкой (детерминированно); STOP →
 //!     M0/M1; PEND → M2; WCS_DEFINE → `G10 L2 P<n> X.. Y.. Z..`;
 //!     WCS_SET_HERE → `G10 L20 P<n> X.. Y.. Z..`; DWELL → `G4 P<sec>`.
@@ -548,6 +555,27 @@ fn num_text(n: &Num) -> String {
     }
 }
 
+/// Слова ротационных слотов конца хода (v0.4 §1.2, SPEC v0.22): каждый Some —
+/// слово A/B/C (канонический порядок осей X Y Z A B C), формат числа —
+/// зеркало X/Y/Z (verbatim-предпочтение, 4dp). Resolved-модальность НЕ
+/// оптимизируется — пишутся ВСЕ Some (рестейт легален; reparse по linking
+/// восстанавливает и стартовые слоты: Known-старт = конец предыдущего опа,
+/// первый ход после якоря — None, слово не пишется). Дуга A/B/C не пишет
+/// никогда (ротационная дуга вне канона §6 — конец слотов не несёт).
+/// None на всех слотах (3-осевой оп) — пустая строка, текст байт-идентичен
+/// прежнему (goldens живы).
+fn rot_words(end: &eid_core::ast::Point3) -> String {
+    let mut s = String::new();
+    for (letter, slot) in [("A", &end.a), ("B", &end.b), ("C", &end.c)] {
+        if let Some(n) = slot {
+            s.push(' ');
+            s.push_str(letter);
+            s.push_str(&num_text(n));
+        }
+    }
+    s
+}
+
 fn diag(code: ErrorCode, msg: impl Into<String>) -> Diagnostic {
     Diagnostic {
         code,
@@ -737,14 +765,17 @@ impl<'a> Writer<'a> {
                     "G0"
                 };
                 // v0.21-fix: units-якорь — до-конверсный литерал end.
+                // v0.4 §1.2: ротационные слоты — слова A/B/C (units-конверсии
+                // углы не подлежат — literal как хранится).
                 let ex = self.uinv.num(&self.uinv.end, op_idx, &end.x);
                 let ey = self.uinv.num(&self.uinv.end, op_idx, &end.y);
                 let ez = self.uinv.num(&self.uinv.end, op_idx, &end.z);
                 self.line(format!(
-                    "{g} X{} Y{} Z{}{f}",
+                    "{g} X{} Y{} Z{}{}{f}",
                     num_text(&ex),
                     num_text(&ey),
-                    num_text(&ez)
+                    num_text(&ez),
+                    rot_words(end)
                 ));
                 Ok(())
             }
@@ -763,10 +794,11 @@ impl<'a> Writer<'a> {
                 let ey = self.uinv.num(&self.uinv.end, op_idx, &end.y);
                 let ez = self.uinv.num(&self.uinv.end, op_idx, &end.z);
                 self.line(format!(
-                    "{g} X{} Y{} Z{}{f}",
+                    "{g} X{} Y{} Z{}{}{f}",
                     num_text(&ex),
                     num_text(&ey),
-                    num_text(&ez)
+                    num_text(&ez),
+                    rot_words(end)
                 ));
                 Ok(())
             }

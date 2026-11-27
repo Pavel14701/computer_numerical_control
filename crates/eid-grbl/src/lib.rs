@@ -62,14 +62,15 @@ impl GrblAdapter {
             // v0.2 волна 4 (§2.5 В1): ключи — типизированный enum; код-зеркало
             // обязано совпадать с `cond.code()` (тест legality_table_complete).
             illegal: vec![
-                (C::ToolChange, SYN),              // M6 вне словаря GRBL (#27)
-                (C::WcsOutsideG54G59, SYN),        // G59.x вне словаря GRBL
-                (C::MotionFeedNone, INVAL),        // канон-форма §3/§4
-                (C::ArcUnknownStart, INVAL),       // IJK требует числового старта
-                (C::ArcNormalNonCanonical, INVAL), // нормаль не +ось (§6)
-                (C::RawPayloadNotHex, INVAL),      // grammar D9 v0.3
-                (C::ProgramEndMissing, INVAL),     // структура (CORPUS n14)
-                (C::ProgramEndDuplicate, INVAL),   // n13
+                (C::ToolChange, SYN),                   // M6 вне словаря GRBL (#27)
+                (C::WcsOutsideG54G59, SYN),             // G59.x вне словаря GRBL
+                (C::RotarySlotsOutsideDictionary, SYN), // rotary-слоты вне словаря GRBL 1.1 (SPEC v0.22 §5)
+                (C::MotionFeedNone, INVAL),             // канон-форма §3/§4
+                (C::ArcUnknownStart, INVAL),            // IJK требует числового старта
+                (C::ArcNormalNonCanonical, INVAL),      // нормаль не +ось (§6)
+                (C::RawPayloadNotHex, INVAL),           // grammar D9 v0.3
+                (C::ProgramEndMissing, INVAL),          // структура (CORPUS n14)
+                (C::ProgramEndDuplicate, INVAL),        // n13
                 (C::ProgramEndNotLast, INVAL), // n12: НЕ-Raw оп после PEND (SPEC §5.2 v0.20 — Raw-хвост легален)
             ],
             warnings: vec![

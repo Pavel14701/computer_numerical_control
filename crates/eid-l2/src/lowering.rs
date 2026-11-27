@@ -11,10 +11,12 @@
 //!   Notice + Cw↔Ccw) — [`crate::interp`] (решение на WithTransform),
 //!   флаг — [`crate::interp::L2Config::allow_mirror_bake`] (конфиг-структура
 //!   lowering, НЕ MachineProfile — по заданию 12.2);
-//! * строка 5 (G0 A#100 → `Op::Raw` с payload `G0 A5.0000\n`) —
-//!   [`format_frame`]/[`payload_hex`]/[`raw_frame_op`]: payload — hex
-//!   ASCII-текста кадра с подставленными значениями, 4dp, терминатор `\n`
-//!   (чек-лист T4 ДОСЛОВНО: `G0 X15.0000 A15.0000\n`);
+//! * строка 5 (v0.4 / SPEC v0.22 — РЕВИЗИЯ: G0 A#100 — lowered pass-
+//!   through-оп с resolved-слотами, НЕ носитель; [`format_frame`]/
+//!   [`payload_hex`]/[`raw_frame_op`] остаются форматированием payload
+//!   ЧЕСТНЫХ носителей — неполная поза / чужое слово / ротационная дуга:
+//!   payload — hex ASCII-текста кадра с подставленными значениями, 4dp,
+//!   терминатор `\n`, чек-лист T4 ДОСЛОВНО: `G0 X15.0000 A15.0000\n`);
 //! * строка 6 (G43.4/G68.2 → Raw с подставленными переменными) — там же;
 //! * строка 7 (G31/чтение SkipPos → останов E_RUNTIME_STATE, программа
 //!   остаётся в L2) — [`crate::interp::L2ExecError::Eval`]-останов +
@@ -30,15 +32,20 @@
 //! ГРАНИЦА 12.5.2 / 12.5.3 (RTCP, фаза 12.5 — 12.5.3 РЕАЛИЗОВАН): 12.5.2 —
 //! RTCP-режим ([`crate::interp::RtcpMode::XyzacTrt`] в
 //! [`L2Config::rtcp_mode`]) разрешает переменные ротационных слов (A/B/C)
-//! в T4-носитель так же, как линейные, и ПОМЕЧАЕТ lowering (флаг
-//! [`crate::interp::LoweringResult::rtcp_active`] + диагностика).
+//! так же, как линейные, и ПОМЕЧАЕТ lowering (флаг
+//! [`crate::interp::LoweringResult::rtcp_active`] + диагностика); v0.4:
+//! ротационный кадр lowered (joints-оп со слотами при полной позе /
+//! честный носитель при неполной).
 //! 12.5.3 — MachineKinematics-профиль: ходы с ПОЛНОЙ TCP-позой опускаются
 //! в L1-опы machine-осей (TCP→joints: X/Y/Z-компонента вычисляется
 //! inverse-кинематикой [`crate::kinematics::xyzac_inverse`] /
-//! [`crate::kinematics::xyzbc_inverse`], ротационные A/C — B/C = joints
-//! pass-through; механика — [`crate::interp::L2Evaluator::exec_trt_move`]).
-//! ГРАНИЦЫ (честно): [`RtcpMode::Off`] (MachineKinematics::Triv) —
-//! ротационные кадры = Raw-носители (прежде); неполная TCP-поза / чужое
+//! [`crate::kinematics::xyzbc_inverse`], слоты = программные углы
+//! pass-through (v0.4); механика —
+//! [`crate::interp::L2Evaluator::exec_trt_move`]).
+//! ГРАНИЦЫ (честно): [`RtcpMode::Off`] (MachineKinematics::Triv) — v0.4:
+//! ротационные кадры = lowered pass-through со слотами (носители — только
+//! неполная поза и ротационная дуга «rotary arc outside canon v0.4»);
+//! неполная TCP-поза / чужое
 //! ротационное слово (B под XYZAC, A под XYZBC) / дуги под trt-профилем
 //! (TCP-дуга не аффинна в machine-осях; NURBS-RTCP-комбинаторика — вне
 //! скоупа) — честные носители; head-head и прочие топологии — при
@@ -849,17 +856,23 @@ mod tests {
         assert!((fwd.x - 15.0).abs() < 1e-3);
         assert!((fwd.y - 10.0).abs() < 1e-3);
         assert!((fwd.z - 5.0).abs() < 1e-3);
-        // Off-режим с той же программой: носитель T4 «как прежде» (Triv).
+        // Off-режим с той же программой: v0.4 — lowered pass-through со
+        // слотами (XYZ = TCP-оп как прежде; слоты = программные углы
+        // verbatim), rtcp_active = false; носителя T4 больше нет.
         let off = lower(&program, L2Config::default()).unwrap();
         assert!(!off.rtcp_active);
-        assert_eq!(off.l1_ops.len(), 0);
-        assert_eq!(off.raw_tail.len(), 1);
-        assert!(matches!(
-            &off.raw_tail[0].op,
-            Op::Raw {
-                code: ErrorCode::UnsupportedSemantics,
-                ..
-            }
-        ));
+        assert!(off.raw_tail.is_empty());
+        assert_eq!(off.l1_ops.len(), 1);
+        let Op::Rapid { end: off_end, .. } = &off.l1_ops[0] else {
+            panic!("expected Off Rapid op");
+        };
+        assert_eq!(
+            (off_end.x.value(), off_end.y.value(), off_end.z.value()),
+            (15.0, 10.0, 5.0)
+        );
+        // Слоты: A=90 (параметрическое слово разрешено), C=0 — pass-through.
+        assert_eq!(off_end.a.as_ref().map(|n| n.value()), Some(90.0));
+        assert_eq!(off_end.c.as_ref().map(|n| n.value()), Some(0.0));
+        assert!(off_end.b.is_none());
     }
 }

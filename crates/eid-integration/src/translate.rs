@@ -542,28 +542,6 @@ fn scan_l2_units(src: &str) -> L2UnitsScan {
     }
 }
 
-/// Есть ли в L2-программе ходы с ротационными словами (A/B/C)? Рекурсивно:
-/// главные stmts + тела While/WithTransform + тела подпрограмм (subs).
-/// Гейт маршрута (см. [`translate_l2_route`] шаг 4а): под активной
-/// кинематикой ротационные joints НЕ представимы в L1-грамматике v0.3
-/// (Op-концы Point3 — слота A/B/C нет), lowered-поток несёт только X/Y/Z
-/// machine-joints — эмиссия такой программы потеряла бы ход ротационной
-/// оси; такие программы честно отказываются (именованная граница).
-fn l2_program_has_rotary_moves(p: &eid_l2::ast::L2Program) -> bool {
-    fn pose_rotary(t: &eid_l2::ast::ExprPose) -> bool {
-        t.a.is_some() || t.b.is_some() || t.c.is_some()
-    }
-    fn walk(stmts: &[eid_l2::ast::L2Stmt]) -> bool {
-        stmts.iter().any(|s| match s {
-            eid_l2::ast::L2Stmt::Move { target, .. } => pose_rotary(target),
-            eid_l2::ast::L2Stmt::WithTransform { body, .. } => walk(body),
-            eid_l2::ast::L2Stmt::While { body, .. } => walk(body),
-            _ => false,
-        })
-    }
-    walk(&p.stmts) || p.subs.iter().any(|s| walk(&s.body))
-}
-
 /// Декод payload_hex носителя (hex UTF-8 байтов кадра, кодирование
 /// `raw_frame_op` eid-l2) → текст кадра. Повреждённый hex → честный
 /// плейсхолдер (не panic — эмиссия не должна падать на данных).
@@ -646,37 +624,16 @@ fn translate_l2_route(
         )
     })?;
 
-    // 2б. Гейт ротационных ходов под активной кинематикой (ИМЕНОВАННАЯ
-    //     граница, «не молча»): TCP→joints lowering вычисляет X/Y/Z
-    //     machine-joints (ветка 2.5/exec_trt_move), но L1-грамматика v0.3
-    //     слота ротационных осей НЕ имеет (Op-концы Point3) — ротационные
-    //     pass-through joints в L1-текст не представимы. Эмиссия программы
-    //     с ротационными ходами потеряла бы движение A/B/C на станке.
-    //     Честный отказ с путём решения (расширение grammar — замороженная
-    //     поверхность, отдельное решение; прямой 5-осевой эмиттер
-    //     L2→машина). Программы БЕЗ ротационных ходов (3-осевой TCP на
-    //     5-осевой машине) проходят полностью — флагман маршрута.
+    // 2б. (СНЯТО — L1 v0.4, SPEC v0.22) Гейт ротационных ходов: L1-грамматика
+    //     получила resolved rotary-слоты Point3 (a/b/c) — pass-through/solver
+    //     углы представимы, ходы с ротационными словами понижаются end-to-end
+    //     (trt/tdr/maxkins/5axis — программные углы pass-through; trsrn —
+    //     solver-углы; Off — pass-through). Честные остаточные границы:
+    //     дуги с ротационными словами — носители lowering (§6), цели без осей
+    //     в словаре (grbl) — emit-гейт legality (E_UNSUPPORTED_SYNTAX),
+    //     same-topology different-geometry — тихая порча (профиль обязан
+    //     совпадать; named в REPORT §16).
     let kins_active = cfg.rtcp_mode != eid_l2::interp::RtcpMode::Off;
-    if kins_active && l2_program_has_rotary_moves(&l2prog) {
-        return Err(TranslateError::Parse(vec![Diagnostic {
-            code: ErrorCode::UnsupportedSemantics,
-            stage: Stage::Canonicalize,
-            src: None,
-            options: Vec::new(),
-            limit: None,
-            message: format!(
-                "программа содержит ходы с ротационными словами (A/B/C) под \
-                 кинематикой {:?}: TCP→joints lowering вычисляет X/Y/Z \
-                 machine-joints, но L1-грамматика v0.3 не имеет слота ротационных \
-                 осей — эмиссия потеряла бы движение A/B/C. Полная 4/5-осевая \
-                 эмиссия требует расширения grammar (замороженная поверхность — \
-                 отдельное решение) или прямого эмиттера L2→машина; \
-                 kinematics-проход доступен библиотечным вызовом \
-                 eid_l2::lowering::lower (круговые инварианты ядер 1e-13)",
-                cfg.rtcp_mode
-            ),
-        }]));
-    }
 
     // 3. Pass-1 lowering (бюджеты L2Config; RTCP-режим — из профиля).
     //    cfg потребляется lower() (kins_active вычислен выше).
