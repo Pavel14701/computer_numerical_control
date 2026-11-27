@@ -75,7 +75,6 @@ R3 (any-to-any) доказывается ТОЛЬКО на материализ�
 
 - `parse` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.grbl.ngc` | ожидалось: parse Ok | фактически: Fail: expected diagnostics missing in AST: E_UNSUPPORTED_SEMANTICS (raw codes: [])
 - `R1-text` | файл/цель: `C:\Users\Pashtet\Desktop\computer_numerical_control\crates\eid-harness\../../corpus\tier_a/v0/n17_multiple_preset_at_start/multiple_preset_at_start.linuxcnc.ngc` | ожидалось: неприменимо (notice) | фактически: Skipped: notice: true — R1-text исключён (CORPUS §4)
-
 === EXTENDED FUZZ RUN (итерация 5) ===
 M-петля: 20 seeds (200–219) × 17 операторов; находок 87
 byte-loop: категорий 21 × адаптеров 2 × повторов 5; записей 0 ; детерминизм повторов = true

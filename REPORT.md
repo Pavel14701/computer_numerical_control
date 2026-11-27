@@ -372,13 +372,27 @@ linking обязаны учитывать rotary-дельты (чисто-rotary
 (4) SPEC §1.2-диспозиции rotary + COVERAGE-строки — ревизия (доктрина,
 1–2 дня после кода). Оценка: код 3–4 дня + доктрина 1–2.
 
-**Порядок работ:** (1) SPEC v0.22-диспозиции + grammar.ebnf аддитивно
-(`point = coord coord coord [coord coord coord]?`); (2) AST + парсеры
-(Point3 → слоты, только диалекты с осями); (3) эмиттеры (None → байт-
-идентично; Some → слово); (4) eid-l2 lowering прокидывает
-ExprPose{a,b,c} → слоты (заменяет именованный отказ); (5) verify-правила
-rotary-дельты; (6) goldens НЕ перегенерируются (байт-целы — проверка);
-(7) доктрина: COVERAGE/CORPUS-ожидания/свеп/README/REPORT.
+**Порядок работ — ВЫПОЛНЕН 2026-11-27 (6b00ed0 core / 3fac910 адаптеры+L2+маршрут):**
+(1) SPEC v0.22 (шапка + §1.2-ревизия) + grammar.ebnf **v0.5** — поля
+`srot=`/`rot=` sparse (канонический порядок A,B,C; дуга/unknown-старт —
+reject); (2) AST Point3+слоты (xyz()/pose(); center/normal/anchor —
+инвариант None); (3) адаптеры linuxcnc/fanuc/haas parse+emit слоты с
+модальным наследованием (углы машина-модальны как F; G65-аргументы/циклы
+не тронуты), grbl — parse-пин прежний + **emit-гейт legality
+`RotarySlotsOutsideDictionary`**; (4) eid-l2 lowering: Off pass-through,
+trt/tdr/maxkins/5axis программные углы pass-through, trsrn solver-углы;
+**скрытый баг пойман**: дуга с A-словом под Off молча теряла слово в
+Op::Arc → именованный носитель; (5) verify zero-length/linking полное
+сравнение; (6) goldens не перегенерированы (байт-целы — доказано);
+(7) маршрут: именованный отказ снят — **rotary end-to-end** (флагман:
+fanuc+G43.4+A90+XYZAC → linuxcnc, xyz = xyzac_inverse-оракул, слот
+pass-through); (8) semantic_diff p3_close — слоты часть равенства.
+**Числа:** workspace **1613/0** (1571 → +42 за весь пуш v0.22); свип
+**117 Ok / 40 Err** (ровно 1 честный флип: ncm_g434 RTCP-файл → Ok —
+предсказан картой ломкости); REPORT-ITER23 класс-строка стабильна (другой
+инструмент — per file×adapter). Агент-адаптеры упал на usage-limit в
+половине grbl-тестов — работа пережита в дереве, добита оркестратором
+(lesson «in-flight work survives» снова подтверждён).
 
 **Что L1 v0.4 НЕ решает (named):** арки под кинематикой (носители —
 сегментация отдельным tolerance-решением; арочные 5-осевые файлы всё ещё
