@@ -388,6 +388,17 @@ feed в joint-space; same-topology different-geometry = emitted joints
 валидны только для геометрии профиля (тихая порча при несовпадении —
 профиль обязан совпадать). Переменные/циклы — L2 (слоты осей ≠ переменные).
 
+**Поправка ревью 3 (W/U/V, «нести vs понимать»):** различие принято
+(прецедент Raw), но «generic letter-map» отвергнут КОРПУСОМ: W
+трёхсмысленный — cone.ngc `g1 w100` = lathe incremental-Z, rensh
+`G65 … W#23` = macro-аргумент, gantry-W = ноль файлов. Letter-map сломал
+бы G65-аргументы и переклеил lathe-движения. Форма — dialect-scoped
+policy адаптера; machine_axes-map = **design intent** (per-op Option;
+same-dialect AST-round-trip; кросс-диалект program-level refusal),
+реализация при гантри-ценз-файлах (плановый freeze-break, прецедент
+v0.2.0). Сегодня — корпусного потребителя ноль, в 4–5-дневный скоуп
+не включается (Pose6 остаётся 3–4 дня).
+
 · emission-профили grblHAL/FluidNC при адаптерах · Haas `?`-остатки
 (Setting 27 домен, SpaceInWord, L0) — manual-сверка при доступе к станку ·
 intra-file парсинг (Амдал-хвост R10) · **Ревью-очередь пуста** — все
