@@ -602,6 +602,7 @@ fn legality_table_composition() {
     }
     // codes() — без дубликатов; все из {INVAL, SYN, USEM}.
     let mut codes = t.codes();
+    #[allow(unused_variables)]
     let n = codes.len();
     codes.dedup();
     assert_eq!(codes.len(), n, "codes() содержит дубликаты");
@@ -1432,6 +1433,7 @@ fn mround2_codes_table_nonempty() {
     let mut sorted = codes.clone();
     sorted.sort_by_key(|c| c.as_str());
     assert_eq!(codes, sorted, "codes() отсортирован");
+    #[allow(unused_variables)]
     let n = codes.len();
     assert_eq!(
         codes.len(),

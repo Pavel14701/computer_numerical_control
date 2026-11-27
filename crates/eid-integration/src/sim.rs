@@ -100,9 +100,10 @@ pub fn check_program(profile: &MachineProfile, program: &Program) -> SimReport {
         .filter(|op| matches!(op, Op::ProgramEnd { .. }))
         .count();
     match end_count {
-        0 => report
-            .errors
-            .push("[verify] program_end отсутствует (SPEC §3: ровно один, после него — только Raw)".to_string()),
+        0 => report.errors.push(
+            "[verify] program_end отсутствует (SPEC §3: ровно один, после него — только Raw)"
+                .to_string(),
+        ),
         1 => {
             // v0.20: не-Raw оп после PEND (включая второй PEND — hand-built
             // AST, через parse недостижимо) → отказ; Raw-хвост легален.

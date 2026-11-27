@@ -241,7 +241,8 @@ fn spec_3_pend_tail_raw_only_v020() {
     // отчёт по ПЕРВОМУ нарушителю)
     let ds = verify::validate(&bad);
     assert!(
-        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        ds.iter()
+            .any(|d| d.message.contains("program_end must be the last op")),
         "не-Raw после PEND: {ds:#?}"
     );
     assert!(ds
@@ -282,7 +283,8 @@ fn spec_3_pend_tail_raw_only_v020() {
     ]);
     let ds = verify::validate(&two_pends);
     assert!(
-        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        ds.iter()
+            .any(|d| d.message.contains("program_end must be the last op")),
         "второй PEND-оп: {ds:#?}"
     );
     // и текст-режим с двумя PEND — по-прежнему отказ
@@ -309,7 +311,8 @@ fn spec_3_pend_tail_raw_only_v020() {
     ]);
     let ds = verify::validate(&bad_mid);
     assert!(
-        ds.iter().any(|d| d.message.contains("program_end must be the last op")),
+        ds.iter()
+            .any(|d| d.message.contains("program_end must be the last op")),
         "не-Raw перед Raw-хвостом: {ds:#?}"
     );
 }
@@ -1680,11 +1683,18 @@ fn v03_gate_arc_position_residual_nan_refusal() {
     // Гейт перехватывает до мёртвого/вводящего в заблуждение сравнения и не
     // подменяет соседние проверки (ρ и chord·n finite — молчат).
     assert!(
-        !d.iter().any(|x| x.message.contains("endpoint inconsistent")),
+        !d.iter()
+            .any(|x| x.message.contains("endpoint inconsistent")),
         "{d:?}"
     );
-    assert!(!d.iter().any(|x| x.message.contains("radius mismatch")), "{d:?}");
-    assert!(!d.iter().any(|x| x.message.contains("radius residual")), "{d:?}");
+    assert!(
+        !d.iter().any(|x| x.message.contains("radius mismatch")),
+        "{d:?}"
+    );
+    assert!(
+        !d.iter().any(|x| x.message.contains("radius residual")),
+        "{d:?}"
+    );
     assert!(
         !d.iter().any(|x| x.message.contains("chord·normal")),
         "{d:?}"
@@ -1695,7 +1705,8 @@ fn v03_gate_arc_position_residual_nan_refusal() {
         r.diagnostics
             .iter()
             .any(|x| x.message.contains("arc position residual non-finite")),
-        "{:?}", r.diagnostics
+        "{:?}",
+        r.diagnostics
     );
 }
 
@@ -1744,7 +1755,8 @@ fn v03_gate_arc_nan_end_silent_pass_now_refused() {
         r.diagnostics
             .iter()
             .any(|x| x.message.contains("arc position residual non-finite")),
-        "{:?}", r.diagnostics
+        "{:?}",
+        r.diagnostics
     );
 }
 
@@ -1793,7 +1805,8 @@ fn v03_gate_arc_chord_residual_nan_refused() {
         "{d:?}"
     );
     assert!(
-        !d.iter().any(|x| x.message.contains("endpoint inconsistent")),
+        !d.iter()
+            .any(|x| x.message.contains("endpoint inconsistent")),
         "{d:?}"
     );
 }
@@ -1866,16 +1879,10 @@ fn v03_gate_eps_pos_nonfinite_refused() {
         pend(),
     ];
     let d = verify::validate(&program(overflow));
-    assert_eq!(
-        d.len(),
-        1,
-        "ровно program-level гейт шкалы допуска: {d:?}"
-    );
+    assert_eq!(d.len(), 1, "ровно program-level гейт шкалы допуска: {d:?}");
     assert!(
         d[0].code == ErrorCode::InvalidInput
-            && d[0]
-                .message
-                .contains("geometry tolerance scale non-finite")
+            && d[0].message.contains("geometry tolerance scale non-finite")
             && d[0].message.contains("is_finite gate v0.3.x"),
         "{d:?}"
     );

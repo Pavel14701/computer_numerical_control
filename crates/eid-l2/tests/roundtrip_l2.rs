@@ -105,7 +105,10 @@ where
         Err(e) => {
             return (
                 Verdict::Refused,
-                format!("{}\n    re-parse leg-1 failed: {e:?}", fmt_leg("to-b", &leg1)),
+                format!(
+                    "{}\n    re-parse leg-1 failed: {e:?}",
+                    fmt_leg("to-b", &leg1)
+                ),
                 false,
                 false,
             )

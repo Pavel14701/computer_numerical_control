@@ -37,10 +37,10 @@
 //!    (по индексам, без пересечений), не на адаптер.
 
 use eid_grbl::GrblAdapter;
+use eid_haas::HaasAdapter;
 use eid_harness::manifest::{self, Manifest};
 use eid_harness::parallel::run_tier_b_parallel;
 use eid_harness::runner::{run_tier_b, Registry};
-use eid_haas::HaasAdapter;
 use eid_linuxcnc::LinuxCncAdapter;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -269,7 +269,11 @@ fn parallel_same_file_concurrent_parse() {
                 // НЕ move: все 8 замыканий заимствуют ОДИН text и ОДИН adapter
                 // (&Arc — Copy, text — заимствование из внешнего скоупа).
                 s.spawn(|| match adapter.parse(&text, "rtcp.concurrent") {
-                    Ok(out) => format!("Ok({} ops, {} notices)", out.program.ops.len(), out.notices.len()),
+                    Ok(out) => format!(
+                        "Ok({} ops, {} notices)",
+                        out.program.ops.len(),
+                        out.notices.len()
+                    ),
                     Err(diags) => format!(
                         "Err({})",
                         diags
@@ -288,7 +292,11 @@ fn parallel_same_file_concurrent_parse() {
     });
     // Все 8 исходов идентичны (и равны последовательному эталону).
     let reference = match adapter.parse(&text, "rtcp.concurrent") {
-        Ok(out) => format!("Ok({} ops, {} notices)", out.program.ops.len(), out.notices.len()),
+        Ok(out) => format!(
+            "Ok({} ops, {} notices)",
+            out.program.ops.len(),
+            out.notices.len()
+        ),
         Err(diags) => format!(
             "Err({})",
             diags
@@ -322,13 +330,20 @@ fn parallel_tier_b_speed_report() {
     let reg = full_registry();
     let extra = BTreeMap::new();
     let n = n_threads();
-    let big = ["ncm_g434_rtcp_5x_milling.nc", "ncm_g43_g69_3d5x_milling.nc", "vis_SmilinJack"];
+    let big = [
+        "ncm_g434_rtcp_5x_milling.nc",
+        "ncm_g43_g69_3d5x_milling.nc",
+        "vis_SmilinJack",
+    ];
     let is_big = |f: &eid_harness::manifest::TierBFile| {
-        big.iter()
-            .any(|b| f.path.display().to_string().contains(b))
+        big.iter().any(|b| f.path.display().to_string().contains(b))
     };
 
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     println!("available_parallelism = {n}; profile = {profile} (cargo test)");
 
     // --- Полный Tier B -------------------------------------------------------
@@ -344,7 +359,11 @@ fn parallel_tier_b_speed_report() {
         let _ = run_tier_b_parallel(&m, &reg, &extra, threads); // разминка
         let (par, t) = timed(|| run_tier_b_parallel(&m, &reg, &extra, threads));
         assert_eq!(par, gold, "паритет при threads={threads}");
-        println!("| par({threads}) | {:.3} | {:.2} |", secs(t), secs(seq_t) / secs(t));
+        println!(
+            "| par({threads}) | {:.3} | {:.2} |",
+            secs(t),
+            secs(seq_t) / secs(t)
+        );
         par_n = secs(t);
     }
 
@@ -356,7 +375,10 @@ fn parallel_tier_b_speed_report() {
     let _ = run_tier_b_parallel(&big_m, &reg, &extra, n);
     let (big_par_rep, big_par) = timed(|| run_tier_b_parallel(&big_m, &reg, &extra, n));
     assert_eq!(big_par_rep, gold_big, "паритет на больших файлах");
-    println!("\n== Только большие файлы ({} шт) ==", big_m.tier_b_files.len());
+    println!(
+        "\n== Только большие файлы ({} шт) ==",
+        big_m.tier_b_files.len()
+    );
     for f in &big_m.tier_b_files {
         println!(
             "| {} | {} | {} байт |",
@@ -384,7 +406,10 @@ fn parallel_tier_b_speed_report() {
     let _ = run_tier_b_parallel(&small_m, &reg, &extra, n);
     let (small_par, small_par_t) = timed(|| run_tier_b_parallel(&small_m, &reg, &extra, n));
     assert_eq!(small_par, gold_small, "паритет на мелких файлах");
-    println!("\n== Только мелкие файлы ({} шт) ==", small_m.tier_b_files.len());
+    println!(
+        "\n== Только мелкие файлы ({} шт) ==",
+        small_m.tier_b_files.len()
+    );
     println!(
         "| seq | {:.3} s | 1.00 |\n| par({n}) | {:.3} s | {:.2} |",
         secs(small_seq),

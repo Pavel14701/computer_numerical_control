@@ -659,16 +659,14 @@ fn emit_stmt(sink: &mut Sink, stmt: &L2Stmt, tags: &mut TagAllocator, depth: usi
             ..
         } => emit_move(sink, kind, target, feed.as_ref(), spindle.as_ref()),
 
-        L2Stmt::WithTransform { transform, body, .. } => {
-            emit_with_transform(sink, transform, body, tags, depth)
-        }
+        L2Stmt::WithTransform {
+            transform, body, ..
+        } => emit_with_transform(sink, transform, body, tags, depth),
 
         L2Stmt::Assign { target, value, .. } => emit_assign(sink, target, value),
 
         L2Stmt::IfGoto {
-            cond,
-            target_label,
-            ..
+            cond, target_label, ..
         } => {
             // Macro B: IF [cond] GOTO n — прямая конструкция; реструктуризация
             // нужна только LinuxCNC (emit_linuxcnc).
@@ -679,7 +677,9 @@ fn emit_stmt(sink: &mut Sink, stmt: &L2Stmt, tags: &mut TagAllocator, depth: usi
             sink.emit(format!("IF [{c}] GOTO {target_label}"));
         }
 
-        L2Stmt::IfThen { cond, then_stmt, .. } => {
+        L2Stmt::IfThen {
+            cond, then_stmt, ..
+        } => {
             let c = match sink.expr(cond) {
                 Some(t) => strip_outer_brackets(&t).to_string(),
                 None => return,
@@ -707,7 +707,9 @@ fn emit_stmt(sink: &mut Sink, stmt: &L2Stmt, tags: &mut TagAllocator, depth: usi
             }
         }
 
-        L2Stmt::While { cond, do_id, body, .. } => {
+        L2Stmt::While {
+            cond, do_id, body, ..
+        } => {
             if depth >= 3 {
                 sink.refuse(format!(
                     "WHILE DO nesting depth {depth} exceeds Macro B limit (DO1..DO3) — honest refusal"
@@ -882,7 +884,9 @@ fn emit_with_transform(
             let (Some(cx), Some(cy)) = (sink.expr(&center[0]), sink.expr(&center[1])) else {
                 return;
             };
-            let Some(r) = sink.expr(angle_deg) else { return };
+            let Some(r) = sink.expr(angle_deg) else {
+                return;
+            };
             let plane_code = match plane {
                 Plane::XY => "G17",
                 Plane::ZX => "G18",
@@ -922,7 +926,8 @@ fn emit_with_transform(
                     sink.emit(format!("G101 {l}{p}"));
                     sink.note(
                         "transform-convention",
-                        "G101 mirror (Haas): cancel emitted as G101 {axis}0 (zero pivot)".to_string(),
+                        "G101 mirror (Haas): cancel emitted as G101 {axis}0 (zero pivot)"
+                            .to_string(),
                     );
                     emit_stmt_list(sink, body, tags, depth);
                     sink.emit(format!("G101 {l}0"));
@@ -1127,7 +1132,9 @@ pub(crate) fn carrier_compat(text: &str, target: TargetDialect) -> CarrierVerdic
     match target {
         TargetDialect::Fanuc => {
             if upper.contains(';') {
-                return refused("`;`-comment (Haas/LinuxCNC EOB-comment) is not valid Fanuc syntax");
+                return refused(
+                    "`;`-comment (Haas/LinuxCNC EOB-comment) is not valid Fanuc syntax",
+                );
             }
             if starts_with_control_keyword(&upper) {
                 return refused(
@@ -1185,7 +1192,9 @@ pub(crate) fn carrier_compat(text: &str, target: TargetDialect) -> CarrierVerdic
                 );
             }
             if has_any_g(&upper, &["G65", "G66", "G67"]) {
-                return refused("G65/G66/G67 macro calls do not exist in LinuxCNC (O-call instead)");
+                return refused(
+                    "G65/G66/G67 macro calls do not exist in LinuxCNC (O-call instead)",
+                );
             }
             if has_any_g(&upper, &["G31"]) {
                 return refused(
@@ -1245,7 +1254,8 @@ fn strip_paren_comments(src: &str) -> String {
 
 /// Есть ли слово `M<digits>` (префикс) — грубый тест на M97/M98/M99.
 fn has_word(upper: &str, word: &str) -> bool {
-    upper.split(|c: char| !c.is_ascii_alphanumeric())
+    upper
+        .split(|c: char| !c.is_ascii_alphanumeric())
         .any(|tok| tok == word)
 }
 
@@ -1304,10 +1314,9 @@ pub(crate) fn expr_eq(a: &Expr, b: &Expr) -> bool {
         (Expr::Null, Expr::Null) => true,
         (Expr::Var(x), Expr::Var(y)) => var_eq(x, y),
         (Expr::Unary(op1, x1), Expr::Unary(op2, x2)) => op1 == op2 && expr_eq(x1, x2),
-        (
-            Expr::Binary(op1, a1, b1),
-            Expr::Binary(op2, a2, b2),
-        ) => op1 == op2 && expr_eq(a1, a2) && expr_eq(b1, b2),
+        (Expr::Binary(op1, a1, b1), Expr::Binary(op2, a2, b2)) => {
+            op1 == op2 && expr_eq(a1, a2) && expr_eq(b1, b2)
+        }
         _ => false,
     }
 }
@@ -1409,14 +1418,10 @@ fn stmt_eq(a: &L2Stmt, b: &L2Stmt) -> bool {
         ) => expr_eq(c1, c2) && stmt_eq(s1, s2),
         (
             L2Stmt::While {
-                cond: c1,
-                body: b1,
-                ..
+                cond: c1, body: b1, ..
             },
             L2Stmt::While {
-                cond: c2,
-                body: b2,
-                ..
+                cond: c2, body: b2, ..
             },
         ) => {
             // do_id НЕ сравнивается (semantic_diff-класс метаданных): в
@@ -1450,7 +1455,10 @@ fn stmt_eq(a: &L2Stmt, b: &L2Stmt) -> bool {
                 && m1 == m2
                 && opt_expr_eq(r1.as_ref(), r2.as_ref())
                 && a1.len() == a2.len()
-                && a1.iter().zip(a2).all(|((l1, e1), (l2, e2))| l1 == l2 && expr_eq(e1, e2))
+                && a1
+                    .iter()
+                    .zip(a2)
+                    .all(|((l1, e1), (l2, e2))| l1 == l2 && expr_eq(e1, e2))
         }
         (
             L2Stmt::RtcpMode {
@@ -1519,20 +1527,36 @@ fn transform_eq(a: &TransformKind, b: &TransformKind) -> bool {
                 plane: p2,
             },
         ) => p1 == p2 && expr_eq(a1, a2) && expr_eq(&c1[0], &c2[0]) && expr_eq(&c1[1], &c2[1]),
-        (TransformKind::Scale { center: c1, factor: f1 }, TransformKind::Scale { center: c2, factor: f2 }) => {
-            expr_eq(f1, f2)
-                && (0..3).all(|i| expr_eq(&c1[i], &c2[i]))
-        }
         (
-            TransformKind::Mirror { axis: a1, pivot: p1 },
-            TransformKind::Mirror { axis: a2, pivot: p2 },
+            TransformKind::Scale {
+                center: c1,
+                factor: f1,
+            },
+            TransformKind::Scale {
+                center: c2,
+                factor: f2,
+            },
+        ) => expr_eq(f1, f2) && (0..3).all(|i| expr_eq(&c1[i], &c2[i])),
+        (
+            TransformKind::Mirror {
+                axis: a1,
+                pivot: p1,
+            },
+            TransformKind::Mirror {
+                axis: a2,
+                pivot: p2,
+            },
         ) => a1 == a2 && expr_eq(p1, p2),
         (
-            TransformKind::TiltedWorkPlane { origin: o1, euler: e1 },
-            TransformKind::TiltedWorkPlane { origin: o2, euler: e2 },
-        ) => {
-            (0..3).all(|i| expr_eq(&o1[i], &o2[i]) && expr_eq(&e1[i], &e2[i]))
-        }
+            TransformKind::TiltedWorkPlane {
+                origin: o1,
+                euler: e1,
+            },
+            TransformKind::TiltedWorkPlane {
+                origin: o2,
+                euler: e2,
+            },
+        ) => (0..3).all(|i| expr_eq(&o1[i], &o2[i]) && expr_eq(&e1[i], &e2[i])),
         _ => false,
     }
 }
@@ -1569,11 +1593,7 @@ fn l1_op_eq(a: &Op, b: &Op) -> bool {
                 state: st2,
                 ..
             },
-        ) => {
-            start_eq(s1, s2)
-                && point_eq(e1, e2)
-                && state_eq(st1, st2)
-        }
+        ) => start_eq(s1, s2) && point_eq(e1, e2) && state_eq(st1, st2),
         (
             Op::Arc {
                 start: s1,
@@ -1606,31 +1626,37 @@ fn l1_op_eq(a: &Op, b: &Op) -> bool {
         }
         (Op::Dwell { seconds: s1, .. }, Op::Dwell { seconds: s2, .. }) => num_eq(s1, s2),
         (Op::ToolChange { tool: t1, .. }, Op::ToolChange { tool: t2, .. }) => t1 == t2,
-        (
-            Op::ProgramStop { optional: o1, .. },
-            Op::ProgramStop { optional: o2, .. },
-        ) => o1 == o2,
+        (Op::ProgramStop { optional: o1, .. }, Op::ProgramStop { optional: o2, .. }) => o1 == o2,
         (Op::ProgramEnd { .. }, Op::ProgramEnd { .. }) => true,
         (
-            Op::WcsDefine { p: p1, origin: o1, .. },
-            Op::WcsDefine { p: p2, origin: o2, .. },
+            Op::WcsDefine {
+                p: p1, origin: o1, ..
+            },
+            Op::WcsDefine {
+                p: p2, origin: o2, ..
+            },
         ) => p1 == p2 && point_eq(o1, o2),
         (
-            Op::WcsSetHere { p: p1, delta: d1, .. },
-            Op::WcsSetHere { p: p2, delta: d2, .. },
+            Op::WcsSetHere {
+                p: p1, delta: d1, ..
+            },
+            Op::WcsSetHere {
+                p: p2, delta: d2, ..
+            },
         ) => p1 == p2 && vec_eq(d1, d2),
         (
-            Op::Raw { payload_hex: x1, .. },
-            Op::Raw { payload_hex: x2, .. },
+            Op::Raw {
+                payload_hex: x1, ..
+            },
+            Op::Raw {
+                payload_hex: x2, ..
+            },
         ) => x1 == x2,
         _ => false,
     }
 }
 
-fn start_eq(
-    a: &eid_core::ast::StartPoint,
-    b: &eid_core::ast::StartPoint,
-) -> bool {
+fn start_eq(a: &eid_core::ast::StartPoint, b: &eid_core::ast::StartPoint) -> bool {
     use eid_core::ast::StartPoint;
     match (a, b) {
         (StartPoint::Unknown, StartPoint::Unknown) => true,
@@ -1639,10 +1665,7 @@ fn start_eq(
     }
 }
 
-fn point_eq(
-    a: &eid_core::ast::Point3,
-    b: &eid_core::ast::Point3,
-) -> bool {
+fn point_eq(a: &eid_core::ast::Point3, b: &eid_core::ast::Point3) -> bool {
     vec_eq(a, b)
 }
 
@@ -1658,13 +1681,12 @@ fn state_eq(a: &eid_core::ast::State, b: &eid_core::ast::State) -> bool {
         (Some(x), Some(y)) => num_eq(x, y),
         _ => false,
     };
-    feed
-        && a.spindle == b.spindle
+    feed && a.spindle == b.spindle
         && a.coolant == b.coolant
         && a.tool == b.tool
         && a.frame == b.frame
         && a.wcs == b.wcs
-        // feed_restated — провенанс (EQUIVALENCE §5): не сравнивается.
+    // feed_restated — провенанс (EQUIVALENCE §5): не сравнивается.
 }
 
 // ===========================================================================
@@ -1714,7 +1736,11 @@ mod tests {
         // AbsMachinePos/SkipPos: #5021+/`#5061+ — ОДИНАКОВЫЕ номера во всех
         // трёх диалектах (Fanuc/Haas NGC Fanuc-совместим; LinuxCNC docs
         // #5021-#5029 machine pos, #5061-#5069 probe result).
-        for target in [TargetDialect::Fanuc, TargetDialect::Haas, TargetDialect::LinuxCnc] {
+        for target in [
+            TargetDialect::Fanuc,
+            TargetDialect::Haas,
+            TargetDialect::LinuxCnc,
+        ] {
             for (k, axis) in [
                 (0, Axis::X),
                 (1, Axis::Y),
@@ -1790,28 +1816,56 @@ mod tests {
     fn sysvar_wcs_table() {
         // p=0 (external): Fanuc/Haas #5201+; LinuxCNC — unmappable.
         assert_eq!(
-            map_sysvar(&SysVar::WcsOffset { p: 0, axis: Axis::X }, TargetDialect::Fanuc),
+            map_sysvar(
+                &SysVar::WcsOffset {
+                    p: 0,
+                    axis: Axis::X
+                },
+                TargetDialect::Fanuc
+            ),
             SysVarDecision::Mapped {
                 number: 5201,
                 via: MapVia::Direct
             }
         );
         assert!(matches!(
-            map_sysvar(&SysVar::WcsOffset { p: 0, axis: Axis::X }, TargetDialect::LinuxCnc),
+            map_sysvar(
+                &SysVar::WcsOffset {
+                    p: 0,
+                    axis: Axis::X
+                },
+                TargetDialect::LinuxCnc
+            ),
             SysVarDecision::Unmappable { .. }
         ));
         // p=1..6 (G54..G59): #5221+20(p−1)+off — ОДИНАКОВО во всех трёх
         // (LinuxCNC CS-базы совпадают с Fanuc; Haas 52xx Fanuc-совместим).
-        for target in [TargetDialect::Fanuc, TargetDialect::Haas, TargetDialect::LinuxCnc] {
+        for target in [
+            TargetDialect::Fanuc,
+            TargetDialect::Haas,
+            TargetDialect::LinuxCnc,
+        ] {
             assert_eq!(
-                map_sysvar(&SysVar::WcsOffset { p: 1, axis: Axis::X }, target),
+                map_sysvar(
+                    &SysVar::WcsOffset {
+                        p: 1,
+                        axis: Axis::X
+                    },
+                    target
+                ),
                 SysVarDecision::Mapped {
                     number: 5221,
                     via: MapVia::Direct
                 }
             );
             assert_eq!(
-                map_sysvar(&SysVar::WcsOffset { p: 6, axis: Axis::C }, target),
+                map_sysvar(
+                    &SysVar::WcsOffset {
+                        p: 6,
+                        axis: Axis::C
+                    },
+                    target
+                ),
                 SysVarDecision::Mapped {
                     number: 5326,
                     via: MapVia::Direct
@@ -1820,9 +1874,19 @@ mod tests {
         }
         // p=7..26 (Haas G110-G129 / Fanuc G54.1P): нумерация опциона/станок-
         // зависима ('?' реестра) — честный отказ на всех диалектах.
-        for target in [TargetDialect::Fanuc, TargetDialect::Haas, TargetDialect::LinuxCnc] {
+        for target in [
+            TargetDialect::Fanuc,
+            TargetDialect::Haas,
+            TargetDialect::LinuxCnc,
+        ] {
             assert!(matches!(
-                map_sysvar(&SysVar::WcsOffset { p: 7, axis: Axis::X }, target),
+                map_sysvar(
+                    &SysVar::WcsOffset {
+                        p: 7,
+                        axis: Axis::X
+                    },
+                    target
+                ),
                 SysVarDecision::Unmappable { .. }
             ));
         }
@@ -1832,7 +1896,11 @@ mod tests {
     fn sysvar_vendor_passthrough_not_silent() {
         // VendorSpecific: PassThrough с notice (номер сохранён — round-trip
         // держится; семантика помечена «не молча»), включая alarm-диапазон.
-        for target in [TargetDialect::Fanuc, TargetDialect::Haas, TargetDialect::LinuxCnc] {
+        for target in [
+            TargetDialect::Fanuc,
+            TargetDialect::Haas,
+            TargetDialect::LinuxCnc,
+        ] {
             let d = map_sysvar(&vs(3000), target);
             match &d {
                 SysVarDecision::PassThrough { number, reason } => {
@@ -1842,7 +1910,10 @@ mod tests {
                 other => panic!("{target:?}: expected PassThrough, got {other:?}"),
             }
             let d = map_sysvar(&vs(1133), target);
-            assert!(matches!(d, SysVarDecision::PassThrough { number: 1133, .. }));
+            assert!(matches!(
+                d,
+                SysVarDecision::PassThrough { number: 1133, .. }
+            ));
         }
     }
 
@@ -1933,7 +2004,11 @@ mod tests {
         let src = "O1\nG4 P2000\nM30\n";
         let p0 = parser_fanuc::parse_program(src).unwrap();
         let out_h = emit(&p0, TargetDialect::Haas);
-        assert!(out_h.text.contains("G4 P2."), "Haas P-dot-rule:\n{}", out_h.text);
+        assert!(
+            out_h.text.contains("G4 P2."),
+            "Haas P-dot-rule:\n{}",
+            out_h.text
+        );
         let p1 = parser_haas::parse_program(&out_h.text).unwrap();
         assert!(ast_semantic_eq(&p0, &p1), "round-trip dwell value");
         let out_f = emit(&p1, TargetDialect::Fanuc);
@@ -1966,7 +2041,10 @@ mod tests {
         let p_l = crate::parser_linuxcnc::parse_program(named_sub).unwrap();
         let out = emit(&p_l, TargetDialect::Haas);
         assert!(!out.ok());
-        assert!(out.errors.iter().any(|e| e.reason.contains("no Macro B analog")));
+        assert!(out
+            .errors
+            .iter()
+            .any(|e| e.reason.contains("no Macro B analog")));
 
         // WHILE-вложенность 4 → лимит DO1..DO3 (честный отказ). 4-я
         // вложенность переиспользует DO1 (лимит — 3 уровня); END{n} закрывает

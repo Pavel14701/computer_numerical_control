@@ -27,7 +27,7 @@
 //! шум против миллисекунд парсинга.
 
 use crate::manifest::Manifest;
-use crate::runner::{run_tier_b_file, fold_tier_b, Registry, TierBFileDelta, TierBReport};
+use crate::runner::{fold_tier_b, run_tier_b_file, Registry, TierBFileDelta, TierBReport};
 use eid_core::adapter::Adapter;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1464,7 +1464,7 @@ mod tests {
         let empty = Vars::new();
         let lk = lookup(&empty);
         assert_eq!(eval_num(&t.num, &lk), Some(2.5));
-        assert_eq!(eval_formula(&t.is_null, &lk), false);
+        assert!(!eval_formula(&t.is_null, &lk));
     }
 }
 

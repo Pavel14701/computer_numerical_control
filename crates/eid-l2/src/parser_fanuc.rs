@@ -26,9 +26,7 @@
 
 use crate::ast::{L2Program, SysVar, VarRef};
 use crate::eval::L2Error;
-use crate::parser_macro_common::{
-    map_common_system, parse_macro_b, DialectCfg, DwellSemantics,
-};
+use crate::parser_macro_common::{map_common_system, parse_macro_b, DialectCfg, DwellSemantics};
 
 /// Fanuc-карта номера макро-переменной → [`VarRef`] (§2.2).
 pub fn fanuc_map_var(n: u32) -> VarRef {

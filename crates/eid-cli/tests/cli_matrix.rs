@@ -123,7 +123,10 @@ fn cli_dir_grbl_to_fanuc_live() {
     let meta = std::fs::metadata(&output).expect("output файл создан");
     assert!(meta.len() > 0, "output пуст");
     let emitted = std::fs::read_to_string(&output).unwrap();
-    assert!(emitted.contains("M30"), "program_end fanuc — M30: {emitted:?}");
+    assert!(
+        emitted.contains("M30"),
+        "program_end fanuc — M30: {emitted:?}"
+    );
     // выход разбирается fanuc-адаптером (registry-имя "fanuc")
     parse_with("fanuc", &emitted, "out.fanuc.nc").expect("выход парсится fanuc");
 }
@@ -177,7 +180,10 @@ fn cli_dir_fanuc_same_dialect_live() {
     ]);
     assert_eq!(code, 0, "same-dialect RAW легален");
     let emitted = std::fs::read_to_string(&output).unwrap();
-    assert!(emitted.contains("WHILE["), "Macro B payload verbatim: {emitted:?}");
+    assert!(
+        emitted.contains("WHILE["),
+        "Macro B payload verbatim: {emitted:?}"
+    );
 }
 
 #[test]
@@ -208,7 +214,10 @@ fn cli_dir_grbl_to_haas_live() {
     let meta = std::fs::metadata(&output).expect("output файл создан");
     assert!(meta.len() > 0, "output пуст");
     let emitted = std::fs::read_to_string(&output).unwrap();
-    assert!(emitted.contains("M30"), "program_end haas — M30: {emitted:?}");
+    assert!(
+        emitted.contains("M30"),
+        "program_end haas — M30: {emitted:?}"
+    );
     assert!(
         !emitted.contains("G91.1"),
         "G91.1 в словаре Haas отсутствует — заголовок без него: {emitted:?}"

@@ -1766,15 +1766,9 @@ fn apply_g92(ctx: &mut Ctx, b: &Block) -> Result<G92Where, Vec<Diagnostic>> {
                     )]);
                 }
                 _ => (
-                    b.word('X')
-                        .map(|n| verbatim(n))
-                        .unwrap_or_else(|| num_f64(0.0)),
-                    b.word('Y')
-                        .map(|n| verbatim(n))
-                        .unwrap_or_else(|| num_f64(0.0)),
-                    b.word('Z')
-                        .map(|n| verbatim(n))
-                        .unwrap_or_else(|| num_f64(0.0)),
+                    b.word('X').map(verbatim).unwrap_or_else(|| num_f64(0.0)),
+                    b.word('Y').map(verbatim).unwrap_or_else(|| num_f64(0.0)),
+                    b.word('Z').map(verbatim).unwrap_or_else(|| num_f64(0.0)),
                 ),
             };
             let values = Point3 { x, y, z };

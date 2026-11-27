@@ -3133,9 +3133,9 @@ fn mround2_modal_on_raw_g28_no_axes() {
         .filter(|o| matches!(o, Op::Rapid { .. }))
         .nth(1)
         .expect("rapid после raw");
-    assert_eq!(known(&rap), [0.0, 0.0, 0.0]);
+    assert_eq!(known(rap), [0.0, 0.0, 0.0]);
     match rap {
-        Op::Rapid { end, .. } => assert_pt(&end, 10.0, 0.0, 0.0),
+        Op::Rapid { end, .. } => assert_pt(end, 10.0, 0.0, 0.0),
         _ => unreachable!(),
     }
 }
@@ -3329,7 +3329,7 @@ fn mround2_g10_absorb_increment_on_raw() {
         .find(|o| matches!(o, Op::Rapid { state, .. } if state.frame == Frame::Machine))
         .expect("G53 rapid");
     // start = reading_G55 (2,2,2) + O_g55 (7+3, ...) = (12,12,12).
-    assert_eq!(known(&g53), [12.0, 12.0, 12.0]);
+    assert_eq!(known(g53), [12.0, 12.0, 12.0]);
 }
 
 #[test]
@@ -3347,7 +3347,7 @@ fn mround2_g10_absorb_partial_raw_no_update() {
             .find(|o| matches!(o, Op::Rapid { state, .. } if state.frame == Frame::Machine))
             .expect("G53 rapid");
         // start = (2,2,2) + (7,7,7) — частичная форма таблицу не трогает.
-        assert_eq!(known(&g53), [9.0, 9.0, 9.0]);
+        assert_eq!(known(g53), [9.0, 9.0, 9.0]);
         let _ = cmd;
     }
 }
@@ -3366,7 +3366,7 @@ fn mround2_g10_absorb_broken_l_no_update() {
         .find(|o| matches!(o, Op::Rapid { state, .. } if state.frame == Frame::Machine))
         .expect("G53 rapid");
     // L2.5 — сломанная форма: таблица не обновлена → start (2,2,2)+(7,7,7).
-    assert_eq!(known(&g53), [9.0, 9.0, 9.0]);
+    assert_eq!(known(g53), [9.0, 9.0, 9.0]);
 }
 
 #[test]
@@ -3381,9 +3381,9 @@ fn mround2_g92_absorb_on_raw_block() {
         .expect("ход после raw-G92");
     // Пресетка (5,0,0) — якорь точки разрыва (a); G91 абсорбирован →
     // X2 инкрементальный → end (7,0,0).
-    assert_eq!(known(&mv), [5.0, 0.0, 0.0]);
+    assert_eq!(known(mv), [5.0, 0.0, 0.0]);
     match mv {
-        Op::Rapid { end, .. } => assert_pt(&end, 7.0, 0.0, 0.0),
+        Op::Rapid { end, .. } => assert_pt(end, 7.0, 0.0, 0.0),
         _ => unreachable!(),
     }
 }
@@ -3551,7 +3551,7 @@ fn mround2_arc_r_sgn_cw_ccw_and_negative() {
             dir,
             ..
         } => {
-            assert_pt(&center, 4.0, 3.0, 0.0);
+            assert_pt(center, 4.0, 3.0, 0.0);
             assert!(
                 (sweep_deg.value() - 106.26).abs() <= 0.05,
                 "sweep {sweep_deg:?}"
@@ -3564,7 +3564,7 @@ fn mround2_arc_r_sgn_cw_ccw_and_negative() {
     let arc = p.ops.iter().find(|o| matches!(o, Op::Arc { .. })).unwrap();
     match arc {
         Op::Arc { center, dir, .. } => {
-            assert_pt(&center, 4.0, -3.0, 0.0);
+            assert_pt(center, 4.0, -3.0, 0.0);
             assert!(*dir == Dir::Cw);
         }
         _ => panic!("не Arc"),
@@ -3576,7 +3576,7 @@ fn mround2_arc_r_sgn_cw_ccw_and_negative() {
         Op::Arc {
             center, sweep_deg, ..
         } => {
-            assert_pt(&center, 4.0, -3.0, 0.0);
+            assert_pt(center, 4.0, -3.0, 0.0);
             assert!(
                 (sweep_deg.value() - 253.74).abs() <= 0.05,
                 "sweep {sweep_deg:?}"
@@ -3627,8 +3627,8 @@ fn mround2_arc_quarter_g18_rodrigues() {
             sweep_deg,
             ..
         } => {
-            assert_pt(&center, 2.0, 0.0, 0.0);
-            assert_pt(&end, 2.0, 0.0, 2.0);
+            assert_pt(center, 2.0, 0.0, 0.0);
+            assert_pt(end, 2.0, 0.0, 2.0);
             assert!(
                 (sweep_deg.value() - 90.0).abs() <= 0.01,
                 "sweep {sweep_deg:?}"
@@ -3652,8 +3652,8 @@ fn mround2_arc_quarter_g19_rodrigues_cw() {
             sweep_deg,
             ..
         } => {
-            assert_pt(&center, 0.0, 2.0, 0.0);
-            assert_pt(&end, 0.0, 2.0, 2.0);
+            assert_pt(center, 0.0, 2.0, 0.0);
+            assert_pt(end, 0.0, 2.0, 2.0);
             assert!(
                 (sweep_deg.value() - 90.0).abs() <= 0.01,
                 "sweep {sweep_deg:?}"
@@ -3678,9 +3678,9 @@ fn mround2_g93_linear_feed_len_3d_full() {
         .unwrap();
     let expect = 41.0f64.sqrt();
     assert!(
-        (feed_of(&lin).unwrap() - expect).abs() <= EPS,
+        (feed_of(lin).unwrap() - expect).abs() <= EPS,
         "feed {} vs {expect}",
-        feed_of(&lin).unwrap()
+        feed_of(lin).unwrap()
     );
 }
 
@@ -3873,7 +3873,7 @@ fn mround2_peck_est_limit_exact_boundary_ok() {
     // mround2_peck_est_limit_exceeded («ровно-на-границе», мутраунд-2).
     let p = parse("G0 X0. Y0. Z5.\nG73 X10. Z-0.621 R0. Q0.002 F100. K16\nM30\n")
         .expect("est_total == 10000 ровно — не превышение");
-    assert_eq!(p.ops.len() > 1000, true, "развёртка состоялась");
+    assert!(p.ops.len() > 1000, "развёртка состоялась");
 }
 
 #[test]
@@ -4512,7 +4512,7 @@ fn mround2_modal_y_z_only_continuation() {
         .count();
     assert_eq!(lins, 2, "Z-only продолжение — ход");
     // G91: Z-only — шаг между отверстиями (легален по §5.1).
-    let p = parse("G0 X5. Y2. Z1.\nG91\nG0 Z-2.\nZ-3.\nM30\n").expect("G91 Z-only ok");
+    let _p = parse("G0 X5. Y2. Z1.\nG91\nG0 Z-2.\nZ-3.\nM30\n").expect("G91 Z-only ok");
 }
 
 #[test]
@@ -4537,7 +4537,7 @@ fn mround2_g90_restores_absolute() {
         .ops
         .iter()
         .filter_map(|o| match o {
-            Op::Rapid { end, .. } => Some(pt3(&end)),
+            Op::Rapid { end, .. } => Some(pt3(end)),
             _ => None,
         })
         .collect();
@@ -4563,7 +4563,7 @@ fn mround2_g91_1_restores_incremental_center() {
         .ops
         .iter()
         .filter_map(|o| match o {
-            Op::Arc { center, .. } => Some(pt3(&center)),
+            Op::Arc { center, .. } => Some(pt3(center)),
             _ => None,
         })
         .collect();
@@ -4603,9 +4603,9 @@ fn mround2_g92_absorb_y_only_raw_block() {
         .find(|o| matches!(o, Op::Rapid { .. }))
         .expect("ход после raw-G92");
     // Пресетка (0,5,0) — якорь; G91 абсорбирован → end = start + слова.
-    assert_eq!(known(&mv), [0.0, 5.0, 0.0]);
+    assert_eq!(known(mv), [0.0, 5.0, 0.0]);
     match mv {
-        Op::Rapid { end, .. } => assert_pt(&end, 1.0, 3.0, 1.0),
+        Op::Rapid { end, .. } => assert_pt(end, 1.0, 3.0, 1.0),
         _ => unreachable!(),
     }
 }
@@ -4642,7 +4642,7 @@ fn mround2_arc_sweep60_all_terms() {
         Op::Arc {
             center, sweep_deg, ..
         } => {
-            assert_pt(&center, 0.0, 0.0, 0.0);
+            assert_pt(center, 0.0, 0.0, 0.0);
             assert!(
                 (sweep_deg.value() - 60.0).abs() <= 0.05,
                 "sweep {sweep_deg:?}"

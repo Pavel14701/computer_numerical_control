@@ -58,9 +58,11 @@
 //!   отсутствуют в LinuxCNC), G65-with-non-ABC-args, несовместимые
 //!   носители — отказы; линт носителей общий (emit_l2::carrier_compat).
 
-use crate::ast::{BinaryOp, Expr, ExprPose, L2Program, L2Stmt, MoveKind, SubTarget, UnaryOp, VarRef};
+use crate::ast::{
+    BinaryOp, Expr, ExprPose, L2Program, L2Stmt, MoveKind, SubTarget, UnaryOp, VarRef,
+};
 use crate::emit_l2::{
-    attach_word, atom_needs_brackets, carrier_compat, expr_eq, expr_text, map_sysvar,
+    atom_needs_brackets, attach_word, carrier_compat, expr_eq, expr_text, map_sysvar,
     strip_outer_brackets, CarrierVerdict, EmitError, EmitNotice, EmitOutcome, SysVarDecision,
     TagAllocator, TargetDialect,
 };
@@ -145,9 +147,7 @@ impl Sink {
                 Some(format!("[{a} {} {b}]", binary_op_name(*op)))
             }
             // Const/Null — чистый рендер (без диалект-веток).
-            other => expr_text(other)
-                .map_err(|err| self.errors.push(err))
-                .ok(),
+            other => expr_text(other).map_err(|err| self.errors.push(err)).ok(),
         }
     }
 }
@@ -316,8 +316,8 @@ pub(crate) fn linuxcnc_emit(prog: &L2Program) -> EmitOutcome {
             .map(stmt_line)
             .unwrap_or(0)
             .saturating_sub(1); // строка O-заголовка ≈ на 1 выше первого stmt
-        // Sub при равной строке — ПОСЛЕ main-stmt (main-stmt на строке
-        // заголовка sub — контент O-строки-носитель).
+                                // Sub при равной строке — ПОСЛЕ main-stmt (main-stmt на строке
+                                // заголовка sub — контент O-строки-носитель).
         units.push((key, u32::MAX - i as u32, Unit::Sub(i)));
     }
     units.sort_by_key(|(k, t, _)| (*k, *t));
@@ -350,8 +350,10 @@ pub(crate) fn linuxcnc_emit(prog: &L2Program) -> EmitOutcome {
     }
 
     EmitOutcome {
-        text: sink.lines.join("
-") + "
+        text: sink.lines.join(
+            "
+",
+        ) + "
 ",
         notices: sink.notices,
         errors: sink.errors,
@@ -390,7 +392,12 @@ fn emit_sub_block(sink: &mut Sink, prog: &L2Program, i: usize, tags: &mut TagAll
     let mut body_end = sub.body.len();
     let mut endsub_line = format!("o{tag} endsub");
     if body_end > 0 {
-        if let L2Stmt::L1Op(Op::Raw { payload_hex, reason, .. }) = &sub.body[body_end - 1] {
+        if let L2Stmt::L1Op(Op::Raw {
+            payload_hex,
+            reason,
+            ..
+        }) = &sub.body[body_end - 1]
+        {
             if reason.contains("endsub") {
                 endsub_line = decode_hex(payload_hex);
                 body_end -= 1;
@@ -439,7 +446,9 @@ fn emit_block(
                 let j = i + 1 + j;
                 match s {
                     L2Stmt::Label { .. } | L2Stmt::While { .. } => break,
-                    L2Stmt::IfGoto { cond, target_label, .. } => {
+                    L2Stmt::IfGoto {
+                        cond, target_label, ..
+                    } => {
                         if *target_label == *n {
                             head_loop = Some((j, cond.clone()));
                         }
@@ -485,12 +494,20 @@ fn emit_block(
             }
         }
         if let L2Stmt::IfGoto {
-            cond,
-            target_label,
-            ..
+            cond, target_label, ..
         } = &stmts[i]
         {
-            emit_goto_restructured(sink, stmts, end, &mut i, cond, *target_label, scope, tags, sub_tag);
+            emit_goto_restructured(
+                sink,
+                stmts,
+                end,
+                &mut i,
+                cond,
+                *target_label,
+                scope,
+                tags,
+                sub_tag,
+            );
             continue;
         }
         // Парсер LinuxCNC (рулинг 6, 12.1) представляет `return [expr]`
@@ -498,7 +515,12 @@ fn emit_block(
         // эмиссия сливает их обратно в `o<tag> return [expr]` (голый
         // `[expr]` без строки return не валиден для re-parse).
         // ВАРИАНТ A (плоский блок): носитель + Return — соседние stmt.
-        if let L2Stmt::L1Op(Op::Raw { payload_hex, reason, .. }) = &stmts[i] {
+        if let L2Stmt::L1Op(Op::Raw {
+            payload_hex,
+            reason,
+            ..
+        }) = &stmts[i]
+        {
             if reason.contains("return-value") {
                 if let Some(L2Stmt::Return { .. }) = stmts.get(i + 1) {
                     let payload = decode_hex(payload_hex);
@@ -528,7 +550,12 @@ fn emit_block(
             ..
         } = &stmts[i]
         {
-            if let L2Stmt::L1Op(Op::Raw { payload_hex, reason, .. }) = &**t1 {
+            if let L2Stmt::L1Op(Op::Raw {
+                payload_hex,
+                reason,
+                ..
+            }) = &**t1
+            {
                 if reason.contains("return-value") {
                     if let Some(L2Stmt::IfThen {
                         cond: c2,
@@ -544,7 +571,8 @@ fn emit_block(
                             match sub_tag {
                                 Some(st) => sink.emit(format!("o{st} return {payload}")),
                                 None => sink.refuse(
-                                    "return with value outside sub body — honest refusal".to_string(),
+                                    "return with value outside sub body — honest refusal"
+                                        .to_string(),
                                 ),
                             }
                             sink.note(
@@ -903,7 +931,8 @@ fn emit_call(
 ) {
     if modal {
         sink.refuse(
-            "G66 modal call (call after every motion) has no LinuxCNC analog — honest refusal".to_string(),
+            "G66 modal call (call after every motion) has no LinuxCNC analog — honest refusal"
+                .to_string(),
         );
         return;
     }
@@ -1142,7 +1171,11 @@ mod tests {
             "positional notice required: {:?}",
             out.notices
         );
-        assert!(out.text.contains("o100 call [5.] [7.] [1.]"), "{}", out.text);
+        assert!(
+            out.text.contains("o100 call [5.] [7.] [1.]"),
+            "{}",
+            out.text
+        );
     }
 
     #[test]
@@ -1204,7 +1237,10 @@ mod tests {
             .unwrap();
         let out = crate::emit_l2::emit(&p, TargetDialect::LinuxCnc);
         assert!(!out.ok());
-        assert!(out.errors.iter().any(|e| e.reason.contains("modal info variable")));
+        assert!(out
+            .errors
+            .iter()
+            .any(|e| e.reason.contains("modal info variable")));
 
         // RTCP G43.4 — нет в rs274ngc.
         let p = parser_fanuc::parse_program("O1\nG43.4 H1\nM30\n").unwrap();
@@ -1216,7 +1252,10 @@ mod tests {
         let p = parser_fanuc::parse_program("O1\nG31 X10. F50.\nM30\n").unwrap();
         let out = crate::emit_l2::emit(&p, TargetDialect::LinuxCnc);
         assert!(!out.ok());
-        assert!(out.errors.iter().any(|e| e.reason.contains("G31 skip-probe")));
+        assert!(out
+            .errors
+            .iter()
+            .any(|e| e.reason.contains("G31 skip-probe")));
     }
 
     #[test]
@@ -1227,7 +1266,11 @@ mod tests {
         let out = crate::emit_l2::emit(&p, TargetDialect::LinuxCnc);
         assert!(out.ok(), "{:?}", out.errors);
         assert!(out.text.contains("#<_total> = 0."), "{}", out.text);
-        assert!(out.text.contains("#<local> = [#<_total> + 1]"), "{}", out.text);
+        assert!(
+            out.text.contains("#<local> = [#<_total> + 1]"),
+            "{}",
+            out.text
+        );
     }
 
     #[test]
@@ -1262,8 +1305,13 @@ mod tests {
         assert!(out.text.contains("o9000 do"), "{}", out.text);
         assert!(out.text.contains("o9000 while [#100 LT 5]"), "{}", out.text);
         let reparse = parser_linuxcnc::parse_program(&out.text);
-        assert!(reparse.is_err(), "12.1 parser must reject do-while (documented)");
-        assert!(reparse.unwrap_err().iter().any(|e| e.message().contains("do-while")));
+        assert!(
+            reparse.is_err(),
+            "12.1 parser must reject do-while (documented)"
+        );
+        assert!(reparse
+            .unwrap_err()
+            .iter()
+            .any(|e| e.message().contains("do-while")));
     }
 }
-

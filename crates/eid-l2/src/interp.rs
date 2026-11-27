@@ -169,10 +169,10 @@ pub enum RtcpMode {
     /// идентична [`RtcpMode::XyzacTrt`] с парой B/C.
     XyzbcTrt { params: TrtParams },
     /// XYZAB table-table TT-2 «cradle/trunnion» (12.5.4; качающийся стол B
-    /// + ротор A сверху — Hermle-класс): ротационные слова A/B = joints
-    /// pass-through, линейная TCP → [`crate::kinematics_tdr::tdr_inverse`]
-    /// (оракул `xyzab_tdr_kins.comp`; квирк инертности dx воспроизведён
-    /// 1:1). Чужое слово: C (топология не моделирует).
+    /// и ротор A сверху — Hermle-класс). Ротационные слова A/B = joints
+    /// pass-through; линейная TCP опускается через inverse ядра
+    /// (`tdr_inverse`, оракул `xyzab_tdr_kins.comp`; dx-инертный квирк
+    /// воспроизведён 1:1). Чужое слово: C (топология не моделирует).
     XyzabTdr { params: TdrParams },
     /// Head-head универсальная (ν=90°) + nutating (ν 0–90°) (12.5.4):
     /// A — стол pass-through; B/C — ориентация инструмента через
@@ -230,11 +230,11 @@ impl TrtProfile {
         match mode {
             RtcpMode::XyzacTrt { params } => Some(Self {
                 family: TrtFamily::Xyzac,
-                params: params.clone(),
+                params: *params,
             }),
             RtcpMode::XyzbcTrt { params } => Some(Self {
                 family: TrtFamily::Xyzbc,
-                params: params.clone(),
+                params: *params,
             }),
             _ => None,
         }
@@ -290,6 +290,10 @@ impl TrtProfile {
 
 impl RtcpMode {
     /// Активный kinematics-профиль; [`RtcpMode::Off`] → None.
+    /// (allow: B2-диагностики non-trt lowering 12.5.4 — при разморозке
+    /// AST/расширении lowering методы возвращаются в использование;
+    /// НЕ удалять — документируют семантику топологий.)
+    #[allow(dead_code)]
     fn kins(self) -> Option<Self> {
         match self {
             Self::Off => None,
@@ -325,6 +329,8 @@ impl RtcpMode {
     }
 
     /// Фаза, в которой топология вошла в lowering (диагностика «не молча»).
+    /// (allow: B2-диагностики 12.5.4 — см. kins.)
+    #[allow(dead_code)]
     fn phase(self) -> &'static str {
         match self {
             Self::XyzacTrt { .. } | Self::XyzbcTrt { .. } => "12.5.3",
@@ -346,6 +352,8 @@ impl RtcpMode {
 
     /// Семантика ротационных слов для per-op диагностики (фраза про
     /// pass-through/solver — см. таблицу в док [`RtcpMode`]).
+    /// (allow: B2-диагностики 12.5.4 — см. kins.)
+    #[allow(dead_code)]
     fn rot_semantics(self) -> &'static str {
         match self {
             Self::XyzacTrt { .. } => "rotary words A/C are joint pass-through",
@@ -371,6 +379,8 @@ impl RtcpMode {
     /// `Some(буква)` → честный носитель: профиль не моделирует ось.
     /// Trsrn/Maxkins чужих букв не имеют (A/B/C — свои; у Maxkins A —
     /// пассивный pass-through джоинт оракула).
+    /// (allow: B2-диагностики 12.5.4 — см. kins.)
+    #[allow(dead_code)]
     fn foreign_word(self, rp: &ResolvedPose) -> Option<char> {
         match self {
             Self::XyzacTrt { .. } => rp.b.map(|_| 'B'),
@@ -391,22 +401,12 @@ impl RtcpMode {
     fn update_rot(self, cur: [f64; 3], rp: &ResolvedPose) -> [f64; 3] {
         let w = |word: Option<f64>, keep: f64| word.unwrap_or(keep);
         match self {
-            Self::XyzacTrt { .. } => [
-                w(rp.a, cur[0]),
-                cur[1],
-                w(rp.c, cur[2]),
-            ],
-            Self::XyzbcTrt { .. } => [
-                cur[0],
-                w(rp.b, cur[1]),
-                w(rp.c, cur[2]),
-            ],
+            Self::XyzacTrt { .. } => [w(rp.a, cur[0]), cur[1], w(rp.c, cur[2])],
+            Self::XyzbcTrt { .. } => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
             Self::XyzabTdr { .. } => [w(rp.a, cur[0]), w(rp.b, cur[1]), cur[2]],
-            Self::Trsrn { .. } | Self::Maxkins { .. } => [
-                w(rp.a, cur[0]),
-                w(rp.b, cur[1]),
-                w(rp.c, cur[2]),
-            ],
+            Self::Trsrn { .. } | Self::Maxkins { .. } => {
+                [w(rp.a, cur[0]), w(rp.b, cur[1]), w(rp.c, cur[2])]
+            }
             Self::FiveAxis { .. } => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
             Self::Off => cur,
         }
@@ -442,7 +442,14 @@ impl RtcpMode {
                 let r = tool_rotation(params.nut_angle, rot[2], rot[1], 0.0);
                 let kz = [r[0][2], r[1][2], r[2][2]];
                 let (theta1, theta2) = trsrn_angles_from_tool_axis(params.nut_angle, kz)?;
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], theta2, theta1);
+                let pose = Pose6::new(
+                    xyz_base[0],
+                    xyz_base[1],
+                    xyz_base[2],
+                    rot[0],
+                    theta2,
+                    theta1,
+                );
                 let j = trsrn_tcp_inverse(&params, &pose);
                 Some([j.x, j.y, j.z])
             }
@@ -1412,9 +1419,7 @@ impl L2Evaluator {
                         inherit_axes([rp.x, rp.y, rp.z], self.pos_prog)
                             .unwrap_or_else(|| self.pos_prog.unwrap_or([0.0; 3])),
                     );
-                    let Some(joints_end) =
-                        self.config.rtcp_mode.kins_inverse(end_base, rot)
-                    else {
+                    let Some(joints_end) = self.config.rtcp_mode.kins_inverse(end_base, rot) else {
                         // Trsrn: ориентация недостижима (конус нутации) —
                         // честный носитель вместо молчаливого pass.
                         let mut words = frame_words(&rp);
@@ -1480,7 +1485,8 @@ impl L2Evaluator {
                     self.update_pos_prog(&rp);
                     self.pos_joints = Some(joints_end);
                     self.rot = rot;
-                    self.modals.set_motion(if *kind == MoveKind::Rapid { 0 } else { 1 });
+                    self.modals
+                        .set_motion(if *kind == MoveKind::Rapid { 0 } else { 1 });
                     self.trigger_modal_call(program)?;
                     return Ok(Flow::Normal);
                 }
@@ -1818,8 +1824,7 @@ impl L2Evaluator {
                 Some(format_frame("G2", &words)),
                 stmt,
                 &format!(
-                    "arc under MachineKinematics {} profile (12.5.4): TCP arc is not affinely representable in machine-axis moves (5-axis interpolation) — honest carrier",
-                    name
+                    "arc under MachineKinematics {name} profile (12.5.4): TCP arc is not affinely representable in machine-axis moves (5-axis interpolation) — honest carrier"
                 ),
             );
             self.out.rtcp_active = true;
@@ -2957,14 +2962,18 @@ mod tests {
 
     fn cfg_max() -> L2Config {
         L2Config {
-            rtcp_mode: RtcpMode::Maxkins { params: crate::kinematics_maxkins::MaxkinsParams::default() },
+            rtcp_mode: RtcpMode::Maxkins {
+                params: crate::kinematics_maxkins::MaxkinsParams::default(),
+            },
             ..cfg()
         }
     }
 
     fn cfg_5axis() -> L2Config {
         L2Config {
-            rtcp_mode: RtcpMode::FiveAxis { params: crate::kinematics_5axis::FiveAxisParams::default() },
+            rtcp_mode: RtcpMode::FiveAxis {
+                params: crate::kinematics_5axis::FiveAxisParams::default(),
+            },
             ..cfg()
         }
     }
@@ -3069,11 +3078,12 @@ mod tests {
             let res = L2Evaluator::new(cfg).run(&program).unwrap();
             assert!(res.rtcp_active, "{name}: rtcp_active");
             assert_eq!(res.l1_ops.len(), 1, "{name}: full TCP lowered");
-            assert!(res
-                .diagnostics
-                .iter()
-                .any(|d| d.message.contains(&name) && d.message.contains("machine axes")),
-                "{name}: not silent");
+            assert!(
+                res.diagnostics
+                    .iter()
+                    .any(|d| d.message.contains(&name) && d.message.contains("machine axes")),
+                "{name}: not silent"
+            );
         }
     }
 

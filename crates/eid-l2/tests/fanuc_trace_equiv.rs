@@ -256,7 +256,10 @@ fn wait_with_timeout(
 }
 
 fn docker_available() -> bool {
-    let mut child = match std::process::Command::new("docker").arg("--version").spawn() {
+    let mut child = match std::process::Command::new("docker")
+        .arg("--version")
+        .spawn()
+    {
         Ok(c) => c,
         Err(_) => return false, // docker не установлен
     };
@@ -322,11 +325,7 @@ fn run_rs274(ngc_path: &Path) -> Result<String, String> {
         })
         .unwrap_or_default();
     if !status.success() {
-        return Err(format!(
-            "rs274 failed ({}): {}",
-            status,
-            stderr.trim()
-        ));
+        return Err(format!("rs274 failed ({}): {}", status, stderr.trim()));
     }
     std::fs::read_to_string(dir.join(&out_name)).map_err(|e| format!("canon read: {e}"))
 }
@@ -712,10 +711,7 @@ fn deep_drill_trace_g65_with_e() {
     }
     // Честные буквы КАК В ФАЙЛЕ: E→#8, D→#7, F→#9 (Fanuc-таблица, фикс
     // BUG-D1).
-    let program = assemble_deep_drill(
-        "G65 P7981 Z-7.88 E-7.75 D-.4 S6000 F60.\n",
-        "dd_with_e",
-    );
+    let program = assemble_deep_drill("G65 P7981 Z-7.88 E-7.75 D-.4 S6000 F60.\n", "dd_with_e");
     let ops = run_l2("dd_with_e", &program);
     let motion = non_raw(&ops);
     assert_eq!(
@@ -884,8 +880,16 @@ fn while_clear_variables_trace() {
     match motion[1] {
         Op::Linear { end, .. } => {
             assert_eq!(end.x.value(), 148.0, "48 итераций: #1 = 148");
-            assert_eq!(end.y.value(), 5.0, "Y модальный 5 (g0 y5, Y-слов в хвосте нет)");
-            assert_eq!(end.z.value(), 0.0, "z#[100]: cleared — drop→модал 0 / rs274→0");
+            assert_eq!(
+                end.y.value(),
+                5.0,
+                "Y модальный 5 (g0 y5, Y-слов в хвосте нет)"
+            );
+            assert_eq!(
+                end.z.value(),
+                0.0,
+                "z#[100]: cleared — drop→модал 0 / rs274→0"
+            );
         }
         other => panic!("probe linear expected, got {other:?}"),
     }
@@ -963,8 +967,11 @@ fn indirect_assign_rs274_native_probe() {
         return;
     }
     // (a) косвенное присваивание нативно
-    let canon = run_rs274_text("ip1_indirect_assign", "%\n#1 = 5\n#[1] = 0\ng1 x#[1] f10\n%\n")
-        .unwrap_or_else(|e| panic!("ip1: rs274 failed: {e}"));
+    let canon = run_rs274_text(
+        "ip1_indirect_assign",
+        "%\n#1 = 5\n#[1] = 0\ng1 x#[1] f10\n%\n",
+    )
+    .unwrap_or_else(|e| panic!("ip1: rs274 failed: {e}"));
     let feeds: Vec<&CanonLine> = canon.iter().filter(|l| l.op == "STRAIGHT_FEED").collect();
     assert_eq!(feeds.len(), 1, "ip1: ровно один G1-канон: {canon:?}");
     assert_eq!(

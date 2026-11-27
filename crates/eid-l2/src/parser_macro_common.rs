@@ -1000,7 +1000,7 @@ impl<'a> Builder<'a> {
                     verbatim,
                     ..
                 }) => {
-                    let secs = self.cfg.dwell.seconds(l, &verbatim, n.value());
+                    let secs = self.cfg.dwell.seconds(l, verbatim, n.value());
                     // Текст Num: слово, прочитанное verbatim (секунды), —
                     // исходный срез; сконвертированное (мс → с) — текст
                     // значения (инвариант Num: parse(text) == value).
@@ -1075,7 +1075,7 @@ impl<'a> Builder<'a> {
             .words
             .iter()
             .map(|w| w.letter)
-            .filter(|l| !MOVE_LETTERS.contains(l) && !(tool_change_ok && *l == 'T'))
+            .filter(|l| !(MOVE_LETTERS.contains(l) || tool_change_ok && *l == 'T'))
             .collect();
         if carrier_reason.is_none() && (fr.junk || !bad_letters.is_empty()) {
             carrier_reason = Some(if bad_letters.is_empty() {
@@ -2444,8 +2444,20 @@ mod tests {
         assert_eq!(secs, vec![0.005, 0.001, 2.0, 0.5]);
         // Текст сконвертированных (мс→с) слов — текст значения; X/U —
         // verbatim-срез.
-        assert_eq!(match &p.stmts[0] { L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text, _ => panic!() }, "0.005");
-        assert_eq!(match &p.stmts[2] { L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text, _ => panic!() }, "2.");
+        assert_eq!(
+            match &p.stmts[0] {
+                L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text,
+                _ => panic!(),
+            },
+            "0.005"
+        );
+        assert_eq!(
+            match &p.stmts[2] {
+                L2Stmt::L1Op(Op::Dwell { seconds, .. }) => &seconds.text,
+                _ => panic!(),
+            },
+            "2."
+        );
         assert!(matches!(
             &p.stmts[4],
             L2Stmt::L1Op(Op::ProgramStop { optional: true, .. })

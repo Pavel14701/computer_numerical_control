@@ -730,7 +730,9 @@ fn manifest_notice_and_r4_expect_per_corpus_1_1() {
     // (N11/N14 по SPEC v0.16; N2/N12/N13/N17 по SPEC v0.20 — зонд-сверка
     // rs274+grbl-source; N14 — отдельный Ok+notice-класс без E-диаг).
     let err_class = ["N1", "N4", "N5a", "N5b", "N6", "N15", "N16", "N19"];
-    let line_class = ["N3", "N7", "N8", "N9", "N10", "N11", "N12", "N13", "N17", "N18"];
+    let line_class = [
+        "N3", "N7", "N8", "N9", "N10", "N11", "N12", "N13", "N17", "N18",
+    ];
     for id in err_class {
         let vv = v(id);
         for f in &vv.files {

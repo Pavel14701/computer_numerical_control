@@ -36,9 +36,7 @@
 
 use crate::ast::{L2Program, SysVar, VarRef};
 use crate::eval::L2Error;
-use crate::parser_macro_common::{
-    map_common_system, parse_macro_b, DialectCfg, DwellSemantics,
-};
+use crate::parser_macro_common::{map_common_system, parse_macro_b, DialectCfg, DwellSemantics};
 
 /// Haas-карта номера макро-переменной → [`VarRef`] (§2.2 + рулинг
 /// «#500–#699/#109xxx → VendorSpecific»).
@@ -1029,10 +1027,26 @@ mod tests {
         let mut ev = crate::interp::L2Evaluator::new(crate::interp::L2Config::default());
         ev.run(&program).unwrap();
         let env = ev.env();
-        assert_eq!(env.read_direct(500).unwrap(), crate::ast::Val::Num(-0.4), "D→#7");
-        assert_eq!(env.read_direct(501).unwrap(), crate::ast::Val::Num(60.0), "F→#9");
-        assert_eq!(env.read_direct(502).unwrap(), crate::ast::Val::Num(-7.88), "Z→#26");
-        assert_eq!(env.read_direct(503).unwrap(), crate::ast::Val::Num(6000.0), "S→#19");
+        assert_eq!(
+            env.read_direct(500).unwrap(),
+            crate::ast::Val::Num(-0.4),
+            "D→#7"
+        );
+        assert_eq!(
+            env.read_direct(501).unwrap(),
+            crate::ast::Val::Num(60.0),
+            "F→#9"
+        );
+        assert_eq!(
+            env.read_direct(502).unwrap(),
+            crate::ast::Val::Num(-7.88),
+            "Z→#26"
+        );
+        assert_eq!(
+            env.read_direct(503).unwrap(),
+            crate::ast::Val::Num(6000.0),
+            "S→#19"
+        );
     }
 
     #[test]

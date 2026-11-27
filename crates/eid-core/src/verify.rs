@@ -108,7 +108,9 @@
 //! ===========================================================================
 //! v0.3.x — is_finite-гейт resid-сравнений (решение ревью заметки EQUIVALENCE
 //! §4: «известное ограничение → дешёвая страховка на полке» — ПРИМЕНЕНА;
-//! EQUIVALENCE §4 note обновляется оркестратором). IEEE-754: все сравнения с
+//! EQUIVALENCE §4 note обновляется оркестратором).
+//!
+//! IEEE-754: все сравнения с
 //! NaN ложны (`NaN > ε_pos` = false) → resid-проверка вырождается в
 //! «молчаливый pass» — не срабатывает и не диагностирует. Гейты (единая точка
 //! для всех источников AST; адаптеры не дублируют):
@@ -117,6 +119,7 @@
 //!   * §2 связывание Tol-ветка — не-конечный |Δ| → refusal;
 //!   * ε_pos не-конечен (переполнение bbox-диагонали координат) →
 //!     program-level refusal (все `resid > ε` сравнения мертвы при ε=inf).
+//!
 //! На валидные входы не влияет: NaN/inf недостижимы на легальном пути
 //! (is_finite-гейт лексеров + 4dp-квантование SPEC §10.6). Кейсы — только
 //! hand-built AST / регрессия лексера / промежуточное переполнение
@@ -386,7 +389,10 @@ fn verify_program_end(ops: &[Op], errors: &mut Vec<Diagnostic>) {
     // второй PEND — см. doc) → отказ «program_end must be the last op»
     // (текст прежний, дословно — контракт emit-фильтров адаптеров).
     if let Some(pend) = ops.iter().position(|o| matches!(o, Op::ProgramEnd { .. })) {
-        if let Some(offender) = ops[pend + 1..].iter().find(|o| !matches!(o, Op::Raw { .. })) {
+        if let Some(offender) = ops[pend + 1..]
+            .iter()
+            .find(|o| !matches!(o, Op::Raw { .. }))
+        {
             errors.push(diag(
                 ErrorCode::InvalidInput,
                 "program_end must be the last op (SPEC §3)",
