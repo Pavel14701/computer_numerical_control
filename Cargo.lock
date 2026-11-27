@@ -63,6 +63,7 @@ dependencies = [
  "eid-grbl",
  "eid-haas",
  "eid-harness",
+ "eid-l2",
  "eid-linuxcnc",
  "serde",
  "toml",
