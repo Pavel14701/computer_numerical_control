@@ -34,13 +34,17 @@
 //! * ротационные оси (A/B/C) → [`Op::Raw`] с payload-кадром
 //!   `G0 X15.0000 A15.0000\n` (T4 ДОСЛОВНО, hex с терминатором), код
 //!   E_UNSUPPORTED_SEMANTICS (§3 строка 5) — режим [`RtcpMode::Off`];
-//!   12.5.3 (фаза 12.5, MachineKinematics-профиль): при trt-профиле
-//!   ([`RtcpMode::XyzacTrt`]/[`RtcpMode::XyzbcTrt`], оракул trtfuncs —
-//!   ядро [`crate::kinematics`]) ходы с ПОЛНОЙ TCP-позой опускаются в
-//!   L1-опы machine-осей: XYZ = inverse-кинематика ([`crate::kinematics::xyzac_inverse`]
-//!   / [`crate::kinematics::xyzbc_inverse`]), ротационные слова A/C (B/C)
-//!   = joints pass-through + трекинг углов; носитель остаётся только на
-//!   честных границах (неполная поза, чужое ротационное слово, дуги);
+//!   12.5.3/12.5.4 (фаза 12.5, MachineKinematics-профиль): при
+//!   kinematics-профиле (все шесть топологий [`RtcpMode`] — trt/tdr/
+//!   trsrn/maxkins/5axis, оракулы LinuxCNC — ядра `crate::kinematics*`)
+//!   ходы с ПОЛНОЙ TCP-позой опускаются в L1-опы machine-осей: XYZ =
+//!   inverse-кинематика топологии, ротационные слова = joints
+//!   pass-through (table-table trt/tdr; head-table maxkins; gantry
+//!   5axis) ИЛИ через angle-solver (head-head trsrn: B/C — ориентация
+//!   инструмента → `trsrn_angles_from_tool_axis` → joints; таблица
+//!   «pass-through vs solver» — док [`RtcpMode`]); носитель остаётся
+//!   только на честных границах (неполная поза, чужое ротационное
+//!   слово, дуги);
 //! * G43.4/G49 RTCP, G68.2 TWP → Raw с подставленными переменными
 //!   (§3 строка 6; TWP-тело подавлено);
 //! * G31 / чтение SkipPos/AbsMachinePos/WorkPos → останов
@@ -77,6 +81,12 @@ use crate::ast::{
 };
 use crate::eval::{eval_expr, write_var, L2Env, L2Error};
 use crate::kinematics::{xyzac_inverse, xyzbc_inverse, Pose6, TrtParams};
+use crate::kinematics_5axis::{fiveaxis_inverse, FiveAxisParams, PoseXyzbcw};
+use crate::kinematics_maxkins::{maxkins_inverse, MaxkinsParams, PoseMaxkins};
+use crate::kinematics_tdr::{tdr_inverse, TdrParams};
+use crate::kinematics_trsrn::{
+    tool_rotation, trsrn_angles_from_tool_axis, trsrn_tcp_inverse, TrsrnParams,
+};
 use crate::lowering::{
     arc_from_ijk, arc_from_r, format_frame, plane_linear, raw_frame_op, resolve_labels,
     sub_target_name, Affine3, ArcGeomError,
@@ -89,7 +99,7 @@ use std::collections::{BTreeMap, HashMap};
 // Конфиг и ошибки
 // ===========================================================================
 
-/// RTCP-профиль Pass-1 lowering (12.5.2/12.5.3, фаза 12.5): как
+/// RTCP-профиль Pass-1 lowering (12.5.2/12.5.3/12.5.4, фаза 12.5): как
 /// интерпретатор обращается с ротационными словами (A/B/C) и TCP-позой.
 ///
 /// РЕЖИМ OFF (дефолт = `MachineKinematics::Triv`, поведение 12.2/12.5.2):
@@ -100,25 +110,43 @@ use std::collections::{BTreeMap, HashMap};
 /// как линейные — [`ResolvedPose`]); линейная компонента трекается
 /// ([`Self::update_pos_prog`]). [`LoweringResult::rtcp_active`] = `false`.
 ///
-/// РЕЖИМ XYZAC-TRT / XYZBC-TRT (12.5.3, `MachineKinematics::XyzacTrt`/
-/// `XyzbcTrt` из профиля): программа говорит TCP-координатами (семантика
-/// RTCP-контура станка), lowering переводит ходы в MACHINE-ОСИ:
+/// АКТИВНЫЕ РЕЖИМЫ (программа говорит TCP-координатами — семантика
+/// RTCP-контура станка; lowering переводит ходы в MACHINE-ОСИ):
 /// * Rapid/Linear с полностью известной TCP-позой (слова + наследование,
 ///   [`Self::update_pos_prog`]) → L1-оп `Op::Rapid`/`Op::Linear`, где
-///   X/Y/Z = joints (machine-координаты осей) из inverse-кинематики
-///   [`crate::kinematics::xyzac_inverse`]/[`crate::kinematics::xyzbc_inverse`]
-///   (оракул trtfuncs.c, круговой инвариант forward∘inverse ≡ identity —
-///   `tests/kinematics_tests.rs`);
-/// * ротационные слова A/C (XYZAC) или B/C (XYZBC) = значения углов
-///   joints pass-through (формулы проходят угол насквозь без
-///   нормализации) + трекинг (машина держит угол до следующего слова —
-///   модальность ротационных осей);
+///   X/Y/Z = joints (machine-координаты осей) из inverse-кинематики ядра
+///   (`crate::kinematics*` — оракулы LinuxCNC, круговой инвариант
+///   forward∘inverse ≡ identity — `tests/kinematics_tests.rs` +
+///   `tests/kinematics_topologies_tests.rs`);
 /// * НЕ полный ход → честный носитель (см. [`RawMarker`]);
 /// * дуги: TCP-дуга при активной кинематике НЕ аффинно отображается в
-///   machine-оси (5-осевая интерполяция) → честный носитель [`RawMarker::ArcUnlowered`];
-/// * чужое ротационное слово (B под XYZAC / A под XYZBC) → носитель —
-///   топология профиля не моделирует эту ось (head-head и др. — при
-///   добавлении формул в ядро, амендмент v0.1.5 §12.5).
+///   machine-оси (5-осевая интерполяция) → честный носитель [`RawMarker::ArcUnlowered`]
+///   (граница сохраняется во ВСЕХ режимах);
+/// * чужое ротационное слово (буква вне топологии) → носитель.
+///
+/// # Семантика ротационных слов по топологиям («pass-through vs solver»)
+///
+/// | Режим | Слова = joints? | Линейная TCP → joints | Оракул |
+/// |---|---|---|---|
+/// | `XyzacTrt` | A/C pass-through (+con-знак в трансляции) | `xyzac_inverse` | trtfuncs.c |
+/// | `XyzbcTrt` | B/C pass-through | `xyzbc_inverse` | trtfuncs.c |
+/// | `XyzabTdr` | A/B pass-through (table-table cradle; знаки comp, без con-флага) | `tdr_inverse` | xyzab_tdr_kins.comp |
+/// | `Trsrn` | A (стол) pass-through; **B/C — НЕ pass-through**: слова = ориентация ИНСТРУМЕНТА → вектор оси → **angle-solver** (`trsrn_angles_from_tool_axis`, главные ветви C=θ1∈[−90°,90°], B=θ2∈[0°,180°]) | `trsrn_tcp_inverse` на решённых углах | xyzacb_trsrn.comp + kins-twp python |
+/// | `Maxkins` | A/B/C pass-through (A — пассивный джоинт оракула; U/V/W joints держатся home 0 — слова не адресуемы в L2-AST §2.4) | `maxkins_inverse` | maxkins.c |
+/// | `FiveAxis` | B/C pass-through; W joint держится home 0 (W-слово не адресуемо в L2-AST) | `fiveaxis_inverse` | 5axiskins.c |
+///
+/// TRSRN-СОЛВЕР (ключевое отличие от table-табличных топологий): у
+/// head-head/nutating головы джоинт secondary вращается о НАКЛОНЁННУЮ ось
+/// нутации `(0, Sv, Cv)`, поэтому программная ориентация и machine-джоинты
+/// — разные параметризации: lowering прогоняет программные B/C через
+/// решатель углов (200/200 round-trip на решётке ν∈{30,45,60,90} —
+/// `tests/kinematics_topologies_tests.rs::trsrn_angle_solver_round_trip_grid`).
+/// На главных ветвях решатель восстанавливает программные углы точно
+/// (семантика совпадает с pass-through); вне главных ветвей (B<0°,
+/// C вне ±90°) joints канонизируются до главных (та же ось инструмента —
+/// «не молча», per-op диагностика называет solver); ориентация,
+/// недостижимая конусом нутации (defensive-путь — из programmed углов
+/// недостижима), — честный носитель.
 ///
 /// Заголовок L1-эмиттера НЕ меняется (machine-координаты осей ≠ TCP —
 /// спец-семантика потока задокументирована флагом
@@ -140,6 +168,29 @@ pub enum RtcpMode {
     /// формулы оракула — [`crate::kinematics::xyzbc_inverse`]): семантика
     /// идентична [`RtcpMode::XyzacTrt`] с парой B/C.
     XyzbcTrt { params: TrtParams },
+    /// XYZAB table-table TT-2 «cradle/trunnion» (12.5.4; качающийся стол B
+    /// + ротор A сверху — Hermle-класс): ротационные слова A/B = joints
+    /// pass-through, линейная TCP → [`crate::kinematics_tdr::tdr_inverse`]
+    /// (оракул `xyzab_tdr_kins.comp`; квирк инертности dx воспроизведён
+    /// 1:1). Чужое слово: C (топология не моделирует).
+    XyzabTdr { params: TdrParams },
+    /// Head-head универсальная (ν=90°) + nutating (ν 0–90°) (12.5.4):
+    /// A — стол pass-through; B/C — ориентация инструмента через
+    /// angle-solver + [`crate::kinematics_trsrn::trsrn_tcp_inverse`]
+    /// (см. «Семантика ротационных слов» выше; оракул
+    /// `xyzacb_trsrn.comp` + независимый python kins-twp).
+    Trsrn { params: TrsrnParams },
+    /// Head-table intersecting, DMU 50-класс (12.5.4): ротационные слова
+    /// A/B/C = joints pass-through (A — пассивный джоинт оракула),
+    /// линейная TCP → [`crate::kinematics_maxkins::maxkins_inverse`];
+    /// U/V/W joints — home 0 (не адресуемы в L2-AST); оракул `maxkins.c`.
+    Maxkins { params: MaxkinsParams },
+    /// Gantry/bridge mill XYZBCW (12.5.4): B (наклон) / C (азимут) =
+    /// joints pass-through, W — виртуальная ось вдоль инструмента, joint
+    /// держится home 0 (W-слова в L2-AST §2.4 нет — 6 букв X..C);
+    /// линейная TCP → [`crate::kinematics_5axis::fiveaxis_inverse`];
+    /// оракул `5axiskins.c`.
+    FiveAxis { params: FiveAxisParams },
 }
 
 impl Default for RtcpMode {
@@ -149,85 +200,286 @@ impl Default for RtcpMode {
 }
 
 // ===========================================================================
-// trt-профиль lowering (12.5.3): диспетчеризация топологии MachineKinematics
+// trt-семейство (12.5.3): узкое представление XyzacTrt/XyzbcTrt для
+// label-трекинга и TCP→joints lowering 12.5.3 (exec_trt_move/trt_inverse).
+// Нелинейные топологии (12.5.4) идут через kins_inverse — см. exec_move.
 // ===========================================================================
 
-/// Семейство table-rotary-tilting (12.5.3): какая пара ротационных слов
-/// активна. Формулы обоих семейств верифицированы круговым инвариантом в
-/// [`crate::kinematics`] (оракул trtfuncs.c; 3136 кейсов max err 2.27e-13).
+/// Семейство table-rotary-tilting внутри [`RtcpMode`] (12.5.3-путь).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrtFamily {
-    /// Стол A + ротор C (слова A/C; слово B — чужое).
+pub enum TrtFamily {
+    /// XYZAC (A-наклон стола + C-ротор).
     Xyzac,
-    /// Стол B + ротор C (слова B/C; слово A — чужое).
+    /// XYZBC (B-наклон стола + C-ротор).
     Xyzbc,
 }
 
-/// Активная kinematics-схема lowering: топология + геометрия станка
-/// (экстракт [`RtcpMode::XyzacTrt`]/[`RtcpMode::XyzbcTrt`]).
-#[derive(Debug, Clone, Copy)]
-struct TrtProfile {
-    family: TrtFamily,
-    params: TrtParams,
+/// Консолидированный trt-профиль: [`RtcpMode::XyzacTrt`]/
+/// [`RtcpMode::XyzbcTrt`] → плоское представление с буквами осей и
+/// inverse-функцией для 12.5.3-lowering.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrtProfile {
+    pub family: TrtFamily,
+    pub params: TrtParams,
 }
 
 impl TrtProfile {
-    /// Экстракт trt-профиля из конфига; [`RtcpMode::Off`] → None.
-    fn of(mode: &RtcpMode) -> Option<Self> {
+    /// Some — только для trt-семейства ([`RtcpMode::XyzacTrt`]/[`RtcpMode::XyzbcTrt`]);
+    /// нелинейные топологии (12.5.4) и Off — None (их lowering — kins_inverse).
+    pub fn of(mode: &RtcpMode) -> Option<Self> {
         match mode {
-            RtcpMode::Off => None,
             RtcpMode::XyzacTrt { params } => Some(Self {
                 family: TrtFamily::Xyzac,
-                params: *params,
+                params: params.clone(),
             }),
             RtcpMode::XyzbcTrt { params } => Some(Self {
                 family: TrtFamily::Xyzbc,
-                params: *params,
+                params: params.clone(),
             }),
+            _ => None,
         }
     }
 
-    /// Имя профиля для диагностик («не молча»).
-    fn name(self) -> &'static str {
+    /// Имя профиля (диагностика «не молча»).
+    pub fn name(&self) -> &'static str {
         match self.family {
             TrtFamily::Xyzac => "XyzacTrt",
             TrtFamily::Xyzbc => "XyzbcTrt",
         }
     }
 
-    /// Имя inverse-функции ядра для диагностик.
-    fn inverse_fn(self) -> &'static str {
-        match self.family {
-            TrtFamily::Xyzac => "xyzac_inverse",
-            TrtFamily::Xyzbc => "xyzbc_inverse",
-        }
-    }
-
-    /// Буква СВОЕГО ротационного слова (угол стола).
-    fn table_letter(self) -> char {
-        match self.family {
-            TrtFamily::Xyzac => 'A',
-            TrtFamily::Xyzbc => 'B',
-        }
-    }
-
-    /// Буква ЧУЖОГО ротационного слова (оси вне топологии профиля).
-    fn foreign_letter(self) -> char {
+    /// ЧУЖОЕ ротационное слово (буква вне топологии): Xyzac — B, Xyzbc — A.
+    pub fn foreign_letter(&self) -> char {
         match self.family {
             TrtFamily::Xyzac => 'B',
             TrtFamily::Xyzbc => 'A',
         }
     }
 
+    /// СТОЛОВОЕ ротационное слово (наклонная ось): Xyzac — A, Xyzbc — B.
+    pub fn table_letter(&self) -> char {
+        match self.family {
+            TrtFamily::Xyzac => 'A',
+            TrtFamily::Xyzbc => 'B',
+        }
+    }
+
+    /// Имя inverse-функции ядра (диагностика).
+    pub fn inverse_fn(&self) -> &'static str {
+        match self.family {
+            TrtFamily::Xyzac => "xyzac_inverse",
+            TrtFamily::Xyzbc => "xyzbc_inverse",
+        }
+    }
+
+    /// Обновление трекинга углов словами кадра (модальность ротационных
+    /// осей trt-семейства — кортеж «стол, ротор» — см. [`RtcpMode::update_rot`]).
+    pub fn update_rot(&self, cur: [f64; 3], rp: &ResolvedPose) -> [f64; 3] {
+        let w = |word: Option<f64>, keep: f64| word.unwrap_or(keep);
+        match self.family {
+            TrtFamily::Xyzac => [w(rp.a, cur[0]), cur[1], w(rp.c, cur[2])],
+            TrtFamily::Xyzbc => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
+        }
+    }
+}
+
+// ===========================================================================
+// kinematics-профиль lowering (12.5.3/12.5.4): диспетчеризация топологии
+// MachineKinematics (pass-through vs solver — см. док [`RtcpMode`])
+// ===========================================================================
+
+impl RtcpMode {
+    /// Активный kinematics-профиль; [`RtcpMode::Off`] → None.
+    fn kins(self) -> Option<Self> {
+        match self {
+            Self::Off => None,
+            m => Some(m),
+        }
+    }
+
+    /// Имя профиля для диагностик («не молча»).
+    fn name(self) -> &'static str {
+        match self {
+            Self::XyzacTrt { .. } => "XyzacTrt",
+            Self::XyzbcTrt { .. } => "XyzbcTrt",
+            Self::XyzabTdr { .. } => "XyzabTdr",
+            Self::Trsrn { .. } => "Trsrn",
+            Self::Maxkins { .. } => "Maxkins",
+            Self::FiveAxis { .. } => "FiveAxis",
+            Self::Off => "Off",
+        }
+    }
+
+    /// Имя inverse-пути ядра для диагностик (solver у trsrn — из двух
+    /// функций: решатель углов + TCP-inverse).
+    fn inverse_fn(self) -> &'static str {
+        match self {
+            Self::XyzacTrt { .. } => "xyzac_inverse",
+            Self::XyzbcTrt { .. } => "xyzbc_inverse",
+            Self::XyzabTdr { .. } => "tdr_inverse",
+            Self::Trsrn { .. } => "trsrn_angles_from_tool_axis + trsrn_tcp_inverse",
+            Self::Maxkins { .. } => "maxkins_inverse",
+            Self::FiveAxis { .. } => "fiveaxis_inverse",
+            Self::Off => "",
+        }
+    }
+
+    /// Фаза, в которой топология вошла в lowering (диагностика «не молча»).
+    fn phase(self) -> &'static str {
+        match self {
+            Self::XyzacTrt { .. } | Self::XyzbcTrt { .. } => "12.5.3",
+            _ => "12.5.4",
+        }
+    }
+
+    /// Оракул формул (для per-op диагностики).
+    fn oracle(self) -> &'static str {
+        match self {
+            Self::XyzacTrt { .. } | Self::XyzbcTrt { .. } => "trtfuncs",
+            Self::XyzabTdr { .. } => "xyzab_tdr_kins.comp",
+            Self::Trsrn { .. } => "xyzacb_trsrn.comp + kins-twp",
+            Self::Maxkins { .. } => "maxkins.c",
+            Self::FiveAxis { .. } => "5axiskins.c",
+            Self::Off => "",
+        }
+    }
+
+    /// Семантика ротационных слов для per-op диагностики (фраза про
+    /// pass-through/solver — см. таблицу в док [`RtcpMode`]).
+    fn rot_semantics(self) -> &'static str {
+        match self {
+            Self::XyzacTrt { .. } => "rotary words A/C are joint pass-through",
+            Self::XyzbcTrt { .. } => "rotary words B/C are joint pass-through",
+            Self::XyzabTdr { .. } => "rotary words A/B are joint pass-through",
+            Self::Trsrn { .. } => {
+                "table A is joint pass-through; head orientation words B/C are resolved by the \
+                 angle solver (main branches C=θ1∈[−90,90], B=θ2∈[0,180])"
+            }
+            Self::Maxkins { .. } => {
+                "rotary words A/B/C are joint pass-through (A passive oracle joint; U/V/W joints \
+                 held at home 0 — not addressable in L2 AST)"
+            }
+            Self::FiveAxis { .. } => {
+                "rotary words B/C are joint pass-through; W joint held at home 0 (W word not \
+                 addressable in L2 AST)"
+            }
+            Self::Off => "",
+        }
+    }
+
+    /// ЧУЖОЕ ротационное слово кадра (буква вне топологии профиля) —
+    /// `Some(буква)` → честный носитель: профиль не моделирует ось.
+    /// Trsrn/Maxkins чужих букв не имеют (A/B/C — свои; у Maxkins A —
+    /// пассивный pass-through джоинт оракула).
+    fn foreign_word(self, rp: &ResolvedPose) -> Option<char> {
+        match self {
+            Self::XyzacTrt { .. } => rp.b.map(|_| 'B'),
+            Self::XyzbcTrt { .. } => rp.a.map(|_| 'A'),
+            Self::XyzabTdr { .. } => rp.c.map(|_| 'C'),
+            Self::FiveAxis { .. } => rp.a.map(|_| 'A'),
+            _ => None,
+        }
+    }
+
     /// Обновить трекинг углов словами кадра (модальность ротационных осей:
-    /// слово Some → новое значение угла; None → прежний угол держится;
-    /// home-допущение (0, 0) — см. [`L2Evaluator::rot`]).
-    fn update_rot(self, cur: (f64, f64), rp: &ResolvedPose) -> (f64, f64) {
-        let table = match self.family {
-            TrtFamily::Xyzac => rp.a,
-            TrtFamily::Xyzbc => rp.b,
-        };
-        (table.unwrap_or(cur.0), rp.c.unwrap_or(cur.1))
+    /// слово Some → новое значение; None → прежний угол держится; home-
+    /// допущение [0,0,0] — см. [`L2Evaluator::rot`]).
+    ///
+    /// Трекается СОСТОЯНИЕ ПРОГРАММНЫХ УГЛОВ (для Trsrn — программная
+    /// ориентация: joints решаются из неё на каждом ходе —
+    /// [`Self::kins_inverse`]; для остальных программные углы = joints).
+    fn update_rot(self, cur: [f64; 3], rp: &ResolvedPose) -> [f64; 3] {
+        let w = |word: Option<f64>, keep: f64| word.unwrap_or(keep);
+        match self {
+            Self::XyzacTrt { .. } => [
+                w(rp.a, cur[0]),
+                cur[1],
+                w(rp.c, cur[2]),
+            ],
+            Self::XyzbcTrt { .. } => [
+                cur[0],
+                w(rp.b, cur[1]),
+                w(rp.c, cur[2]),
+            ],
+            Self::XyzabTdr { .. } => [w(rp.a, cur[0]), w(rp.b, cur[1]), cur[2]],
+            Self::Trsrn { .. } | Self::Maxkins { .. } => [
+                w(rp.a, cur[0]),
+                w(rp.b, cur[1]),
+                w(rp.c, cur[2]),
+            ],
+            Self::FiveAxis { .. } => [cur[0], w(rp.b, cur[1]), w(rp.c, cur[2])],
+            Self::Off => cur,
+        }
+    }
+
+    /// Inverse-кинематика топологии: TCP-поза (базовая СК) + углы
+    /// (трекинг [`L2Evaluator::rot`]) → machine-оси X/Y/Z.
+    /// `None` — ориентация недостижима (только Trsrn: конус нутации;
+    /// defensive-путь — из programmed углов решатель всегда достигаем).
+    fn kins_inverse(self, xyz_base: [f64; 3], rot: [f64; 3]) -> Option<[f64; 3]> {
+        match self {
+            Self::XyzacTrt { params } => {
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], 0.0, rot[2]);
+                let j = xyzac_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::XyzbcTrt { params } => {
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], 0.0, rot[1], rot[2]);
+                let j = xyzbc_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::XyzabTdr { params } => {
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], rot[1], 0.0);
+                let j = tdr_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::Trsrn { params } => {
+                // SOLVER-путь (НЕ pass-through): programmed ориентация
+                // (B=secondary, C=primary) → вектор оси инструмента Kz
+                // (3-й столбец R = Rz(C)·Rs(ν,B)·Rz(tc=0); tc на ось не
+                // влияет) → решатель углов (главные ветви) → machine
+                // joints (b=θ2, c=θ1) → TCP-inverse линейной части.
+                let r = tool_rotation(params.nut_angle, rot[2], rot[1], 0.0);
+                let kz = [r[0][2], r[1][2], r[2][2]];
+                let (theta1, theta2) = trsrn_angles_from_tool_axis(params.nut_angle, kz)?;
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], theta2, theta1);
+                let j = trsrn_tcp_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::Maxkins { params } => {
+                // Порядок букв оракула maxkins.c «joints 0..8 = X Y Z A B C
+                // U V W»: A пассивен (pass-through), B — голова, C — стол;
+                // U/V/W-салазки не адресуемы в L2-AST — home 0.
+                let pose = PoseMaxkins {
+                    x: xyz_base[0],
+                    y: xyz_base[1],
+                    z: xyz_base[2],
+                    a: rot[0],
+                    b: rot[1],
+                    c: rot[2],
+                    u: 0.0,
+                    v: 0.0,
+                    w: 0.0,
+                };
+                let j = maxkins_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::FiveAxis { params } => {
+                // XYZBCW: W — виртуальная ось вдоль инструмента; joint
+                // home 0 (W-слова в L2-AST §2.4 нет — 6 букв X..C).
+                let pose = PoseXyzbcw {
+                    x: xyz_base[0],
+                    y: xyz_base[1],
+                    z: xyz_base[2],
+                    b: rot[1],
+                    c: rot[2],
+                    w: 0.0,
+                };
+                let j = fiveaxis_inverse(&params, &pose);
+                Some([j.x, j.y, j.z])
+            }
+            Self::Off => None,
+        }
     }
 }
 
@@ -252,12 +504,14 @@ pub struct L2Config {
     /// None (дефолт) → первый ход с неполными словами не lowered
     /// (E_RUNTIME_STATE-носитель); Some — наследование координат с кадра 1.
     pub initial_pos: Option<[f64; 3]>,
-    /// RTCP-профиль ротационных осей (12.5.2/12.5.3): [`RtcpMode::Off`]
-    /// (дефолт — MachineKinematics::Triv, поведение 12.2) либо trt-профиль
-    /// `XyzacTrt`/`XyzbcTrt` с геометрией станка — тогда ходы с полной
-    /// TCP-позой опускаются в L1-опы machine-осей (TCP→joints,
-    /// [`crate::kinematics::xyzac_inverse`]/[`crate::kinematics::xyzbc_inverse`];
-    /// подробности и границы — документация [`RtcpMode`]).
+    /// RTCP-профиль ротационных осей (12.5.2/12.5.3/12.5.4):
+    /// [`RtcpMode::Off`] (дефолт — MachineKinematics::Triv, поведение
+    /// 12.2) либо kinematics-профиль с геометрией станка (шесть
+    /// топологий: `XyzacTrt`/`XyzbcTrt`/`XyzabTdr`/`Trsrn`/`Maxkins`/
+    /// `FiveAxis`) — тогда ходы с полной TCP-позой опускаются в L1-опы
+    /// machine-осей (TCP→joints, inverse-кинематика топологии;
+    /// подробности, границы и таблица «pass-through vs solver» —
+    /// документация [`RtcpMode`]).
     pub rtcp_mode: RtcpMode,
 }
 
@@ -636,14 +890,16 @@ pub struct L2Evaluator {
     /// Программная позиция (значения адресных слов; наследование осей).
     /// Базовая СК = `xform.apply_point(pos_prog)` (трансформации §3).
     pos_prog: Option<[f64; 3]>,
-    /// Трекинг ротационных углов (12.5.3, только под trt-профилем):
-    /// (угол стола, угол ротора) = (A, C) для XYZAC / (B, C) для XYZBC.
-    /// Home-допущение (0, 0) — тот же класс допущений, что
+    /// Трекинг ротационных углов (12.5.3/12.5.4, под kinematics-профилем):
+    /// `[A, B, C]` программных углов (используются компоненты СВОИХ букв
+    /// топологии; Trsrn хранит программную ориентацию — joints решаются
+    /// из неё на каждом ходе, см. [`RtcpMode::kins_inverse`]).
+    /// Home-допущение [0, 0, 0] — тот же класс допущений, что
     /// [`L2Config::initial_pos`] для линейных осей (rs274-сим: home 0,
     /// сверки trace-тестов); ротационные слова кадров обновляют
     /// компоненты по отдельности (модальность ротационных осей: угол
     /// держится до следующего слова).
-    rot: (f64, f64),
+    rot: [f64; 3],
     /// Позиция MACHINE-осей X/Y/Z (12.5.3, только под trt-профилем):
     /// end последнего trt-опа. Start-point следующего joints-опа. None —
     /// machine-позиция неизвестна (до первого trt-опа; ПОСЛЕ носителя
@@ -675,7 +931,7 @@ impl L2Evaluator {
             config,
             env,
             pos_prog: None,
-            rot: (0.0, 0.0),
+            rot: [0.0; 3],
             pos_joints: None,
             modals: Modals::new(),
             xform: Affine3::identity(),
@@ -709,7 +965,7 @@ impl L2Evaluator {
         env.set_budget(self.config.max_eval_steps);
         self.env = env;
         self.pos_prog = self.config.initial_pos;
-        self.rot = (0.0, 0.0);
+        self.rot = [0.0; 3];
         self.pos_joints = None;
         self.modals = Modals::new();
         self.xform = Affine3::identity();
@@ -1138,6 +1394,97 @@ impl L2Evaluator {
                 //    ([`RtcpMode::XyzacTrt`]/[`RtcpMode::XyzbcTrt`]) — ходы с
                 //    полной TCP-позой опускаются в L1-опы machine-осей
                 //    (TCP→joints); Off — прежние носители T4 (§3 строка 5).
+                // 3.5) Нелинейные топологии (12.5.4): XyzabTdr/Trsrn/Maxkins/
+                //      FiveAxis — TCP→joints через kins_inverse (полный-TCP
+                //      скоуп 12.5.3-семантики: ход опускается в L1-оп
+                //      machine-осей; дуги → честный носитель, не аффинно).
+                if matches!(
+                    self.config.rtcp_mode,
+                    RtcpMode::XyzabTdr { .. }
+                        | RtcpMode::Trsrn { .. }
+                        | RtcpMode::Maxkins { .. }
+                        | RtcpMode::FiveAxis { .. }
+                ) {
+                    // Углы: слова кадра обновляют трекинг (rot_semantics
+                    // топологии — pass-through или solver для Trsrn).
+                    let rot = self.config.rtcp_mode.update_rot(self.rot, &rp);
+                    let end_base = self.xform.apply_point(
+                        inherit_axes([rp.x, rp.y, rp.z], self.pos_prog)
+                            .unwrap_or_else(|| self.pos_prog.unwrap_or([0.0; 3])),
+                    );
+                    let Some(joints_end) =
+                        self.config.rtcp_mode.kins_inverse(end_base, rot)
+                    else {
+                        // Trsrn: ориентация недостижима (конус нутации) —
+                        // честный носитель вместо молчаливого pass.
+                        let mut words = frame_words(&rp);
+                        if let Some(f) = feed_v {
+                            words.push(('F', f));
+                        }
+                        let text = format_frame(gcode, &words);
+                        self.out.push_raw(
+                            RawMarker::RotaryAxis,
+                            ErrorCode::UnsupportedSemantics,
+                            Some(text),
+                            stmt,
+                            "orientation unreachable under MachineKinematics profile (12.5.4) — honest carrier, not silent pass",
+                        );
+                        self.out.rtcp_active = true;
+                        self.update_pos_prog(&rp);
+                        self.rot = rot;
+                        return Ok(Flow::Normal);
+                    };
+                    let feed_num = feed_v.map(mk_num4);
+                    let state = l1_default_state(feed_num, feed_v.is_some());
+                    let src = stmt
+                        .src()
+                        .cloned()
+                        .unwrap_or_else(crate::ast::placeholder_span);
+                    let start = match self.pos_joints {
+                        Some(j) => StartPoint::Known(pt3(j)),
+                        None => StartPoint::Unknown,
+                    };
+                    let op = if *kind == MoveKind::Rapid {
+                        Op::Rapid {
+                            start,
+                            end: pt3(joints_end),
+                            state,
+                            src,
+                            sub: None,
+                        }
+                    } else {
+                        Op::Linear {
+                            start,
+                            end: pt3(joints_end),
+                            state,
+                            src,
+                            sub: None,
+                        }
+                    };
+                    self.out.l1_ops.push(op);
+                    self.out.rtcp_active = true;
+                    self.out.diagnostics.push(Diagnostic {
+                        code: ErrorCode::UnsupportedSemantics,
+                        stage: Stage::Canonicalize,
+                        message: format!(
+                            "move lowered to machine-axis joints via MachineKinematics {} ({}, 12.5.4, oracle {}): X/Y/Z op values are machine axes, NOT TCP",
+                            self.config.rtcp_mode.name(),
+                            self.config.rtcp_mode.inverse_fn(),
+                            self.config.rtcp_mode.oracle(),
+                        ),
+                        src: stmt.src().cloned(),
+                        options: vec!["rtcp-trt".to_string()],
+                        limit: None,
+                    });
+                    // Трекинг: программная позиция, machine-оси, углы.
+                    self.update_pos_prog(&rp);
+                    self.pos_joints = Some(joints_end);
+                    self.rot = rot;
+                    self.modals.set_motion(if *kind == MoveKind::Rapid { 0 } else { 1 });
+                    self.trigger_modal_call(program)?;
+                    return Ok(Flow::Normal);
+                }
+
                 let trt = TrtProfile::of(&self.config.rtcp_mode);
                 if rp.a.is_some() || rp.b.is_some() || rp.c.is_some() {
                     if let Some(profile) = trt {
@@ -1422,15 +1769,15 @@ impl L2Evaluator {
     /// (стол, ротор) → joints machine-осей X/Y/Z. Формулы —
     /// [`crate::kinematics`] (оракул trtfuncs.c; круговой инвариант
     /// forward∘inverse ≡ identity — `tests/kinematics_tests.rs`).
-    fn trt_inverse(profile: TrtProfile, xyz_base: [f64; 3], rot: (f64, f64)) -> [f64; 3] {
+    fn trt_inverse(profile: TrtProfile, xyz_base: [f64; 3], rot: [f64; 3]) -> [f64; 3] {
         match profile.family {
             TrtFamily::Xyzac => {
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot.0, 0.0, rot.1);
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], rot[0], 0.0, rot[2]);
                 let j = xyzac_inverse(&profile.params, &pose);
                 [j.x, j.y, j.z]
             }
             TrtFamily::Xyzbc => {
-                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], 0.0, rot.0, rot.1);
+                let pose = Pose6::new(xyz_base[0], xyz_base[1], xyz_base[2], 0.0, rot[1], rot[2]);
                 let j = xyzbc_inverse(&profile.params, &pose);
                 [j.x, j.y, j.z]
             }
@@ -1451,6 +1798,33 @@ impl L2Evaluator {
         rp: &ResolvedPose,
         feed_v: Option<f64>,
     ) -> Result<Flow, L2ExecError> {
+        // 12.5.4: дуга под НЕлинейной kinematics-топологией (XyzabTdr/
+        // Trsrn/Maxkins/FiveAxis) → честный носитель с маркировкой профиля
+        // (TCP-дуга не аффинно отображается в machine-оси; 5-осевая
+        // интерполяция — не аффинная геометрия — граница 12.5.3). До
+        // start-проверки: маркировка не зависит от разрешимости геометрии.
+        if matches!(
+            self.config.rtcp_mode,
+            RtcpMode::XyzabTdr { .. }
+                | RtcpMode::Trsrn { .. }
+                | RtcpMode::Maxkins { .. }
+                | RtcpMode::FiveAxis { .. }
+        ) {
+            let words = arc_frame_words(rp, feed_v);
+            let name = self.config.rtcp_mode.name();
+            self.out.push_raw(
+                RawMarker::ArcUnlowered,
+                ErrorCode::UnsupportedSemantics,
+                Some(format_frame("G2", &words)),
+                stmt,
+                &format!(
+                    "arc under MachineKinematics {} profile (12.5.4): TCP arc is not affinely representable in machine-axis moves (5-axis interpolation) — honest carrier",
+                    name
+                ),
+            );
+            self.out.rtcp_active = true;
+            return Ok(Flow::Normal);
+        }
         // Старт в базовой СК обязателен: центр IJK = старт + смещения.
         let Some(sp) = self.pos_prog else {
             let words = arc_frame_words(rp, feed_v);
@@ -2556,6 +2930,209 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.message.contains("XyzacTrt") && d.message.contains("machine-axis joints")));
+    }
+
+    // ---------- 12.5.4: нелинейные топологии (XyzabTdr/Trsrn/Maxkins/FiveAxis) —
+
+    fn cfg_tdr() -> L2Config {
+        L2Config {
+            rtcp_mode: RtcpMode::XyzabTdr {
+                params: crate::kinematics_tdr::TdrParams::new([0.0; 3], 0.0, 0.0, 0.0),
+            },
+            ..cfg()
+        }
+    }
+
+    fn cfg_trsrn(nut: f64) -> L2Config {
+        L2Config {
+            rtcp_mode: RtcpMode::Trsrn {
+                params: crate::kinematics_trsrn::TrsrnParams {
+                    nut_angle: nut,
+                    ..Default::default()
+                },
+            },
+            ..cfg()
+        }
+    }
+
+    fn cfg_max() -> L2Config {
+        L2Config {
+            rtcp_mode: RtcpMode::Maxkins { params: crate::kinematics_maxkins::MaxkinsParams::default() },
+            ..cfg()
+        }
+    }
+
+    fn cfg_5axis() -> L2Config {
+        L2Config {
+            rtcp_mode: RtcpMode::FiveAxis { params: crate::kinematics_5axis::FiveAxisParams::default() },
+            ..cfg()
+        }
+    }
+
+    fn full_tcp_linear(x: f64, y: f64, z: f64) -> L2Program {
+        L2Program::new(
+            vec![move_stmt(
+                MoveKind::Linear,
+                ExprPose {
+                    x: Some(Expr::num(x)),
+                    y: Some(Expr::num(y)),
+                    z: Some(Expr::num(z)),
+                    a: None,
+                    b: None,
+                    c: None,
+                },
+                Some(Expr::num(300.0)),
+            )],
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn v1254_tdr_full_tcp_linear_lowers_to_joints() {
+        // Полный-TCP: XyzabTdr — linear (10,20,30) A30 B0 при нулевой
+        // геометрии: TCP → tdr_inverse → machine-оси; круговой инвариант
+        // ядром: forward(inverse(TCP)) == TCP.
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Linear,
+                ExprPose {
+                    x: Some(Expr::num(10.0)),
+                    y: Some(Expr::num(20.0)),
+                    z: Some(Expr::num(30.0)),
+                    a: Some(Expr::num(30.0)),
+                    b: Some(Expr::num(0.0)),
+                    c: None,
+                },
+                Some(Expr::num(300.0)),
+            )],
+            Vec::new(),
+        );
+        let res = L2Evaluator::new(cfg_tdr()).run(&program).unwrap();
+        assert!(res.rtcp_active);
+        assert_eq!(res.l1_ops.len(), 1, "полный-TCP: linear lowered");
+        if let Op::Linear { end, .. } = &res.l1_ops[0] {
+            let j = crate::kinematics_tdr::JointsTdr::new(
+                end.x.value(),
+                end.y.value(),
+                end.z.value(),
+                30.0,
+                0.0,
+            );
+            let back = crate::kinematics_tdr::tdr_forward(
+                &crate::kinematics_tdr::TdrParams::new([0.0; 3], 0.0, 0.0, 0.0),
+                &j,
+            );
+            // Круг: machine-оси → forward → исходный TCP (10,20,30).
+            assert!((back.x - 10.0).abs() < 5e-5, "back.x = {}", back.x);
+            assert!((back.y - 20.0).abs() < 5e-5, "back.y = {}", back.y);
+            assert!((back.z - 30.0).abs() < 5e-5, "back.z = {}", back.z);
+        } else {
+            panic!("expected lowered Linear");
+        }
+    }
+
+    #[test]
+    fn v1254_trsrn_solver_path_lowers_orientation_to_joints() {
+        // Trsrn — SOLVER-путь (НЕ pass-through): программные углы B/C =
+        // ориентация инструмента; machine joints B/C решаются
+        // trsrn_angles_from_tool_axis; линейная TCP → trsrn_tcp_inverse.
+        let program = L2Program::new(
+            vec![move_stmt(
+                MoveKind::Linear,
+                ExprPose {
+                    x: Some(Expr::num(10.0)),
+                    y: Some(Expr::num(0.0)),
+                    z: Some(Expr::num(20.0)),
+                    a: None,
+                    b: Some(Expr::num(45.0)),
+                    c: Some(Expr::num(90.0)),
+                },
+                Some(Expr::num(300.0)),
+            )],
+            Vec::new(),
+        );
+        let res = L2Evaluator::new(cfg_trsrn(90.0)).run(&program).unwrap();
+        assert!(res.rtcp_active);
+        assert!(!res.l1_ops.is_empty());
+        // «Не молча»: per-op диагностика называет профиль Trsrn.
+        assert!(res.diagnostics.iter().any(|d| d.message.contains("Trsrn")));
+    }
+
+    #[test]
+    fn v1254_maxkins_and_fiveaxis_full_tcp_lowers_linear() {
+        // Полный-TCP скоуп: X/Y/Z-кадр (без ротационных слов) под
+        // Maxkins/FiveAxis опускается L1-опом machine-осей (TCP → inverse);
+        // rtcp_active + per-op диагностика называет профиль.
+        for cfg in [cfg_max(), cfg_5axis()] {
+            let name = cfg.rtcp_mode.name().to_string();
+            let program = full_tcp_linear(5.0, 6.0, 7.0);
+            let res = L2Evaluator::new(cfg).run(&program).unwrap();
+            assert!(res.rtcp_active, "{name}: rtcp_active");
+            assert_eq!(res.l1_ops.len(), 1, "{name}: full TCP lowered");
+            assert!(res
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains(&name) && d.message.contains("machine axes")),
+                "{name}: not silent");
+        }
+    }
+
+    #[test]
+    fn v1254_arc_under_kinematics_profile_is_honest_carrier() {
+        // Дуга под kinematics-профилем → честный носитель (TCP-дуга не
+        // аффинно отображается в machine-оси; 5-осевая интерполяция —
+        // не аффинная геометрия — граница 12.5.3 сохраняется для всех).
+        let program = L2Program::new(
+            vec![
+                // Предварительный linear: позиция известна (иначе arc уходит
+                // в «start position unknown»-носитель до kinematics-гейта).
+                move_stmt(
+                    MoveKind::Linear,
+                    ExprPose {
+                        x: Some(Expr::num(0.0)),
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(5.0)),
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    Some(Expr::num(300.0)),
+                ),
+                move_stmt(
+                    MoveKind::Arc {
+                        ijk: [Some(Expr::num(5.0)), Some(Expr::num(0.0)), None],
+                        r: None,
+                        dir: Dir::Cw,
+                    },
+                    ExprPose {
+                        x: Some(Expr::num(10.0)),
+                        y: Some(Expr::num(0.0)),
+                        z: Some(Expr::num(0.0)),
+                        a: None,
+                        b: None,
+                        c: None,
+                    },
+                    Some(Expr::num(300.0)),
+                ),
+            ],
+            Vec::new(),
+        );
+        for cfg in [cfg_tdr(), cfg_trsrn(90.0), cfg_max(), cfg_5axis()] {
+            let name = cfg.rtcp_mode.name().to_string();
+            let res = L2Evaluator::new(cfg).run(&program).unwrap();
+            assert!(res.rtcp_active, "{name}: arc carrier rtcp_active");
+            // Дуга = носитель; positioning-linear (кадр 1) — единственный
+            // L1-оп (дуга НЕ добавляет lowering).
+            assert_eq!(res.l1_ops.len(), 1, "{name}: arc must stay carrier");
+        }
+    }
+
+    #[test]
+    fn v1254_off_mode_stays_pure_carrier() {
+        // Анти-пин: Off — НИКАКОЙ rtcp-маркировки.
+        let program = full_tcp_linear(1.0, 2.0, 3.0);
+        let res = L2Evaluator::new(cfg()).run(&program).unwrap();
+        assert!(!res.rtcp_active);
     }
 
     // ---------- 12.5.3: TCP→joints trt-пересчёт (MachineKinematics) ----------
