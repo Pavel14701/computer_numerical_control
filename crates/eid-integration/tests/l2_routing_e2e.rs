@@ -32,6 +32,22 @@ fn fanuc_rtcp_profile() -> MachineProfile {
     p
 }
 
+/// Тот же XYZAC, ДРУГАЯ геометрия (пивот −345 — реальный станочный класс):
+/// для hash-mismatch-теста (тихая порча закрыта маркером).
+fn fanuc_rtcp_profile_other_geometry() -> MachineProfile {
+    let mut p = MachineProfile::fanuc_default();
+    p.kinematics = eid_integration::profile::MachineKinematics::XyzacTrt(TrtKinematics {
+        rot_point: [0.0, 0.0, -345.0],
+        y_offset: 0.0,
+        x_offset: 0.0,
+        z_offset: 25.0,
+        z_offset_tool: 110.0,
+        conventional_directions: false,
+    });
+    p.validate().expect("rtcp-профиль валиден");
+    p
+}
+
 /// Fanuc Macro B: переменная + полный-позный ход с выражением — lowering
 /// даёт concrete-опы, эмиссия цели без макро-текста. (Неполный первый кадр
 /// без якоря — честный IncompletePose-носитель: иначе-класс, см.
@@ -397,4 +413,126 @@ fn plain_l1_grbl_file_unaffected() {
     assert_eq!(out.from, "grbl-1.1");
     assert!(out.l2_lowering_diagnostics.is_empty());
     assert!(out.emitted.contains("G1 X10"), "{:?}", out.emitted);
+}
+
+// ===========================================================================
+// ЗАЩИТА ГЕОМЕТРИИ (ревью-6, kinematics_hash): joint-значения специфичны
+// для геометрии профиля; маркер `(EID KINEMATICS: … hash=…)` делает её
+// явной для следующего хопа EID-пайплайна. Чек-лист «правило → тест»:
+//   штамп: kins_active lowering → выход несёт hash-комментарий →
+//       kinematics_hash_stamp_roundtrip_v022
+//   совпадение hash (реингест того же профиля) → pass-through (повторный
+//       inverse = двойное преобразование — форс Off) →
+//       kinematics_hash_match_forces_passthrough_v022
+//   расхождение hash (та же топология, ДРУГАЯ геометрия) → честный отказ →
+//       kinematics_hash_mismatch_refuses_v022
+//   детерминизм/чувствительность FNV-1a hash →
+//       kinematics_hash_deterministic_and_sensitive (eid-l2, interp tests)
+// ===========================================================================
+
+/// Штамп: fanuc rotary-программа + XYZAC-профиль → linuxcnc выход содержит
+/// hash-комментарий; реингест выхода (A-слово в тексте → l2_available →
+/// L2-маршрут, где геометрия применяется/проверяется) тем же профилем →
+/// Ok (hash совпал).
+#[test]
+fn kinematics_hash_stamp_roundtrip_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof = fanuc_rtcp_profile();
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "rtcp.nc", Some(&prof))
+        .expect("rotary-программа компилируется (L1 v0.4)");
+    let stamp_line = out
+        .emitted
+        .lines()
+        .find(|l| l.contains("(EID KINEMATICS:"))
+        .expect("штамп геометрии в шапке")
+        .to_string();
+    assert!(stamp_line.contains("hash="), "{stamp_line}");
+    assert!(stamp_line.contains("XyzacTrt"), "{stamp_line}");
+    // Реингест того же файла тем же профилем — hash совпал → Ok.
+    let back = translate_text_with_profile(
+        "linuxcnc",
+        "haas",
+        &out.emitted,
+        "rtcp_back.nc",
+        Some(&prof),
+    )
+    .expect("hash совпал — реингест легален (pass-through)");
+    assert!(
+        back.emitted.contains("(EID KINEMATICS:"),
+        "штамп живёт дальше"
+    );
+    assert!(
+        back.emitted.contains("A90"),
+        "слот живёт: {:?}",
+        back.emitted
+    );
+}
+
+/// Совпадение hash → значения уже joints этой геометрии: повторный inverse
+/// запрещён (двойное преобразование) — lowering форсируется в pass-through:
+/// joint-значения в выходе = joint-значения входа (не inverse∘inverse).
+#[test]
+fn kinematics_hash_match_forces_passthrough_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof = fanuc_rtcp_profile();
+    let first = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof))
+        .expect("первая компиляция");
+    // Из первого выхода берём lowered joint-значения.
+    let j1 = first
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some((end.x.value(), end.y.value(), end.z.value())),
+            _ => None,
+        })
+        .expect("lowered op");
+    // Реингест тем же профилем: inverse НЕ применяется второй раз —
+    // joint-значения проходят 1:1 (были бы inverse(inverse(TCP)) ≠ TCP).
+    let second =
+        translate_text_with_profile("linuxcnc", "haas", &first.emitted, "b.nc", Some(&prof))
+            .expect("hash-совпадение → pass-through");
+    let j2 = second
+        .program
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Rapid { end, .. } => Some((end.x.value(), end.y.value(), end.z.value())),
+            _ => None,
+        })
+        .expect("reingested op");
+    assert!(
+        (j1.0 - j2.0).abs() < 1e-9 && (j1.1 - j2.1).abs() < 1e-9 && (j1.2 - j2.2).abs() < 1e-9,
+        "pass-through: joints {j1:?} не пере-inverse'ятся: {j2:?}"
+    );
+    let a2 = second.program.ops.iter().find_map(|o| match o {
+        Op::Rapid { end, .. } => end.a.as_ref().map(|n| n.value()),
+        _ => None,
+    });
+    assert_eq!(a2, Some(90.0), "слот pass-through сохранён");
+}
+
+/// Расхождение hash (XYZAC, ДРУГАЯ геометрия — пивот −345): честный отказ
+/// (тихая порча траектории закрыта маркером). Реингест — L2-маршрут
+/// (A-слово триггерит l2_available).
+#[test]
+fn kinematics_hash_mismatch_refuses_v022() {
+    let src = "O0001\nG21 G90\nG43.4 H1\nG0 X10. Y0 Z-10. A90.\nM30\n";
+    let prof = fanuc_rtcp_profile();
+    let out = translate_text_with_profile("fanuc", "linuxcnc", src, "a.nc", Some(&prof))
+        .expect("компиляция с геометрией A");
+    let other = fanuc_rtcp_profile_other_geometry();
+    let err = translate_text_with_profile("linuxcnc", "haas", &out.emitted, "b.nc", Some(&other))
+        .expect_err("different-geometry — отказ (тихая порча закрыта)");
+    match &err {
+        // L1-маршрут: гейт на этапе emit (чистая реэмиссия — проверка перед
+        // выгрузкой joints на станок цели).
+        TranslateError::Emit(diags) => {
+            assert_eq!(diags[0].code, ErrorCode::InvalidInput);
+            let m = &diags[0].message;
+            assert!(m.contains("geometry hash mismatch"), "{m}");
+            assert!(m.contains("two-kins"), "{m}");
+        }
+        other => panic!("ожидался Emit, фактический: {other:?}"),
+    }
 }

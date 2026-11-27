@@ -552,6 +552,102 @@ fn decode_hex_payload(hex: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// Маркер геометрии в исходном тексте (штамп lowering'а с активной
+/// кинематикой: `(EID KINEMATICS: <mode> hash=<16hex> …)`). Комментарий —
+/// контроллеры и semantic_diff его игнорируют; конвейер читает как
+/// идентичность геометрии, для которой посчитаны joint-значения.
+const KINEMATICS_STAMP_PREFIX: &str = "(EID KINEMATICS:";
+
+/// Скан штампа геометрии: (имя режима, hash) — в скобочных комментариях;
+/// первый валидный маркер (16 hex после `hash=`).
+fn scan_kinematics_stamp(src: &str) -> Option<(String, String)> {
+    let mut from = 0;
+    while let Some(i) = src[from..].find(KINEMATICS_STAMP_PREFIX) {
+        let start = from + i + KINEMATICS_STAMP_PREFIX.len();
+        let end = start + src[start..].find(')').unwrap_or(src.len() - start);
+        let inner = &src[start..end];
+        let name = inner
+            .split_whitespace()
+            .next()
+            .unwrap_or("unknown")
+            .to_string();
+        if let Some(k) = inner.find("hash=") {
+            let hex: String = inner[k + 5..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            if hex.len() == 16 {
+                return Some((name, hex));
+            }
+        }
+        from = end;
+    }
+    None
+}
+
+/// Есть ли в тексте МАКРО-маркеры помимо ротационных слов (♯, O-word+keyword,
+/// IF/WHILE/GOTO, G65/G66, трансформации, RTCP)? НУЖЕН для роутинга: скомпилированный
+/// EID-выход (joints + штамп) не макро-файл — его L2-фронтенд-парсеры
+/// модальные шапки (G21/G90/G61…) несут носителями; верный маршрут таких
+/// файлов — L1-адаптеры (слоты парсят сами). l2_available-эвристика T1
+/// триггерится на одних A/B/C-словах — false-positive, который теперь
+/// различается явно.
+fn has_macro_markers(src: &str) -> bool {
+    let stripped = {
+        let mut out = String::with_capacity(src.len());
+        let mut in_paren = false;
+        let mut in_line = false;
+        for ch in src.chars() {
+            match ch {
+                ';' if !in_paren => in_line = true,
+                '(' if !in_line => in_paren = true,
+                ')' => in_paren = false,
+                '\n' => {
+                    in_paren = false;
+                    in_line = false;
+                    out.push(' ');
+                }
+                c if !in_paren && !in_line => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    };
+    if stripped.contains('#') {
+        return true;
+    }
+    for tok in stripped.split_whitespace() {
+        let up = tok.to_ascii_uppercase();
+        if matches!(
+            up.as_str(),
+            "IF" | "WHILE"
+                | "GOTO"
+                | "G65"
+                | "G66"
+                | "G67"
+                | "G68"
+                | "G68.1"
+                | "G68.2"
+                | "G68.3"
+                | "G51"
+                | "G51.1"
+                | "G50.1"
+                | "G43.4"
+                | "G43.5"
+                | "G31"
+        ) {
+            return true;
+        }
+        if up.len() >= 2
+            && up.as_bytes()[0] == b'O'
+            && (up.as_bytes()[1] == b'<' || up.as_bytes()[1..].iter().all(|c| c.is_ascii_digit()))
+        {
+            return true; // O-word (o<имя> или o123) — макро-конструкция
+        }
+    }
+    false
+}
+
 /// L2-конвейер (12.4-роут): front-end parse → Pass-1 lower
 /// ([`L2Config`] — RTCP-режим из kinematics профиля) → сборка L1-Program →
 /// общий хвост конвейера (AST-лимиты → RAW-правило → emit цели).
@@ -580,7 +676,7 @@ fn translate_l2_route(
     target: &AnyAdapter,
     src: &str,
     file: &str,
-    cfg: L2Config,
+    mut cfg: L2Config,
     limits: &Limits,
     preamble: bool,
 ) -> Result<Option<TranslateOutcome>, TranslateError> {
@@ -630,13 +726,62 @@ fn translate_l2_route(
     //     (trt/tdr/maxkins/5axis — программные углы pass-through; trsrn —
     //     solver-углы; Off — pass-through). Честные остаточные границы:
     //     дуги с ротационными словами — носители lowering (§6), цели без осей
-    //     в словаре (grbl) — emit-гейт legality (E_UNSUPPORTED_SYNTAX),
-    //     same-topology different-geometry — тихая порча (профиль обязан
-    //     совпадать; named в REPORT §16).
+    //     в словаре (grbl) — emit-гейт legality (E_UNSUPPORTED_SYNTAX).
     let kins_active = cfg.rtcp_mode != eid_l2::interp::RtcpMode::Off;
 
-    // 3. Pass-1 lowering (бюджеты L2Config; RTCP-режим — из профиля).
-    //    cfg потребляется lower() (kins_active вычислен выше).
+    // 2в. ЗАЩИТА ГЕОМЕТРИИ (ревью-6, `kinematics_hash`): joint-значения —
+    //     специфика геометрии профиля, которым они посчитаны. Маркер
+    //     `(EID KINEMATICS: … hash=…)` в источнике (штамп прежнего lowering)
+    //     делает геометрию ЯВНОЙ:
+    //     * hash совпал → значения УЖЕ joints этой геометрии; повторный
+    //       inverse = двойное преобразование → lowering форсируется в
+    //       Off (pass-through: реэмиссия того же joint-потока);
+    //     * hash НЕ совпал → честный отказ (кросс-геометрия без пересчёта =
+    //       тихая порча траектории; two-kins — named boundary, REPORT §16);
+    //     * маркера нет → lowering применяется как TCP-семантика (обычный
+    //       цеховой файл — ответственность пользователя, named в README);
+    //     Выход штампуется тем же hash (идемпотентно: штамп живёт через хопы
+    //       пайплайна EID). Под Off-профилем (Triv) hash не проверяется и
+    //       не ставится — геометрия не применялась.
+    let mut stamp: Option<(String, String)> = None; // (mode name, hash)
+    if kins_active {
+        let name = cfg.rtcp_mode.name();
+        let hash = cfg
+            .rtcp_mode
+            .geometry_hash()
+            .expect("kins_active ⇒ режим с геометрией");
+        if let Some((_, src_hash)) = scan_kinematics_stamp(src) {
+            if src_hash != hash {
+                return Err(TranslateError::Parse(vec![Diagnostic {
+                    code: ErrorCode::InvalidInput,
+                    stage: Stage::Parse,
+                    src: None,
+                    options: Vec::new(),
+                    limit: None,
+                    message: format!(
+                        "geometry hash mismatch: источник скомпилирован для \
+                         кинематики hash={src_hash}, активный профиль даёт \
+                         hash={hash} ({name}) — joint-значения специфичны для \
+                         геометрии, обратный inverse чужой геометрии тихо \
+                         испортил бы траекторию (same-topology different-geometry \
+                         закрыт hash-маркером; кросс-геометрия/кросс-топология \
+                         = two-kins, named boundary — REPORT §16)"
+                    ),
+                }]));
+            }
+            // Совпал: значения уже joints этой геометрии — pass-through.
+            cfg.rtcp_mode = eid_l2::interp::RtcpMode::Off;
+        }
+        stamp = Some((name.to_string(), hash));
+    } else if let Some((sname, shash)) = scan_kinematics_stamp(src) {
+        // Off-профиль: геометрия не применялась, но штамп источника обязан
+        // жить дальше (маркер идемпотентно переезжает в выход).
+        stamp = Some((sname, shash));
+    }
+
+    // 3. Pass-1 lowering (бюджеты L2Config; RTCP-режим — из профиля или
+    //    форсированный Off при hash-совпадении).
+    //    cfg потребляется lower().
     let mut res = eid_l2::lowering::lower(&l2prog, cfg).map_err(|e| {
         TranslateError::Parse(vec![Diagnostic {
             code: e.error_code(),
@@ -750,6 +895,15 @@ fn translate_l2_route(
     if preamble {
         head.push_str(GENERATED_PREAMBLE);
         head.push('\n');
+    }
+    // Штамп геометрии (ревью-6): joint-значения потока валидны только для
+    // геометрии hash — идемпотентный маркер для следующего хопа EID-пайплайна
+    // (совпадение → pass-through; расхождение → честный отказ). Контроллеры
+    // и semantic_diff комментарии игнорируют.
+    if let Some((name, hash)) = &stamp {
+        head.push_str(&format!(
+            "(EID KINEMATICS: {name} hash={hash} — xyz/rotary values are machine joints for this geometry only)\n"
+        ));
     }
     for note in &rtcp_marker_notes {
         head.push_str(&format!(
@@ -1049,8 +1203,16 @@ pub fn translate_text_with_profile(
     // макро-конструкций не содержит; eid-l1: канонический формат;
     // grbl-hal/fluidnc: pending) — тоже прежний конвейер (T1
     // zero-overhead: l2_available — один проход байтов по тексту).
-    let l2_capable =
-        eid_l2::l2_available(src) && !has_nurbs_g5(src) && L2Frontend::of(source.name()).is_some();
+    // L2-маршрут — ТОЛЬКО для макро-файлов (макро-маркеры помимо
+    // ротационных слов): скомпилированный EID-выход (joints + штамп, без
+    // макро-конструкций) идёт L1-маршрутом — L2-фронтенды модальные шапки
+    // (G21/G90/G61…) несут носителями, что ломало бы реингест. l2_available
+    // на одних A/B/C-словах — false-positive T1 (ротационные слова теперь
+    // парсят сами L1-адаптеры — слоты).
+    let l2_capable = eid_l2::l2_available(src)
+        && has_macro_markers(src)
+        && !has_nurbs_g5(src)
+        && L2Frontend::of(source.name()).is_some();
     if l2_capable {
         match translate_l2_route(
             source.name(),
@@ -1084,15 +1246,51 @@ pub fn translate_text_with_profile(
         return Err(TranslateError::Emit(vec![raw_refusal(&spans)]));
     }
 
+    // Защита геометрии L1-маршрута (ревью-6): штамп в источнике говорит
+    // «значения — joints геометрии hash=H»; профиль с кинематикой описывает
+    // ЦЕЛЕВОЙ станок (L1-адаптеры кинематику не применяют — чистая
+    // реэмиссия) → hash обязан совпадать, иначе тихая порча на станке цели.
+    // Профиль Triv/без [kinematics] — проверка неприменима (машина цели
+    // не задана — ответственность пользователя, named в README).
+    let src_stamp = scan_kinematics_stamp(src);
+    if let (Some((sname, shash)), Some(profile)) = (&src_stamp, profile) {
+        if let Some(want_hash) = profile.kinematics.to_rtcp_mode().geometry_hash() {
+            if *shash != want_hash {
+                return Err(TranslateError::Emit(vec![Diagnostic {
+                    code: ErrorCode::InvalidInput,
+                    stage: Stage::Emit,
+                    src: None,
+                    options: Vec::new(),
+                    limit: None,
+                    message: format!(
+                        "geometry hash mismatch: источник содержит joints для \
+                         кинематики hash={shash} ({sname}), профиль цели даёт \
+                         hash={want_hash} — L1-маршрут не пересчитывает значения \
+                         (чистая реэмиссия); загрузка этих joints на станок \
+                         другой геометрии тихо испортила бы траекторию \
+                         (кросс-геометрия = two-kins, named boundary — REPORT §16)"
+                    ),
+                }]));
+            }
+        }
+    }
+
     let target_out = target.emit(&program).map_err(TranslateError::Emit)?;
     // #11: преамбулу ставит ТОЛЬКО integration-слой (emit() адаптеров не
     // меняются — золотовые R1-тексты байт-в-байт; комментарий семантику не
-    // меняет — EQUIVALENCE игнорирует комментарии).
-    let emitted = if preamble {
-        format!("{GENERATED_PREAMBLE}\n{}", target_out.text)
-    } else {
-        target_out.text
-    };
+    // меняет — EQUIVALENCE игнорирует комментарии). Штамп геометрии
+    // форвардится (маркер живёт через хопы пайплайна).
+    let mut head = String::new();
+    if preamble {
+        head.push_str(GENERATED_PREAMBLE);
+        head.push('\n');
+    }
+    if let Some((sname, shash)) = &src_stamp {
+        head.push_str(&format!(
+            "(EID KINEMATICS: {sname} hash={shash} — xyz/rotary values are machine joints for this geometry only)\n"
+        ));
+    }
+    let emitted = format!("{head}{}", target_out.text);
     let emit_warnings = target_out.diagnostics;
     let q3_warnings = target_out.warnings;
 

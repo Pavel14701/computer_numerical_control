@@ -315,8 +315,8 @@ impl RtcpMode {
         }
     }
 
-    /// Имя профиля для диагностик («не молча»).
-    fn name(self) -> &'static str {
+    /// Имя профиля для диагностик и маркера геометрии («не молча»).
+    pub fn name(self) -> &'static str {
         match self {
             Self::XyzacTrt { .. } => "XyzacTrt",
             Self::XyzbcTrt { .. } => "XyzbcTrt",
@@ -326,6 +326,77 @@ impl RtcpMode {
             Self::FiveAxis { .. } => "FiveAxis",
             Self::Off => "Off",
         }
+    }
+
+    /// Стабильный hash геометрии профиля (v0.4-трансмиссия, решение ревью-6:
+    /// закрывает «same-topology different-geometry = тихая порча»): FNV-1a
+    /// над дискриминантом топологии + бит-паттернами всех полей параметров.
+    /// FNV-1a, а не DefaultHasher — std-алгоритм хэша может меняться между
+    /// версиями Rust, маркер обязан быть вечным. `None` для Off (геометрия
+    /// не применялась — маркер не ставится/не проверяется).
+    pub fn geometry_hash(&self) -> Option<String> {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        fn feed(h: &mut u64, bytes: &[u8]) {
+            for &b in bytes {
+                *h ^= u64::from(b);
+                *h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        fn f64_field(h: &mut u64, v: f64) {
+            feed(h, &v.to_bits().to_le_bytes());
+        }
+        match self {
+            Self::Off => return None,
+            Self::XyzacTrt { params } | Self::XyzbcTrt { params } => {
+                feed(
+                    &mut h,
+                    if matches!(self, Self::XyzacTrt { .. }) {
+                        b"xyzac-trt"
+                    } else {
+                        b"xyzbc-trt"
+                    },
+                );
+                for v in params.rot_point {
+                    f64_field(&mut h, v);
+                }
+                f64_field(&mut h, params.y_offset);
+                f64_field(&mut h, params.x_offset);
+                f64_field(&mut h, params.z_offset);
+                feed(&mut h, &[u8::from(params.conventional)]);
+            }
+            Self::XyzabTdr { params } => {
+                feed(&mut h, b"xyzab-tdr");
+                for v in params.rot_point {
+                    f64_field(&mut h, v);
+                }
+                f64_field(&mut h, params.x_offset);
+                f64_field(&mut h, params.z_offset);
+                f64_field(&mut h, params.tool_offset_z);
+            }
+            Self::Trsrn { params } => {
+                feed(&mut h, b"trsrn");
+                f64_field(&mut h, params.nut_angle);
+                f64_field(&mut h, params.y_pivot);
+                f64_field(&mut h, params.z_pivot);
+                f64_field(&mut h, params.x_offset);
+                f64_field(&mut h, params.y_offset);
+                f64_field(&mut h, params.y_rot_axis);
+                f64_field(&mut h, params.z_rot_axis);
+                f64_field(&mut h, params.tool_offset_z);
+            }
+            Self::Maxkins { params } => {
+                feed(&mut h, b"maxkins");
+                f64_field(&mut h, params.pivot_length);
+                f64_field(&mut h, params.tool_length);
+                feed(&mut h, &[u8::from(params.conventional)]);
+            }
+            Self::FiveAxis { params } => {
+                feed(&mut h, b"five-axis");
+                f64_field(&mut h, params.pivot_length);
+                f64_field(&mut h, params.tool_length);
+            }
+        }
+        Some(format!("{h:016x}"))
     }
 
     /// Имя inverse-пути ядра для диагностик (solver у trsrn — из двух
@@ -3520,6 +3591,61 @@ mod tests {
         let program = full_tcp_linear(1.0, 2.0, 3.0);
         let res = L2Evaluator::new(cfg()).run(&program).unwrap();
         assert!(!res.rtcp_active);
+    }
+
+    /// FNV-1a geometry_hash (ревью-6): детерминизм (повтор → тот же hash),
+    /// чувствительность к топологии и к КАЖДОМУ полю геометрии (same-
+    /// topology different-geometry обязан давать РАЗНЫЕ hash — тихая порча
+    /// закрыта). Off → None (маркер не ставится).
+    #[test]
+    fn kinematics_hash_deterministic_and_sensitive() {
+        // Off — None.
+        assert_eq!(RtcpMode::Off.geometry_hash(), None);
+        // Детерминизм.
+        let m = RtcpMode::XyzacTrt {
+            params: TrtParams::new([0.0, 0.0, -345.0], 0.0, 0.0, 25.0, false),
+        };
+        let h1 = m.geometry_hash().unwrap();
+        assert_eq!(m.geometry_hash().unwrap(), h1);
+        assert_eq!(h1.len(), 16);
+        // Чувствительность к топологии: XYZAC vs XYZBC (та же геометрия).
+        let m_bc = RtcpMode::XyzbcTrt {
+            params: TrtParams::new([0.0, 0.0, -345.0], 0.0, 0.0, 25.0, false),
+        };
+        assert_ne!(m_bc.geometry_hash().unwrap(), h1);
+        // Чувствительность к каждому полю геометрии (по одному сдвигу).
+        let variants = [
+            RtcpMode::XyzacTrt {
+                params: TrtParams::new([1.0, 0.0, -345.0], 0.0, 0.0, 25.0, false),
+            },
+            RtcpMode::XyzacTrt {
+                params: TrtParams::new([0.0, 0.0, -345.0], 1.0, 0.0, 25.0, false),
+            },
+            RtcpMode::XyzacTrt {
+                params: TrtParams::new([0.0, 0.0, -345.0], 0.0, 1.0, 25.0, false),
+            },
+            RtcpMode::XyzacTrt {
+                params: TrtParams::new([0.0, 0.0, -345.0], 0.0, 0.0, 26.0, false),
+            },
+            RtcpMode::XyzacTrt {
+                params: TrtParams::new([0.0, 0.0, -345.0], 0.0, 0.0, 25.0, true),
+            },
+        ];
+        for v in variants {
+            assert_ne!(
+                v.geometry_hash().unwrap(),
+                h1,
+                "поле геометрии изменено — hash обязан различаться"
+            );
+        }
+        // Нелинейные топологии — свои hash.
+        let tdr = RtcpMode::XyzabTdr {
+            params: crate::kinematics_tdr::TdrParams::new([0.0; 3], 0.0, 0.0, 0.0),
+        };
+        let trsrn = RtcpMode::Trsrn {
+            params: crate::kinematics_trsrn::TrsrnParams::default(),
+        };
+        assert_ne!(tdr.geometry_hash().unwrap(), trsrn.geometry_hash().unwrap());
     }
 
     // ---------- 12.5.3: TCP→joints trt-пересчёт (MachineKinematics) ----------
