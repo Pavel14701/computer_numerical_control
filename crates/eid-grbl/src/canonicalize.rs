@@ -154,11 +154,7 @@ fn e3(p: &Point3) -> [f64; 3] {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 {
-        x: num_f64(x),
-        y: num_f64(y),
-        z: num_f64(z),
-    }
+    Point3::xyz(num_f64(x), num_f64(y), num_f64(z))
 }
 
 /// Плоскость → (axis_0, axis_1, axis_linear) — определение grbl gcode.c
@@ -1113,7 +1109,7 @@ fn resolve_end(
         };
     }
     match (v[0].take(), v[1].take(), v[2].take()) {
-        (Some(x), Some(y), Some(z)) => Ok(Some(Point3 { x, y, z })),
+        (Some(x), Some(y), Some(z)) => Ok(Some(Point3::xyz(x, y, z))),
         _ => {
             if reading.is_none() {
                 Err(vec![err(
@@ -1771,7 +1767,7 @@ fn apply_g92(ctx: &mut Ctx, b: &Block) -> Result<G92Where, Vec<Diagnostic>> {
                     b.word('Z').map(verbatim).unwrap_or_else(|| num_f64(0.0)),
                 ),
             };
-            let values = Point3 { x, y, z };
+            let values = Point3::xyz(x, y, z);
             ctx.g92_values = Some((values.clone(), ctx.wcs));
             ctx.anchor = Some((values, ctx.wcs));
             ctx.anchor_units = ctx.units; // слова кадра — в текущей системе
@@ -1867,11 +1863,7 @@ fn absorb_frame_structs(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>>
             _ => None,
         } {
             if let (Some(x), Some(y), Some(z)) = (b.word('X'), b.word('Y'), b.word('Z')) {
-                let origin = Point3 {
-                    x: verbatim(x),
-                    y: verbatim(y),
-                    z: verbatim(z),
-                };
+                let origin = Point3::xyz(verbatim(x), verbatim(y), verbatim(z));
                 ctx.wcs_origins.push((p, origin));
             }
         }
@@ -2004,7 +1996,7 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     return Ok(());
                 }
             };
-            let origin = Point3 { x, y, z };
+            let origin = Point3::xyz(x, y, z);
             let op = Op::WcsDefine {
                 p,
                 origin: origin.clone(),
@@ -2045,7 +2037,7 @@ fn process_g10(ctx: &mut Ctx, b: &Block) -> Result<(), Vec<Diagnostic>> {
                     )]);
                 }
             };
-            let delta = Point3 { x, y, z };
+            let delta = Point3::xyz(x, y, z);
             let op = Op::WcsSetHere {
                 p,
                 delta: delta.clone(),

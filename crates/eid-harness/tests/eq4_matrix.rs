@@ -16,11 +16,7 @@ fn num(v: f64) -> Num {
     Num::new(format!("{v:.4}"), v)
 }
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 {
-        x: num(x),
-        y: num(y),
-        z: num(z),
-    }
+    Point3::xyz(num(x), num(y), num(z))
 }
 fn src() -> SrcSpan {
     SrcSpan {

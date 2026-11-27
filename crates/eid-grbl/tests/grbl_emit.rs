@@ -469,25 +469,13 @@ fn two_move_prog(
         ops: vec![
             lin(
                 StartPoint::Unknown,
-                Point3 {
-                    x: n(1.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                },
+                Point3::xyz(n(1.0), n(0.0), n(0.0)),
                 coolant_a,
                 feed_a,
             ),
             lin(
-                StartPoint::Known(Point3 {
-                    x: n(1.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                }),
-                Point3 {
-                    x: n(2.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                },
+                StartPoint::Known(Point3::xyz(n(1.0), n(0.0), n(0.0))),
+                Point3::xyz(n(2.0), n(0.0), n(0.0)),
                 coolant_b,
                 Some(100.0),
             ),
@@ -609,17 +597,9 @@ fn spec_cov_emit_legality_conditions_via_table() {
         start: if unknown_start {
             StartPoint::Unknown
         } else {
-            StartPoint::Known(Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(0.0),
-            })
+            StartPoint::Known(Point3::xyz(n(0.0), n(0.0), n(0.0)))
         },
-        end: Point3 {
-            x: n(1.0),
-            y: n(0.0),
-            z: n(0.0),
-        },
+        end: Point3::xyz(n(1.0), n(0.0), n(0.0)),
         state: st(feed, wcs),
         src: span0(),
         sub: None,
@@ -628,27 +608,11 @@ fn spec_cov_emit_legality_conditions_via_table() {
         start: if unknown_start {
             StartPoint::Unknown
         } else {
-            StartPoint::Known(Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(0.0),
-            })
+            StartPoint::Known(Point3::xyz(n(0.0), n(0.0), n(0.0)))
         },
-        end: Point3 {
-            x: n(1.0),
-            y: n(0.0),
-            z: n(0.0),
-        },
-        center: Point3 {
-            x: n(0.0),
-            y: n(5.0),
-            z: n(0.0),
-        },
-        normal: Point3 {
-            x: n(normal[0]),
-            y: n(normal[1]),
-            z: n(normal[2]),
-        },
+        end: Point3::xyz(n(1.0), n(0.0), n(0.0)),
+        center: Point3::xyz(n(0.0), n(5.0), n(0.0)),
+        normal: Point3::xyz(n(normal[0]), n(normal[1]), n(normal[2])),
         dir: eid_core::ast::Dir::Cw,
         sweep_deg: n(90.0),
         pitch: n(0.0),
@@ -662,11 +626,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         path_mode: eid_core::ast::PathMode::ExactPath,
         // Якорь: Known-start первого опа легален только при frame_preset (Q11).
         frame_preset: Some(eid_core::ast::FramePreset {
-            values: Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(0.0),
-            },
+            values: Point3::xyz(n(0.0), n(0.0), n(0.0)),
             wcs: Wcs::G54,
         }),
         ops,
@@ -750,11 +710,7 @@ fn spec_cov_emit_legality_conditions_via_table() {
         // start Unknown: wcs G59_1 не совпадает с якорем G54 → чтение неизвестно (Q11).
         Op::Rapid {
             start: StartPoint::Unknown,
-            end: Point3 {
-                x: n(1.0),
-                y: n(0.0),
-                z: n(0.0),
-            },
+            end: Point3::xyz(n(1.0), n(0.0), n(0.0)),
             state: st(Some(100.0), Wcs::G59_1),
             src: span0(),
             sub: None,
@@ -784,26 +740,10 @@ fn spec_cov_emit_legality_conditions_via_table() {
     );
     let Err(d) = ad.emit(&prog(vec![
         Op::Arc {
-            start: StartPoint::Known(Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(0.0),
-            }),
-            end: Point3 {
-                x: n(1.0),
-                y: n(0.0),
-                z: n(0.0),
-            },
-            center: Point3 {
-                x: n(0.5),
-                y: n(0.0),
-                z: n(0.0),
-            },
-            normal: Point3 {
-                x: n(0.6),
-                y: n(0.8),
-                z: n(0.0),
-            },
+            start: StartPoint::Known(Point3::xyz(n(0.0), n(0.0), n(0.0))),
+            end: Point3::xyz(n(1.0), n(0.0), n(0.0)),
+            center: Point3::xyz(n(0.5), n(0.0), n(0.0)),
+            normal: Point3::xyz(n(0.6), n(0.8), n(0.0)),
             dir: eid_core::ast::Dir::Cw,
             sweep_deg: n(180.0),
             pitch: n(0.0),
@@ -930,26 +870,14 @@ fn spec_cov_emit_f_bootstrap_on_rapid() {
         ops: vec![
             Op::Rapid {
                 start: StartPoint::Unknown,
-                end: Point3 {
-                    x: n(1.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                },
+                end: Point3::xyz(n(1.0), n(0.0), n(0.0)),
                 state: st150.clone(),
                 src: span0(),
                 sub: None,
             },
             Op::Linear {
-                start: StartPoint::Known(Point3 {
-                    x: n(1.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                }),
-                end: Point3 {
-                    x: n(2.0),
-                    y: n(0.0),
-                    z: n(0.0),
-                },
+                start: StartPoint::Known(Point3::xyz(n(1.0), n(0.0), n(0.0))),
+                end: Point3::xyz(n(2.0), n(0.0), n(0.0)),
                 state: st150,
                 src: span0(),
                 sub: None,
@@ -1049,11 +977,7 @@ fn cycle_f_word_reemitted_on_each_f_frame() {
         wcs: Wcs::G54,
         feed_restated: false,
     };
-    let p3 = |x: f64, y: f64, z: f64| Point3 {
-        x: n(x),
-        y: n(y),
-        z: n(z),
-    };
+    let p3 = |x: f64, y: f64, z: f64| Point3::xyz(n(x), n(y), n(z));
     let rapid = |start: Option<(f64, f64, f64)>,
                  end: (f64, f64, f64),
                  sub: Option<u32>,

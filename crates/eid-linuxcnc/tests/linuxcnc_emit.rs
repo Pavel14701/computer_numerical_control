@@ -364,21 +364,21 @@ fn unit_non_axial_normal_err_invalid() {
             n.x = eid_core::ast::Num::new("0.6000".into(), 0.6);
             n.y = eid_core::ast::Num::new("0.8000".into(), 0.8);
             let new_arc = eid_core::ast::Op::Arc {
-                start: eid_core::ast::StartPoint::Known(eid_core::ast::Point3 {
-                    x: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                    y: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                    z: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                }),
-                end: eid_core::ast::Point3 {
-                    x: eid_core::ast::Num::new("5.0000".into(), 5.0),
-                    y: eid_core::ast::Num::new("5.0000".into(), 5.0),
-                    z: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                },
-                center: eid_core::ast::Point3 {
-                    x: eid_core::ast::Num::new("5.0000".into(), 5.0),
-                    y: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                    z: eid_core::ast::Num::new("0.0000".into(), 0.0),
-                },
+                start: eid_core::ast::StartPoint::Known(eid_core::ast::Point3::xyz(
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                )),
+                end: eid_core::ast::Point3::xyz(
+                    eid_core::ast::Num::new("5.0000".into(), 5.0),
+                    eid_core::ast::Num::new("5.0000".into(), 5.0),
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                ),
+                center: eid_core::ast::Point3::xyz(
+                    eid_core::ast::Num::new("5.0000".into(), 5.0),
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                    eid_core::ast::Num::new("0.0000".into(), 0.0),
+                ),
                 normal: n,
                 dir: eid_core::ast::Dir::Cw,
                 sweep_deg: eid_core::ast::Num::new("90.0000".into(), 90.0),
@@ -458,16 +458,16 @@ fn unit_validate_rejects_zero_length_before_emit() {
     p.ops.insert(
         1,
         eid_core::ast::Op::Rapid {
-            start: eid_core::ast::StartPoint::Known(eid_core::ast::Point3 {
-                x: eid_core::ast::Num::new("1.0000".into(), 1.0),
-                y: eid_core::ast::Num::new("1.0000".into(), 1.0),
-                z: eid_core::ast::Num::new("1.0000".into(), 1.0),
-            }),
-            end: eid_core::ast::Point3 {
-                x: eid_core::ast::Num::new("1.0000".into(), 1.0),
-                y: eid_core::ast::Num::new("1.0000".into(), 1.0),
-                z: eid_core::ast::Num::new("1.0000".into(), 1.0),
-            },
+            start: eid_core::ast::StartPoint::Known(eid_core::ast::Point3::xyz(
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+            )),
+            end: eid_core::ast::Point3::xyz(
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+                eid_core::ast::Num::new("1.0000".into(), 1.0),
+            ),
             state: eid_core::ast::State {
                 feed: None,
                 spindle: eid_core::ast::Spindle::Off,
@@ -1151,11 +1151,11 @@ fn v020_emit_program_end_duplicate_ast_rejected() {
     };
     p.ops[idx] = Op::Rapid {
         start: eid_core::ast::StartPoint::Unknown,
-        end: eid_core::ast::Point3 {
-            x: eid_core::ast::Num::new("10.0000".into(), 10.0),
-            y: eid_core::ast::Num::new("10.0000".into(), 10.0),
-            z: eid_core::ast::Num::new("5.0000".into(), 5.0),
-        },
+        end: eid_core::ast::Point3::xyz(
+            eid_core::ast::Num::new("10.0000".into(), 10.0),
+            eid_core::ast::Num::new("10.0000".into(), 10.0),
+            eid_core::ast::Num::new("5.0000".into(), 5.0),
+        ),
         state,
         src: eid_core::ast::SrcSpan {
             file: "guard.ngc".into(),

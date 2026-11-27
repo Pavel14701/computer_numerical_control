@@ -59,11 +59,7 @@ fn num(v: f64) -> Num {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> eid_core::ast::Point3 {
-    eid_core::ast::Point3 {
-        x: num(x),
-        y: num(y),
-        z: num(z),
-    }
+    eid_core::ast::Point3::xyz(num(x), num(y), num(z))
 }
 
 fn src_span() -> SrcSpan {

@@ -97,6 +97,18 @@
 //!     10.6 квантование входа к 4dp; zero-check ПОСЛЕ квантования —
 //!          → spec_10_quantized_zero_check [-0.0000 ≡ 0.0000 → drop;
 //!            0.0001 ≠ 0.0000 → kept]
+//!   §1.2 v0.22 (L1 v0.4-амендрмент: resolved rotary-слоты Point3):
+//!     rot=/srot= sparse (канонический порядок A,B,C; ARC — reject;
+//!     srot на unknown — reject) → spec_1_2_rotary_slots_roundtrip_v022,
+//!         spec_1_2_rotary_arc_forbidden_v022,
+//!         spec_1_2_rot_list_canonical_order_v022,
+//!         spec_1_2_srot_unknown_start_rejected_v022
+//!     None → молчание эмиссии (3-осевой текст байт-идентичен v0.3) —
+//!          → spec_1_2_rotary_slots_none_byte_identical_v022
+//!     zero-length ПОЛНОЕ сравнение (XYZ + слоты; чисто-rotary ≠ нулевой) —
+//!          → spec_3_zero_length_rotary_motion_kept_v022
+//!     linking — start наследует слоты предыдущего конца (resolved-state) —
+//!          → spec_2_linking_rotary_slots_v022
 //! ===========================================================================
 //!
 //! Источники правил: SPEC-EID-L1 v0.17 (§3 инварианты, §5 опы, §6 каноническая
@@ -308,9 +320,18 @@ fn nval(n: &Num) -> f64 {
 }
 
 /// Точное равенство значений (f64-зеркало; verbatim-текст гарантируется
-/// эмиттером — SPEC §10.1). -0.0 == 0.0.
+/// эмиттером — SPEC §10.1). -0.0 == 0.0. Геометрия XYZ — слоты не входят
+/// (arc-геометрия/радиусы планарны; слоты — §1.2 v0.4).
 fn p3_eq(a: &Point3, b: &Point3) -> bool {
     nval(&a.x) == nval(&b.x) && nval(&a.y) == nval(&b.y) && nval(&a.z) == nval(&b.z)
+}
+
+/// Полное равенство позы: XYZ + resolved rotary-слоты (§1.2 v0.4).
+/// zero-length и linking — по НЕЙ: чисто-rotary ход (XYZ равны, углы
+/// различны) — движение, не zero-length; start обязан наследовать углы
+/// предыдущего конца (resolved-state — канонизатор/парсер заполняют).
+fn p3_full_eq(a: &Point3, b: &Point3) -> bool {
+    p3_eq(a, b) && a.rotary_eq(b)
 }
 
 fn motion_parts(op: &Op) -> Option<(&StartPoint, &Point3, &State)> {
@@ -492,10 +513,11 @@ fn check_p_domain(op: &Op, p: u8, errors: &mut Vec<Diagnostic>) {
     }
 }
 
-/// zero-length candidate для rapid/linear.
+/// zero-length candidate для rapid/linear (v0.4: сравнение ПОЛНОЕ — XYZ +
+/// rotary-слоты; чисто-rotary ход XYZ-равными не является).
 fn zero_motion(start: &StartPoint, end: &Point3) -> Option<(NoticeKind, String)> {
     if let StartPoint::Known(s) = start {
-        if p3_eq(s, end) {
+        if p3_full_eq(s, end) {
             return Some((
                 NoticeKind::ZeroLengthMotion,
                 "zero-length motion dropped (start == end, SPEC §3)".into(),
@@ -926,11 +948,7 @@ struct PrevMotion {
 
 fn p3_build(v: V3) -> Point3 {
     let mk = |x: f64| Num::new(crate::emitter::fmt_num(x), x);
-    Point3 {
-        x: mk(v.0),
-        y: mk(v.1),
-        z: mk(v.2),
-    }
+    Point3::xyz(mk(v.0), mk(v.1), mk(v.2))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1062,12 +1080,16 @@ fn check_linking(program: &Program, kept: &[Op], eps_pos: f64, errors: &mut Vec<
                         ));
                     }
                     (StartPoint::Known(v), StartExpect::Exact(exp)) => {
-                        if !p3_eq(v, &exp) {
+                        // v0.4: сравнение полное — XYZ + resolved rotary-слоты
+                        // (resolved-state: start обязан нести углы предыдущего
+                        // конца / якоря; якорные Point3 — слоты None → старт
+                        // с Some против якоря = отказ, слот некуда наследовать).
+                        if !p3_full_eq(v, &exp) {
                             errors.push(diag(
                                 ErrorCode::InvalidInput,
                                 format!(
-                                    "start {} != expected {} (точное равенство: start = end предыдущего motion-опа / якорь, SPEC §2 v0.9)",
-                                    fmt_point(v), fmt_point(&exp)
+                                    "start {} != expected {} (точное равенство: start = end предыдущего motion-опа / якорь, SPEC §2 v0.9; v0.4 — включая rotary-слоты)",
+                                    fmt_point_full(v), fmt_point_full(&exp)
                                 ),
                                 op_src(o),
                             ));
@@ -1115,4 +1137,20 @@ fn check_linking(program: &Program, kept: &[Op], eps_pos: f64, errors: &mut Vec<
 
 fn fmt_point(p: &Point3) -> String {
     format!("({} {} {})", p.x.text, p.y.text, p.z.text)
+}
+
+/// v0.4: печать с resolved rotary-слотами (только Some; для сообщений).
+fn fmt_point_full(p: &Point3) -> String {
+    let base = fmt_point(p);
+    let mut rot = String::new();
+    for (letter, slot) in [('A', &p.a), ('B', &p.b), ('C', &p.c)] {
+        if let Some(n) = slot {
+            rot.push_str(&format!("{letter}{}", n.text));
+        }
+    }
+    if rot.is_empty() {
+        base
+    } else {
+        format!("{base}[{rot}]")
+    }
 }

@@ -269,6 +269,49 @@ sim.rs: mock-sim (обратный parse + structural + axis_limits) + real-dete
 
 ## SPEC-EID-L1
 
+### v0.22 — 2026-11-27 (L1 v0.4-амендрмент §1.2: resolved rotary-слоты; решение ревью-4, REPORT §16)
+
+Реверс решения ревью-1 («L1 v0.4 не начинать»): один хаб бьёт два маршрута
+(L2-direct отклонён — был бы второй эмиттер на диалект и вторая verification
+story). Каузальный корень границы — Point3 без слотов (осознанный дизайн
+этапа 6, не баг); слоты = трансмиссия результата inverse.
+1. **§1.2-амендрмент (Point3)**: концы Rapid/Linear получают resolved
+   rotary-слоты `a/b/c: Option<Num>` (Some = слово кадра ИЛИ унаследованная
+   модальность; None = угол не установлен). L1 НЕ знает кинематики — несёт
+   6 чисел; применение inverse — только L2-маршрут с профилем.
+   center/normal/frame_preset/anchor-Point3 — инвариант None (конструктор
+   xyz()). ARC-конец/старт со слотами — reject (ротационная дуга вне
+   канона; TCP-дуга не аффинна в machine-осях — носитель, §6).
+2. **grammar.ebnf v0.5** (аддитивный superset, magic «EID/L1 v0.3»
+   СОХРАНЁН — 3-осевой текст байт-идентичен, goldens не перегенерируются):
+   поля `srot=`/`rot=` (sparse rot_list, канонический порядок A,B,C —
+   XYZBC-машины не имеют A, all-or-none tail неверен) на RAPID/LINEAR;
+   rot=/srot= на ARC — reject; srot на unknown-старте — reject.
+3. **§3 zero-length v0.22**: сравнение ПОЛНОЕ — XYZ + слоты; чисто-rotary
+   ход (XYZ равны, углы различны) — движение, не zero-length.
+4. **§2 v0.9+v0.22 linking**: start обязан наследовать слоты предыдущего
+   конца (resolved-state); потеря слотов — отказ (диагностика
+   «включая rotary-слоты»).
+5. **Диспозиции (Stage 2/3, в полёте)**: адаптеры с осями в словаре
+   (linuxcnc/fanuc/haas/eid-l1) — A/B/C-слова → слоты вместо Raw-носителей;
+   grbl 1.1 — refusal остаётся (словарь без осей; legality-emit-гейт).
+   semantic_diff: слоты — часть равенства позы (p3_close v0.22).
+6. **Named-границы (не решает)**: арки под кинематикой (носители;
+   сегментация — отдельное tolerance-решение); кросс-топология (two-kins);
+   RTCP-на-rs274; feed в joint-space; same-topology different-geometry =
+   тихая порча (профиль обязан совпадать). W/U/V — НЕ слоты
+   (машино-зависимы; W в корпусе трёхсмысленный: lathe incremental-Z /
+   G65-аргумент / gantry secondary-axis — machine_axes = design intent,
+   dialect-scoped policy, реализация при гантри-ценз-файлах).
+7. **Обязательство-тесты**: spec_1_2_rotary_slots_roundtrip_v022,
+   spec_1_2_rotary_slots_none_byte_identical_v022,
+   spec_1_2_rotary_arc_forbidden_v022,
+   spec_3_zero_length_rotary_motion_kept_v022,
+   spec_2_linking_rotary_slots_v022,
+   spec_1_2_rot_list_canonical_order_v022,
+   spec_1_2_srot_unknown_start_rejected_v022 (eid-core/tests/
+   spec_obligations.rs — чек-лист в шапке блока).
+
 ### v0.20 — 2026-11-22 (зонд-сверка rs274+grbl-source, итерация 12 «исправь недоразумение»)
 
 Запись добавлена ретроактивно (журнал отставал от коммитов c76ed9a/449cd42/

@@ -878,11 +878,9 @@ fn inherit_axes(words: [Option<f64>; 3], cur: Option<[f64; 3]>) -> Option<[f64; 
 }
 
 fn pt3(p: [f64; 3]) -> Point3 {
-    Point3 {
-        x: mk_num4(p[0]),
-        y: mk_num4(p[1]),
-        z: mk_num4(p[2]),
-    }
+    // v0.4-.Stage1: слоты None (механический перевод; заполнение resolved
+    // углов — Stage-2 lowering-ветки, §15.4 REPORT).
+    Point3::xyz(mk_num4(p[0]), mk_num4(p[1]), mk_num4(p[2]))
 }
 
 // ===========================================================================
@@ -2358,11 +2356,11 @@ mod tests {
         let l1 = vec![
             Op::Rapid {
                 start: StartPoint::Unknown,
-                end: Point3 {
-                    x: Num::new("0".into(), 0.0),
-                    y: Num::new("0".into(), 0.0),
-                    z: Num::new("5".into(), 5.0),
-                },
+                end: Point3::xyz(
+                    Num::new("0".into(), 0.0),
+                    Num::new("0".into(), 0.0),
+                    Num::new("5".into(), 5.0),
+                ),
                 state: l1_default_state(None, false),
                 src: placeholder_span(),
                 sub: None,

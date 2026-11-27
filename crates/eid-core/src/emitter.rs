@@ -73,6 +73,24 @@ fn emit_vec(p: &Point3, errors: &mut Vec<Diagnostic>, what: &str) -> String {
     )
 }
 
+/// v0.4: sparse rotary-поле (`rot=A30,C0` — D2 v0.4, канонический порядок
+/// A,B,C, только Some). None у всех → пустая строка (3-осевой текст
+/// байт-идентичен v0.3).
+fn emit_rot(p: &Point3, errors: &mut Vec<Diagnostic>, what: &str) -> String {
+    let mut s = String::new();
+    for (letter, slot) in [('A', &p.a), ('B', &p.b), ('C', &p.c)] {
+        if let Some(n) = slot {
+            if !s.is_empty() {
+                s.push(',');
+            }
+            s.push(letter);
+            s.push('=');
+            s.push_str(&emit_num(n, errors, &format!("{what}.{letter}")));
+        }
+    }
+    s
+}
+
 fn emit_state(st: &State, errors: &mut Vec<Diagnostic>) -> String {
     // D3: фиксированный порядок feed, spindle, coolant, tool, frame, wcs.
     let feed = match &st.feed {
@@ -204,12 +222,21 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
         } => {
             out.push_str("RAPID start=");
             emit_start(start, out, errors);
-            out.push_str(&format!(
-                " end={} src={}{} ",
-                emit_vec(end, errors, "end"),
-                emit_src(src),
-                emit_sub(sub)
-            ));
+            // v0.4: srot= сразу после start= (порядок полей парсера).
+            if let StartPoint::Known(p) = start {
+                let srot = emit_rot(p, errors, "start.rot");
+                if !srot.is_empty() {
+                    out.push_str(&format!(" srot={srot}"));
+                }
+            }
+            out.push_str(" end=");
+            out.push_str(&emit_vec(end, errors, "end"));
+            // v0.4: rot= сразу после end= (до src= — порядок полей парсера).
+            let rot = emit_rot(end, errors, "end.rot");
+            if !rot.is_empty() {
+                out.push_str(&format!(" rot={rot}"));
+            }
+            out.push_str(&format!(" src={}{} ", emit_src(src), emit_sub(sub)));
             out.push_str(&emit_state(state, errors));
         }
         Op::Linear {
@@ -221,12 +248,19 @@ fn emit_op(op: &Op, out: &mut String, errors: &mut Vec<Diagnostic>) {
         } => {
             out.push_str("LINEAR start=");
             emit_start(start, out, errors);
-            out.push_str(&format!(
-                " end={} src={}{} ",
-                emit_vec(end, errors, "end"),
-                emit_src(src),
-                emit_sub(sub)
-            ));
+            if let StartPoint::Known(p) = start {
+                let srot = emit_rot(p, errors, "start.rot");
+                if !srot.is_empty() {
+                    out.push_str(&format!(" srot={srot}"));
+                }
+            }
+            out.push_str(" end=");
+            out.push_str(&emit_vec(end, errors, "end"));
+            let rot = emit_rot(end, errors, "end.rot");
+            if !rot.is_empty() {
+                out.push_str(&format!(" rot={rot}"));
+            }
+            out.push_str(&format!(" src={}{} ", emit_src(src), emit_sub(sub)));
             out.push_str(&emit_state(state, errors));
         }
         Op::Arc {

@@ -249,11 +249,7 @@ fn e3(p: &Point3) -> [f64; 3] {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 {
-        x: num_f64(x),
-        y: num_f64(y),
-        z: num_f64(z),
-    }
+    Point3::xyz(num_f64(x), num_f64(y), num_f64(z))
 }
 
 fn p3(v: [f64; 3]) -> Point3 {
@@ -2003,7 +1999,7 @@ fn resolve_end(
         };
     }
     match (v[0].take(), v[1].take(), v[2].take()) {
-        (Some(x), Some(y), Some(z)) => Ok(Point3 { x, y, z }),
+        (Some(x), Some(y), Some(z)) => Ok(Point3::xyz(x, y, z)),
         _ => unreachable!("end fully resolved: base known or all axes explicit"),
     }
 }

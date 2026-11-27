@@ -140,17 +140,52 @@ fn integer(s: &str) -> Result<u64, String> {
         .map_err(|_| format!("integer `{s}` out of range"))
 }
 
-/// vec = number , "," , number , "," , number (X, Y, Z — D2).
+/// vec = number , "," , number , "," , number (X, Y, Z — D2; v0.4: слоты —
+/// ОТДЕЛЬНЫЕ поля srot=/rot=, sparse: XYZBC-машины не имеют A — all-or-none
+/// tail неверен при resolved-семантике; центр/нормаль/якоря — всегда 3).
 fn vec3(s: &str) -> Result<Point3, String> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 3 {
         return Err(format!("invalid vec `{s}` (expected X,Y,Z — D2)"));
     }
-    Ok(Point3 {
-        x: num(parts[0])?,
-        y: num(parts[1])?,
-        z: num(parts[2])?,
-    })
+    Ok(Point3::xyz(num(parts[0])?, num(parts[1])?, num(parts[2])?))
+}
+
+/// Тройка resolved rotary-слотов (см. [`parse_rot`]).
+pub type RotarySlots = (Option<Num>, Option<Num>, Option<Num>);
+
+/// rot = letter , "=" , number { "," , letter , "=" , number } — D2 v0.4:
+/// resolved rotary-слоты позы (sparse; канонический порядок A,B,C;
+/// дубликат / буква вне ABC / нарушение порядка / пусто — reject:
+/// каноничность — у одного AST одна текстовая форма).
+fn parse_rot(s: &str) -> Result<RotarySlots, String> {
+    let mut a = None;
+    let mut b = None;
+    let mut c = None;
+    let mut order: u8 = 0; // 0=A, 1=B, 2=C — строго возрастает
+    for part in s.split(',') {
+        let (letter, value) = part.split_once('=').ok_or_else(|| {
+            format!("invalid rot part `{part}` (expected letter=value — D2 v0.4)")
+        })?;
+        let (idx, slot) = match letter {
+            "A" => (0u8, &mut a),
+            "B" => (1u8, &mut b),
+            "C" => (2u8, &mut c),
+            other => {
+                return Err(format!(
+                    "invalid rot letter `{other}` (A|B|C only — D2 v0.4)"
+                ))
+            }
+        };
+        if idx < order {
+            return Err(format!(
+                "rot letters out of canonical order `{s}` (A,B,C — D2 v0.4)"
+            ));
+        }
+        order = idx + 1;
+        *slot = Some(num(value)?);
+    }
+    Ok((a, b, c))
 }
 
 /// position = digits "." digits (line.col); span = position "-" position.
@@ -548,7 +583,7 @@ fn parse_text(src: &str, file: &str) -> Result<Program, Vec<Diagnostic>> {
             }
             let w = wcs_name(f[4]).map_err(|e| fail(e, i + 1, lines[i]))?;
             frame_preset = Some(FramePreset {
-                values: Point3 { x, y, z },
+                values: Point3::xyz(x, y, z),
                 wcs: w,
             });
         } else {
@@ -673,8 +708,30 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
 
     let op = match kw {
         "RAPID" => {
-            let start = start_point(c.take("start=")?)?;
+            let mut start = start_point(c.take("start=")?)?;
+            // v0.4: srot= — resolved rotary-слоты старта (sparse D2 v0.4);
+            // на unknown-старте запрет (позиция не вычислима — нечему быть).
+            if let Some(r) = c.take_opt("srot=")? {
+                match &mut start {
+                    StartPoint::Known(p) => {
+                        let (a, b, cc) = parse_rot(r)?;
+                        p.a = a;
+                        p.b = b;
+                        p.c = cc;
+                    }
+                    StartPoint::Unknown => {
+                        return Err(
+                            "srot on unknown start — unknown position has no resolved rotary slots (SPEC §2 Q11)".into(),
+                        );
+                    }
+                }
+            }
             let end = vec3(c.take("end=")?)?;
+            let (a, b, cc) = match c.take_opt("rot=")? {
+                Some(r) => parse_rot(r)?,
+                None => (None, None, None),
+            };
+            let end = Point3::pose(end.x, end.y, end.z, a, b, cc);
             let s = src_field(&mut c)?;
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
@@ -688,8 +745,28 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
             }
         }
         "LINEAR" => {
-            let start = start_point(c.take("start=")?)?;
+            let mut start = start_point(c.take("start=")?)?;
+            if let Some(r) = c.take_opt("srot=")? {
+                match &mut start {
+                    StartPoint::Known(p) => {
+                        let (a, b, cc) = parse_rot(r)?;
+                        p.a = a;
+                        p.b = b;
+                        p.c = cc;
+                    }
+                    StartPoint::Unknown => {
+                        return Err(
+                            "srot on unknown start — unknown position has no resolved rotary slots (SPEC §2 Q11)".into(),
+                        );
+                    }
+                }
+            }
             let end = vec3(c.take("end=")?)?;
+            let (a, b, cc) = match c.take_opt("rot=")? {
+                Some(r) => parse_rot(r)?,
+                None => (None, None, None),
+            };
+            let end = Point3::pose(end.x, end.y, end.z, a, b, cc);
             let s = src_field(&mut c)?;
             let sub = sub_field(&mut c)?;
             let st = state(&mut c)?;
@@ -704,7 +781,19 @@ fn parse_op_line(line: &str, line_no: usize, file: &str) -> Result<Op, String> {
         }
         "ARC" => {
             let start = start_point(c.take("start=")?)?;
+            // v0.4-инвариант: ротационная дуга вне канона (планарная
+            // геометрия; TCP-дуга под кинематикой — честный носитель, §6).
+            if c.take_opt("srot=")?.is_some() {
+                return Err(
+                    "arc srot= — rotary arc outside canon v0.4 (SPEC §6; carrier only)".into(),
+                );
+            }
             let end = vec3(c.take("end=")?)?;
+            if c.take_opt("rot=")?.is_some() {
+                return Err(
+                    "arc rot= — rotary arc outside canon v0.4 (SPEC §6; carrier only)".into(),
+                );
+            }
             let center = vec3(c.take("center=")?)?;
             let normal = vec3(c.take("normal=")?)?;
             let dir_v = c.take("dir=")?;

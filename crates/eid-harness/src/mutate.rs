@@ -157,11 +157,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                     179.9,
                     *dir,
                 );
-                *center = Point3 {
-                    x: num(cx),
-                    y: num(cy),
-                    z: sx.z.clone(),
-                };
+                *center = Point3::xyz(num(cx), num(cy), sx.z.clone());
                 *sweep_deg = num(179.9);
             }
             Expect::Ok
@@ -187,11 +183,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                         179.88,
                         *dir,
                     );
-                    *center = Point3 {
-                        x: num(cx),
-                        y: num(cy),
-                        z: s.z.clone(),
-                    };
+                    *center = Point3::xyz(num(cx), num(cy), s.z.clone());
                 }
                 *sweep_deg = num(179.88);
             }
@@ -262,11 +254,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
                 i_motion,
                 Op::WcsSetHere {
                     p: 1,
-                    delta: Point3 {
-                        x: num(0.0),
-                        y: num(0.0),
-                        z: num(5.0),
-                    },
+                    delta: Point3::xyz(num(0.0), num(0.0), num(5.0)),
                     state: State {
                         feed: None,
                         spindle: Spindle::Off,
@@ -320,11 +308,7 @@ pub fn apply(id: &str, p: &Program) -> Option<(Program, Expect)> {
             // plane orphan: нормаль чужой плоскости → радиус-валидация §6.1
             let a = first_arc(&mut p)?;
             if let Op::Arc { normal, .. } = a {
-                *normal = Point3 {
-                    x: num(0.0),
-                    y: num(1.0),
-                    z: num(0.0),
-                };
+                *normal = Point3::xyz(num(0.0), num(1.0), num(0.0));
             }
             Expect::OkOrVerifyErr
         }

@@ -1,9 +1,16 @@
 (* ==================================================================
    EID/L1 — канонический текстовый формат. АВТОРИТЕТНОЕ ОПРЕДЕЛЕНИЕ.
-   Версия: v0.4 (привязан к SPEC-EID-L1 v0.17, EQUIVALENCE v0.2,
-   CORPUS-CONTRACT v0.4). Ревизии — через CHANGELOG.md.
+   Версия: v0.5 (привязан к SPEC-EID-L1 v0.22; прежде v0.4 — SPEC v0.17,
+   EQUIVALENCE v0.2, CORPUS-CONTRACT v0.4). Ревизии — через CHANGELOG.md.
    v0.2: PATH_MODE blend принимает t= (G64 P; вопрос A1 отчёта A) —
    без t= легален (bare G64); magic-строка = "EID/L1 v0.2".
+   v0.4: back-compatible superset v0.3 (magic «EID/L1 v0.3» сохранён —
+   аудит #3: op_num zero-pad min 3; RAW-escape).
+   v0.5 (SPEC v0.22, L1 v0.4-амендрмент §1.2): аддитивный superset —
+   srot=/rot= поля (resolved rotary-слоты позы A/B/C, sparse) на
+   RAPID/LINEAR; ARC — reject; magic «EID/L1 v0.3» СОХРАНЁН (v0.3-текст
+   без слотов = подмножество, байт-идентично; 3-осевые goldens не
+   перегенерируются). Ревизия плановая (решение ревью-4, REPORT §16).
    THIS FILE — единственный авторитет формата; SPEC §12 — ссылка.
    SPEC §12 — иллюстрация; этот файл — норма.
 
@@ -76,21 +83,31 @@ op_body          = rapid_op | linear_op | arc_op | dwell_op | tool_change_op
                  | stop_op | pend_op | wcs_define_op | wcs_set_here_op
                  | raw_op ;
 
-(* --- движение: геометрия, src, [sub], state --- *)
+(* --- движение: геометрия, [rotary-слоты v0.5], src, [sub], state --- *)
 
-rapid_op         = "RAPID" , SP , start_f , SP , end_f , SP , src_f ,
-                   [ SP , sub_f ] , SP , state ;
-linear_op        = "LINEAR" , SP , start_f , SP , end_f , SP , src_f ,
-                   [ SP , sub_f ] , SP , state ;
+rapid_op         = "RAPID" , SP , start_f , [ SP , srot_f ] , SP , end_f ,
+                   [ SP , rot_f ] , SP , src_f , [ SP , sub_f ] , SP , state ;
+linear_op        = "LINEAR" , SP , start_f , [ SP , srot_f ] , SP , end_f ,
+                   [ SP , rot_f ] , SP , src_f , [ SP , sub_f ] , SP , state ;
 arc_op           = "ARC" , SP , start_f , SP , end_f , SP , center_f , SP ,
                    normal_f , SP , dir_f , SP , sweep_f , SP , pitch_f , SP ,
                    src_f , [ SP , sub_f ] , SP , state ;
+                   (* v0.5: rot_f/srot_f на ARC — ЗАПРЕЩЕНЫ (ротационная дуга
+                      вне канона; SPEC §6); валидатор формата отклоняет *)
 
 start_f          = "start=" , ( vec | "unknown" ) ;   (* unknown — SPEC §2, Q11 *)
+srot_f           = "srot=" , rot_list ;                (* v0.5: resolved слоты
+                      старта; unknown-старт с srot — reject (нечему быть) *)
 end_f            = "end=" , vec ;
+rot_f            = "rot=" , rot_list ;                 (* v0.5: resolved слоты
+                      конца хода; center/normal/origin/delta — БЕЗ слотов
+                      (инвариант не-позовых применений, SPEC §1.2 v0.22) *)
 center_f         = "center=" , vec ;
 normal_f         = "normal=" , vec ;
 vec              = number , "," , number , "," , number ;  (* X, Y, Z — D2 *)
+rot_list         = rot_item , { "," , rot_item } ;     (* sparse; порядок
+                      канонический A,B,C строго возрастает; дубликат/reject *)
+rot_item         = ( "A" | "B" | "C" ) , "=" , number ;
 dir_f            = "dir=" , ( "cw" | "ccw" ) ;
 sweep_f          = "sweep=" , number ;
 pitch_f          = "pitch=" , number ;

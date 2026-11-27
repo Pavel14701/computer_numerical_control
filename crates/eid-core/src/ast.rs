@@ -21,11 +21,65 @@ impl Num {
     }
 }
 
+/// L1 v0.4-амендрмент (§1.2 ревизия, SPEC v0.22): ротационные слоты позы —
+/// RESOLVED joint-углы: Some = слово кадра ИЛИ унаследованная модальность
+/// (канон resolved-state: canonicalize/lowering заполняют наследование);
+/// None = угол не установлен в программе (станок в home/дефолте). Слоты НЕ
+/// несут кинематики — 6 чисел, трансмиссия результата inverse (§15.4
+/// REPORT); применение inverse — только L2-маршрут с профилем.
+/// Инварианты: (1) эмиссия Some → слово, None → молчание — 3-осевой текст
+/// байт-идентичен v0.3; (2) center/normal/frame_preset/anchor-Point3 —
+/// всегда None (конструктор [`Point3::xyz`]); (3) ARC-конец — всегда None
+/// (ротационная дуга вне канона v0.4 — носитель, SPEC §6); (4) zero-length
+/// и linking сравнивают слоты (чисто-rotary ход ≠ zero-length, §3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Point3 {
     pub x: Num,
     pub y: Num,
     pub z: Num,
+    /// A — joint-угол (градусы, resolved). None = не установлен.
+    pub a: Option<Num>,
+    /// B — joint-угол (градусы, resolved).
+    pub b: Option<Num>,
+    /// C — joint-угол (градусы, resolved).
+    pub c: Option<Num>,
+}
+
+impl Point3 {
+    /// 3-осевая точка (center/normal/frame_preset/anchor/legacy-сайты):
+    /// слоты None — инвариант не-позовых применений (§1.2 v0.4).
+    pub fn xyz(x: Num, y: Num, z: Num) -> Self {
+        Self {
+            x,
+            y,
+            z,
+            a: None,
+            b: None,
+            c: None,
+        }
+    }
+
+    /// Конец хода с resolved-слотами (Rapid/Linear; ARC запрещён — §6).
+    pub fn pose(x: Num, y: Num, z: Num, a: Option<Num>, b: Option<Num>, c: Option<Num>) -> Self {
+        Self { x, y, z, a, b, c }
+    }
+
+    /// Слоты сравнены resolved-точно (None==None, Some==Some по значению —
+    /// EQUIVALENCE §4; текст может отличаться — verbatim-предпочтение
+    /// эмиссии канонизирует).
+    pub fn rotary_eq(&self, other: &Self) -> bool {
+        let slot_eq = |s: &Option<Num>, o: &Option<Num>| match (s, o) {
+            (None, None) => true,
+            (Some(s), Some(o)) => s.value == o.value,
+            _ => false,
+        };
+        slot_eq(&self.a, &other.a) && slot_eq(&self.b, &other.b) && slot_eq(&self.c, &other.c)
+    }
+
+    /// Есть ли хоть один установленный слот (3-осевой ли это конец).
+    pub fn has_rotary(&self) -> bool {
+        self.a.is_some() || self.b.is_some() || self.c.is_some()
+    }
 }
 
 pub type Vec3 = Point3;

@@ -419,11 +419,11 @@ impl UnitsInverse {
         idx: usize,
         p: &Point3,
     ) -> Point3 {
-        Point3 {
-            x: self.num_at(key, idx, &p.x),
-            y: self.num_at(key, idx, &p.y),
-            z: self.num_at(key, idx, &p.z),
-        }
+        Point3::xyz(
+            self.num_at(key, idx, &p.x),
+            self.num_at(key, idx, &p.y),
+            self.num_at(key, idx, &p.z),
+        )
     }
 
     fn apply(invs: &[f64], n: &Num) -> Num {

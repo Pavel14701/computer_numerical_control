@@ -17,26 +17,10 @@ fn arc_prog(center_x: f64) -> Program {
         path_mode: eid_core::ast::PathMode::ExactPath,
         frame_preset: None,
         ops: vec![Op::Arc {
-            start: StartPoint::Known(Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(0.0),
-            }),
-            end: Point3 {
-                x: n(5.0),
-                y: n(5.0),
-                z: n(0.0),
-            },
-            center: Point3 {
-                x: n(center_x),
-                y: n(5.0),
-                z: n(0.0),
-            },
-            normal: Point3 {
-                x: n(0.0),
-                y: n(0.0),
-                z: n(1.0),
-            },
+            start: StartPoint::Known(Point3::xyz(n(0.0), n(0.0), n(0.0))),
+            end: Point3::xyz(n(5.0), n(5.0), n(0.0)),
+            center: Point3::xyz(n(center_x), n(5.0), n(0.0)),
+            normal: Point3::xyz(n(0.0), n(0.0), n(1.0)),
             dir: Dir::Cw,
             sweep_deg: n(90.0),
             pitch: n(0.0),

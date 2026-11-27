@@ -622,9 +622,30 @@ fn num_close(a: f64, b: f64, tol: f64) -> bool {
 }
 
 fn p3_close(a: &Point3, b: &Point3, tol: f64) -> bool {
+    // v0.4 (SPEC §1.2 v0.22): resolved rotary-слоты — часть равенства позы:
+    // Some vs Some — по значению с тем же tol; Some vs None — расхождение
+    // (угол появился/потерялся); None vs None — тривиально (center/normal —
+    // инвариант None, поведение v0.3 не меняется).
+    let slot_eq = |sa: Option<f64>, sb: Option<f64>| match (sa, sb) {
+        (None, None) => true,
+        (Some(x), Some(y)) => num_close(x, y, tol),
+        _ => false,
+    };
     num_close(a.x.value(), b.x.value(), tol)
         && num_close(a.y.value(), b.y.value(), tol)
         && num_close(a.z.value(), b.z.value(), tol)
+        && slot_eq(
+            a.a.as_ref().map(|n| n.value()),
+            b.a.as_ref().map(|n| n.value()),
+        )
+        && slot_eq(
+            a.b.as_ref().map(|n| n.value()),
+            b.b.as_ref().map(|n| n.value()),
+        )
+        && slot_eq(
+            a.c.as_ref().map(|n| n.value()),
+            b.c.as_ref().map(|n| n.value()),
+        )
 }
 
 fn p3_vals(p: &Point3) -> (f64, f64, f64) {

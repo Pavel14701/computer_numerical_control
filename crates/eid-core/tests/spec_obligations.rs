@@ -16,11 +16,7 @@ fn n(v: f64) -> Num {
     Num::new(fmt_num(v), v)
 }
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
-    Point3 {
-        x: n(x),
-        y: n(y),
-        z: n(z),
-    }
+    Point3::xyz(n(x), n(y), n(z))
 }
 fn src() -> SrcSpan {
     SrcSpan {
@@ -1209,11 +1205,7 @@ fn mutants_emit_num_minus_zero_canonicalized() {
         ops: vec![
             Op::Rapid {
                 start: StartPoint::Unknown,
-                end: Point3 {
-                    x: nm(text_minus0, -0.0),
-                    y: nm("0.0000", 0.0),
-                    z: nm("0.0000", 0.0),
-                },
+                end: Point3::xyz(nm(text_minus0, -0.0), nm("0.0000", 0.0), nm("0.0000", 0.0)),
                 state: State {
                     feed: None,
                     spindle: Spindle::Off,
@@ -1902,4 +1894,263 @@ fn v03_gate_eps_pos_nonfinite_refused() {
     ];
     let d2 = verify::validate(&program(moderate));
     assert!(d2.is_empty(), "легальный путь не затронут: {d2:?}");
+}
+
+// ===========================================================================
+// SPEC v0.22 (L1 v0.4-амендрмент §1.2): resolved rotary-слоты позы
+// Чек-лист «правило → тест» (трассируемость правило↔тест):
+//   §1.2 v0.22 rot/srot-поля — слоты Some → rot=/srot= sparse, канонический
+//       порядок A,B,C → spec_1_2_rotary_slots_roundtrip_v022
+//   §1.2 v0.22 None → молчание — 3-осевой текст байт-идентичен v0.3
+//       → spec_1_2_rotary_slots_none_byte_identical_v022
+//   §1.2/§6 v0.22 ARC с rot=/srot= — reject (ротационная дуга вне канона)
+//       → spec_1_2_rotary_arc_forbidden_v022
+//   §3 v0.22 zero-length — сравнение ПОЛНОЕ (XYZ + слоты): чисто-rotary
+//       ход не zero-length → spec_3_zero_length_rotary_motion_kept_v022
+//   §2 v0.9+v0.22 linking — start обязан наследовать слоты предыдущего
+//       конца (resolved-state) → spec_2_linking_rotary_slots_v022
+//   D2 v0.22 rot_list — дубликат/вне-ABC/нарушение порядка → reject
+//       → spec_1_2_rot_list_canonical_order_v022
+//   D2 v0.22 srot на unknown-старте — reject
+//       → spec_1_2_srot_unknown_start_rejected_v022
+// ===========================================================================
+
+/// rot=Some → эмиссия пишет sparse-поле в каноническом порядке; повторный
+/// parse → тот же AST (round-trip v0.22).
+#[test]
+fn spec_1_2_rotary_slots_roundtrip_v022() {
+    let mut end = p3(10.0, 0.0, -5.0);
+    end.a = Some(n(90.0));
+    end.c = Some(n(0.0)); // sparse: B не установлен (XYZBC-семантика норм)
+    let p = Program {
+        frame_preset: Some(FramePreset {
+            values: p3(0.0, 0.0, 0.0),
+            wcs: Wcs::G54,
+        }),
+        ..program(vec![
+            // Первый ход после якоря: старт БЕЗ слотов (якорь не устанавливает
+            // углы — resolved None), конец со словами A/C.
+            Op::Rapid {
+                start: StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                end,
+                state: st(None, Wcs::G54, Frame::Wcs),
+                src: src(),
+                sub: None,
+            },
+            pend(),
+        ])
+    };
+    let text = eid_core::emitter::emit(&p).expect("emit ok");
+    // sparse: rot=A90.0000,C0.0000 — B отсутствует; srot нет (старт None).
+    assert!(
+        !text.contains("srot="),
+        "старт без resolved-углов — без srot: {text:?}"
+    );
+    assert!(
+        text.contains(" rot=A=90.0000,C=0.0000 "),
+        "rot-поле sparse (без B): {text:?}"
+    );
+    // Round-trip: parse → тот же AST (emit возвращает ПОЛНЫЙ текст с магией).
+    let back = parser::parse(&text, "t").expect("reparse ok");
+    assert_eq!(back.ops.len(), 2);
+    let Op::Rapid {
+        start: s2, end: e2, ..
+    } = &back.ops[0]
+    else {
+        panic!("rapid expected");
+    };
+    let StartPoint::Known(s2p) = s2 else {
+        panic!("known start")
+    };
+    assert!(s2p.a.is_none(), "старт без слотов — None после round-trip");
+    assert_eq!(e2.a.as_ref().map(|x| x.value()), Some(90.0));
+    assert!(e2.b.is_none(), "B не установлен — sparse сохранён");
+    assert_eq!(e2.c.as_ref().map(|x| x.value()), Some(0.0));
+}
+
+/// None-слоты → в тексте НЕТ rot=/srot= — байт-идентичность v0.3 (goldens
+/// не перегенерируются).
+#[test]
+fn spec_1_2_rotary_slots_none_byte_identical_v022() {
+    let p = Program {
+        frame_preset: Some(FramePreset {
+            values: p3(0.0, 0.0, 0.0),
+            wcs: Wcs::G54,
+        }),
+        ..program(vec![
+            Op::Rapid {
+                start: StartPoint::Known(p3(0.0, 0.0, 0.0)),
+                end: p3(10.0, 0.0, 0.0),
+                state: st(Some(100.0), Wcs::G54, Frame::Wcs),
+                src: src(),
+                sub: None,
+            },
+            pend(),
+        ])
+    };
+    let text = eid_core::emitter::emit(&p).expect("emit ok");
+    assert!(
+        !text.contains("rot="),
+        "3-осевой текст без rot=/srot=: {text:?}"
+    );
+}
+
+/// Ротационная дуга вне канона v0.4: rot= на ARC — reject (негатив
+/// §1.2/§6); center/normal слотов не несут (vec3 — 3 координаты).
+#[test]
+fn spec_1_2_rotary_arc_forbidden_v022() {
+    let head = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\n";
+    let line = "OP 001 ARC start=0.0000,0.0000,0.0000 end=10.0000,0.0000,0.0000 \
+        rot=A90.0000 center=5.0000,0.0000,0.0000 normal=0.0000,0.0000,1.0000 dir=cw \
+        sweep=90.0000 pitch=0.0000 src=1.1-1.1 \
+        feed=none spindle=off coolant=none tool=none frame=wcs wcs=G54\nEND\n";
+    let err = parser::parse(&format!("{head}{line}"), "t").expect_err("rotary arc — reject");
+    assert!(
+        err[0].message.contains("rotary arc outside canon v0.4"),
+        "именованный reject: {:?}",
+        err[0].message
+    );
+}
+
+/// Чисто-rotary ход: XYZ равны, A изменилась 30→90 — НЕ zero-length (kept).
+#[test]
+fn spec_3_zero_length_rotary_motion_kept_v022() {
+    let mut s = p3(10.0, 0.0, 0.0);
+    s.a = Some(n(30.0));
+    let mut e = p3(10.0, 0.0, 0.0);
+    e.a = Some(n(90.0));
+    let p = Program {
+        frame_preset: Some(FramePreset {
+            values: p3(10.0, 0.0, 0.0),
+            wcs: Wcs::G54,
+        }),
+        ..program(vec![
+            Op::Rapid {
+                start: StartPoint::Known(s),
+                end: e,
+                state: st(None, Wcs::G54, Frame::Wcs),
+                src: src(),
+                sub: None,
+            },
+            pend(),
+        ])
+    };
+    let diags = verify::validate(&p);
+    let zero_len = diags.iter().any(|d| d.message.contains("zero-length"));
+    assert!(!zero_len, "чисто-rotary ход не zero-length: {diags:?}");
+}
+
+/// Linking v0.22: start обязан наследовать слоты предыдущего конца
+/// (resolved-state); старт со слотами None после конца A90 — отказ.
+#[test]
+fn spec_2_linking_rotary_slots_v022() {
+    let mut e1 = p3(10.0, 0.0, 0.0);
+    e1.a = Some(n(90.0));
+    let s2_bad = p3(10.0, 0.0, 0.0); // слоты None — углы потеряны
+    let mut s2_ok = p3(10.0, 0.0, 0.0);
+    s2_ok.a = Some(n(90.0));
+    let mut e2 = p3(20.0, 0.0, 0.0);
+    e2.a = Some(n(90.0));
+
+    let ops_ok = vec![
+        Op::Rapid {
+            start: StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            end: e1.clone(),
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        Op::Linear {
+            start: StartPoint::Known(s2_ok),
+            end: e2.clone(),
+            state: st(Some(100.0), Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        pend(),
+    ];
+    let p_ok = Program {
+        frame_preset: Some(FramePreset {
+            values: p3(0.0, 0.0, 0.0),
+            wcs: Wcs::G54,
+        }),
+        ..program(ops_ok)
+    };
+    assert!(
+        verify::validate(&p_ok).is_empty(),
+        "resolved-наследование слотов легально"
+    );
+    let ops_bad = vec![
+        Op::Rapid {
+            start: StartPoint::Known(p3(0.0, 0.0, 0.0)),
+            end: e1,
+            state: st(None, Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        Op::Linear {
+            start: StartPoint::Known(s2_bad),
+            end: e2,
+            state: st(Some(100.0), Wcs::G54, Frame::Wcs),
+            src: src(),
+            sub: None,
+        },
+        pend(),
+    ];
+    let p_bad = Program {
+        frame_preset: Some(FramePreset {
+            values: p3(0.0, 0.0, 0.0),
+            wcs: Wcs::G54,
+        }),
+        ..program(ops_bad)
+    };
+    let diags = verify::validate(&p_bad);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("включая rotary-слоты")),
+        "потеря слотов на linking — отказ: {diags:?}"
+    );
+}
+
+/// rot_list каноничность: дубликат A, буква вне ABC, нарушение порядка
+/// (B до A) — parse reject с именованной причиной (негативы D2 v0.22).
+#[test]
+fn spec_1_2_rot_list_canonical_order_v022() {
+    let head = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\n";
+    for (rot, why) in [
+        ("rot=A30.0000,A40.0000", "duplicate A"),
+        ("rot=Q5.0000", "letter outside ABC"),
+        ("rot=B30.0000,A40.0000", "order violation"),
+    ] {
+        let line = format!(
+            "OP 001 RAPID start=0.0000,0.0000,0.0000 end=10.0000,0.0000,0.0000 \
+             {rot} src=1.1-1.1 feed=none spindle=off coolant=none tool=none \
+             frame=wcs wcs=G54\nEND\n"
+        );
+        let err =
+            parser::parse(&format!("{head}{line}"), "t").expect_err(&format!("{why} — reject"));
+        assert!(
+            err.iter()
+                .any(|d| d.message.contains("rot") || d.message.contains("D2")),
+            "{why}: {:?}",
+            err.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// srot на unknown-старте — reject (позиция не вычислима — нечему быть).
+#[test]
+fn spec_1_2_srot_unknown_start_rejected_v022() {
+    let head = "EID/L1 v0.3\nUNITS mm\nPATH_MODE exact_path\nFRAME_PRESET none\n";
+    let line = "OP 001 RAPID start=unknown srot=A30.0000 \
+        end=10.0000,0.0000,0.0000 src=1.1-1.1 feed=none spindle=off \
+        coolant=none tool=none frame=wcs wcs=G54\nEND\n";
+    let err = parser::parse(&format!("{head}{line}"), "t").expect_err("srot на unknown — reject");
+    assert!(
+        err.iter()
+            .any(|d| d.message.contains("srot on unknown start")),
+        "именованный reject: {:?}",
+        err.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
 }

@@ -1106,11 +1106,7 @@ fn emit_op_number_limit() {
     // zero-pad min 3 сохранён эмиттером ({n:03}); 1000+ легальны — лимита
     // нумерации больше нет. parse → emit → parse для 999/1000/1001 опов.
     let mk = |v: f64| Num::new(emitter::fmt_num(v), v);
-    let p3 = |x: f64| Point3 {
-        x: mk(x),
-        y: mk(0.0),
-        z: mk(0.0),
-    };
+    let p3 = |x: f64| Point3::xyz(mk(x), mk(0.0), mk(0.0));
     let state = State {
         feed: None,
         spindle: Spindle::Off,
@@ -1193,11 +1189,7 @@ mod astbuild {
         Num::new(fmt_num(v), v)
     }
     pub fn p3(x: f64, y: f64, z: f64) -> Point3 {
-        Point3 {
-            x: n(x),
-            y: n(y),
-            z: n(z),
-        }
+        Point3::xyz(n(x), n(y), n(z))
     }
     #[allow(dead_code)]
     pub fn src() -> SrcSpan {

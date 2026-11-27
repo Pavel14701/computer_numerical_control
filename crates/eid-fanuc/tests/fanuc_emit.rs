@@ -48,11 +48,7 @@ fn num(v: f64) -> Num {
 }
 
 fn pt(x: f64, y: f64, z: f64) -> eid_core::ast::Point3 {
-    eid_core::ast::Point3 {
-        x: num(x),
-        y: num(y),
-        z: num(z),
-    }
+    eid_core::ast::Point3::xyz(num(x), num(y), num(z))
 }
 
 fn parse_fanuc(src: &str) -> Program {
@@ -1463,11 +1459,7 @@ fn mround2_wcs_set_here_validator_message() {
         0,
         Op::WcsSetHere {
             p: 1,
-            delta: eid_core::ast::Vec3 {
-                x: num(0.0),
-                y: num(0.0),
-                z: num(0.0),
-            },
+            delta: eid_core::ast::Vec3::xyz(num(0.0), num(0.0), num(0.0)),
             state: State {
                 feed: None,
                 spindle: Spindle::Off,

@@ -44,11 +44,7 @@ pub fn num_snap(v: f64) -> Num {
 }
 
 pub fn p3_snap(v: [f64; 3]) -> Point3 {
-    Point3 {
-        x: num_snap(v[0]),
-        y: num_snap(v[1]),
-        z: num_snap(v[2]),
-    }
+    Point3::xyz(num_snap(v[0]), num_snap(v[1]), num_snap(v[2]))
 }
 
 /// Num-точка → [f64; 3] (f64-зеркало verbatim-значений).

@@ -794,21 +794,21 @@ impl<'a> Writer<'a> {
                 // (G91.1 в заголовке); normal-компонента не эмитится.
                 // v0.21-fix: units-якорь — до-конверсные литералы
                 // start+center (геометрия §6 единая) и end.
-                let start_c = eid_core::ast::Point3 {
-                    x: self.uinv.num(&self.uinv.geo, op_idx, &start.x),
-                    y: self.uinv.num(&self.uinv.geo, op_idx, &start.y),
-                    z: self.uinv.num(&self.uinv.geo, op_idx, &start.z),
-                };
-                let center_c = eid_core::ast::Point3 {
-                    x: self.uinv.num(&self.uinv.geo, op_idx, &center.x),
-                    y: self.uinv.num(&self.uinv.geo, op_idx, &center.y),
-                    z: self.uinv.num(&self.uinv.geo, op_idx, &center.z),
-                };
-                let end_c = eid_core::ast::Point3 {
-                    x: self.uinv.num(&self.uinv.end, op_idx, &end.x),
-                    y: self.uinv.num(&self.uinv.end, op_idx, &end.y),
-                    z: self.uinv.num(&self.uinv.end, op_idx, &end.z),
-                };
+                let start_c = eid_core::ast::Point3::xyz(
+                    self.uinv.num(&self.uinv.geo, op_idx, &start.x),
+                    self.uinv.num(&self.uinv.geo, op_idx, &start.y),
+                    self.uinv.num(&self.uinv.geo, op_idx, &start.z),
+                );
+                let center_c = eid_core::ast::Point3::xyz(
+                    self.uinv.num(&self.uinv.geo, op_idx, &center.x),
+                    self.uinv.num(&self.uinv.geo, op_idx, &center.y),
+                    self.uinv.num(&self.uinv.geo, op_idx, &center.z),
+                );
+                let end_c = eid_core::ast::Point3::xyz(
+                    self.uinv.num(&self.uinv.end, op_idx, &end.x),
+                    self.uinv.num(&self.uinv.end, op_idx, &end.y),
+                    self.uinv.num(&self.uinv.end, op_idx, &end.z),
+                );
                 let (n_axis, u, v) = plane_def(plane);
                 let sv = to_f64(&start_c);
                 let cv = to_f64(&center_c);
