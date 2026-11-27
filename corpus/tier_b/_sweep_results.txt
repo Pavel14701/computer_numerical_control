@@ -5,15 +5,15 @@ ERR | published | linuxcnc | gcb_ContourHolesOnGrid_90deg.ngc | E_INVALID_INPUT 
 ERR | published | linuxcnc | gcb_ContourRect_G40.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRect_G41.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | linuxcnc | gcb_ContourRoundRect_A70B100_G42_TD-8.75.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 0ms
-OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 31ms
+OK | published | linuxcnc | gcb_TEST_DrillHolesGrid_45deg_T4.ngc | 35 ops | 1ms
+OK | published | linuxcnc | gcb_TEST_MillHolesGrid_12.5deg_10.5depth_T4.ngc | 1326 ops | 36ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO30.ngc | 52 ops | 1ms
 OK | published | linuxcnc | gcb_TEST_MillPocketCircle_SO50.ngc | 63 ops | 1ms
 ERR | published | linuxcnc | gcb_contourMillHolesGrid_001.gcode.ngc | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
-OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 0ms
+OK | published | linuxcnc | gcb_drillHolesGrid_A10B10_3x3_tD6_45.gcode | 31 ops | 1ms
 ERR | published | linuxcnc | gcb_drillHoles_R100_nH4_tD-2.5_0.00deg.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 OK | published | linuxcnc | gcb_pocketCircle_oR30_iR0_T6_tD-2.5.gcode | 101 ops | 2ms
-OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 6ms
+OK | published | linuxcnc | gcb_pocketRRect_001_02.gcode | 276 ops | 7ms
 OK | published | linuxcnc | gcb_pocketRRect_001a.gcode | 13 ops | 0ms
 ERR | published | linuxcnc | gcb_spiral.gcode | E_INVALID_INPUT | lexical garbage `by` (слово = одна буква + число) — вложенные скобки в комментарии: комментарий закрыт первой `)`, остаток строки — мусор (реальный rs274: „Nested comment found“)
 ERR | published | fanuc-подобный | gce_full_industrial_lathe.g | E_INVALID_INPUT | G53 требует явного G0/G1 в кадре (machine-frame ходы — прямые)
@@ -40,18 +40,18 @@ ERR | published | grbl-подобный | mit_ddp_eck3.gcode | E_RUNTIME_STATE |
 ERR | published | grbl-подобный | mit_ddp_ltr.gcode | E_RUNTIME_STATE | partial end with unknown reading inherits unknown (SPEC §2)
 ERR | published | grbl-подобный | mit_ddp_m_retract.gcode | E_INVALID_INPUT | G10 requires P word, 1..=6 (GRBL WCS count)
 OK | published | grbl-подобный | mit_ddp_simple_square.gcode | 12 ops | 0ms
-OK | published | linuxcnc-универсальный | mit_hilbert_test.ngc | 4098 ops | 79ms
+OK | published | linuxcnc-универсальный | mit_hilbert_test.ngc | 4098 ops | 75ms
 ERR | published | grbl-подобный | mit_pycnc_circles.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
 OK | published | grbl-подобный | mit_pycnc_rects.gcode | 29 ops | 0ms
 ERR | published | grbl-подобный | mit_pycnc_test_parser.gcode | E_INVALID_INPUT | linear move before any F word (SPEC §4)
 OK | published | grbl-подобный | mit_shpk_MIT_EC_Logo.nc | 1874 ops | 27ms
 ERR | published | grbl-подобный | mit_shpk_ncdrill1.tap | E_INVALID_INPUT | naked coordinate words: no active motion mode after G80 (COVERAGE §2.1; CORPUS n6)
 OK | published | grbl-подобный | mit_svg2g_circular_interpolation.gcode | 80 ops | 1ms
-OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 14ms
+OK | published | grbl-подобный | mit_svg2g_shapes.gcode | 945 ops | 13ms
 OK | published | grbl-подобный | mit_svg2g_square.gcode | 51 ops | 0ms
-OK | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | 3425 ops | 49ms
-OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 44ms
-OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 35ms
+OK | published | grbl-подобный | mit_tball_tball-engrave-laser.gcode | 3425 ops | 43ms
+OK | published | grbl-подобный | mit_tball_tball-engrave.gcode | 3429 ops | 43ms
+OK | published | grbl-подобный | mit_tball_tball.gcode | 2680 ops | 34ms
 OK | published | haas-подобный | mpe_g65_macro_centerline_probe.nc | 43 ops | 0ms
 OK | published | haas-подобный | mpe_g65_macro_deep_drill.nc | 26 ops | 0ms
 OK | published | haas-подобный | mpe_g65_macro_material_verify.nc | 71 ops | 1ms
@@ -64,12 +64,12 @@ OK | published | linuxcnc | olle_top_cont.tap | 419 ops | 5ms
 OK | published | linuxcnc | olle_top_trace_finish.tap | 188 ops | 2ms
 OK | published | grbl-подобный | vince_BewareOfDog_v10.nc | 1 ops | 0ms
 ERR | published | grbl-подобный | vince_BewareOfDog_v10_2_T2.nc | E_INVALID_INPUT | arc radius mismatch: ρ_start 1.4616 vs ρ_end 1.4628 (SPEC §6; CORPUS n5a)
-OK | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | 10842 ops | 121ms
+OK | published | grbl-подобный | vince_BewareOfDog_v10_3_T4.nc | 10842 ops | 129ms
 OK | published | grbl-подобный | vince_BrushRabbitv4.nc | 1 ops | 0ms
 OK | published | grbl-подобный | vince_tictactoe1.nc | 911 ops | 15ms
 ERR | published | grbl-подобный | vis_SmilinJack_-_ThreeAxisFlatMachine_Relief.tap | E_RUNTIME_STATE | partial end with unknown reading inherits unknown (SPEC §2)
 ERR | published | grbl-подобный | vis_hse1p.tap | E_INVALID_INPUT | arc radius mismatch: ρ_start 0.1291 vs ρ_end 0.1302 (SPEC §6; CORPUS n5a)
-OK | published | grbl-подобный | vis_knight.tap | 10652 ops | 106ms
+OK | published | grbl-подобный | vis_knight.tap | 10652 ops | 108ms
 OK | local-dev | linuxcnc | cncsim_g154_g43_haas_vf2.nc | 47 ops | 0ms
 OK | local-dev | linuxcnc | cncsim_g76_eob_ciclos.nc | 41 ops | 0ms
 ERR | local-dev | linuxcnc | cncsim_g84_g43_placa.nc | E_INVALID_INPUT | невозможная дуга: планиметрическая хорда > 2R (SPEC §6; N5b)
@@ -83,9 +83,9 @@ OK | local-dev | linuxcnc | lcnc_g33_threading.ngc | 51 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_m61_output_demo.ngc | 7 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_m70_m72_demo.ngc | 12 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_m73_demo.ngc | 16 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | 4693 ops | 96ms
-OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 1ms
-OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 22ms
+OK | local-dev | linuxcnc | lcnc_nc_files_3D_Chips.ngc | 4693 ops | 95ms
+OK | local-dev | linuxcnc | lcnc_nc_files_3dtest.ngc | 51 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_arcspiral.ngc | 1004 ops | 20ms
 OK | local-dev | linuxcnc | lcnc_nc_files_b-index.ngc | 11 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_cds.ngc | 267 ops | 4ms
 OK | local-dev | linuxcnc | lcnc_nc_files_comp-g1.ngc | 25 ops | 0ms
@@ -97,7 +97,7 @@ OK | local-dev | linuxcnc | lcnc_nc_files_daisy.ngc | 115 ops | 2ms
 OK | local-dev | linuxcnc | lcnc_nc_files_factorial.ngc | 9 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_flowsnake.ngc | 31 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g20sub.ngc | 6 ops | 0ms
-OK | local-dev | linuxcnc | lcnc_nc_files_g76.ngc | 62 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_g76.ngc | 62 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g881.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g881min.ngc | 3 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_g882.ngc | 4 ops | 0ms
@@ -118,7 +118,7 @@ OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Mazatrol__1_1_G5.ngc | 
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_Curva_Stella__1_1_G5.ngc | 42 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-xy.ngc | 81 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-yz.ngc | 81 ops | 1ms
-OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-zx.ngc | 81 ops | 2ms
+OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_butterfly-zx.ngc | 81 ops | 1ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_leto-xy.ngc | 19 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_nurbs-xy.ngc | 12 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_nurbs-yz.ngc | 12 ops | 0ms
@@ -128,8 +128,8 @@ OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-xy.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-yz.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_nurbs_G5_trident-zx.ngc | 15 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_edge_angle.ngc | 56 ops | 1ms
-OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc | 50 ops | 1ms
-OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc | 50 ops | 1ms
+OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_inside.ngc | 50 ops | 0ms
+OK | local-dev | linuxcnc | lcnc_nc_files_probe_basic_probe_macros_probe_back_left_outside.ngc | 50 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_change.ngc | 6 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_nc_files_remap-subroutines_on_abort.ngc | 9 ops | 0ms
 OK | local-dev | linuxcnc | lcnc_polar_at_angle.ngc | 12 ops | 0ms
@@ -150,10 +150,10 @@ OK | local-dev | linuxcnc | rensh_g04p_bare_xyz_o09811.nc | 131 ops | 2ms
 OK | local-dev | linuxcnc | rensh_g04p_dot_warmup_o09220.nc | 9 ops | 0ms
 ERR | local-dev | linuxcnc | rensh_g154p98_tbd_o09006.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
 OK | local-dev | linuxcnc | rensh_g65_probe_bore_o09351.nc | 43 ops | 0ms
-OK | local-dev | linuxcnc | rensh_settings_check_g103p1_o09725.nc | 54 ops | 1ms
+OK | local-dev | linuxcnc | rensh_settings_check_g103p1_o09725.nc | 54 ops | 0ms
 ERR | local-dev | linuxcnc | vultr_g152_npt_pipe_example.nc | E_INVALID_INPUT | G53 требует явного G0/G1 в кадре (machine-frame ходы — прямые)
 OK | local-dev | linuxcnc | vultr_m97_l_macro_o9016.nc | 33 ops | 0ms
-OK | local-dev | linuxcnc | zapcon_g31_tsc_o9613.nc | 52 ops | 1ms
+OK | local-dev | linuxcnc | zapcon_g31_tsc_o9613.nc | 52 ops | 0ms
 ERR | local-dev | linuxcnc | zapcon_g65_ij_g154p11_endmill_ex.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
 ERR | local-dev | linuxcnc | zapcon_g81_p0_g154p10_drill_ex.nc | E_RUNTIME_STATE | цикл как первый motion-оп — позиция не определена предшествующими ходами (SPEC §7.6)
 ERR | local-dev | linuxcnc | zodiac_toolbreak_m59_g154pvar.nc | E_RUNTIME_STATE | machine-frame ход: origin активной WCS не определён in-text (SPEC §5.3(b); N1)
